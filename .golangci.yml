@@ -1,0 +1,61 @@
+version: "2"
+
+run:
+  concurrency: 4
+  tests: true
+  timeout: 10m
+
+linters:
+  default: none
+  enable:
+    - forbidigo
+    - gocyclo
+    - gosec
+    - govet
+    - misspell
+    - revive
+    - staticcheck
+    - whitespace
+  settings:
+    forbidigo:
+      forbid:
+        # Every time-dependent behavior must be driven through the injected
+        # clock.Clock; the one sanctioned time.Now call site is in
+        # internal/clock.
+        - pattern: 'time\.Now'
+          msg: read time from the injected clock.Clock instead of the system clock
+      analyze-types: true
+    gosec:
+      excludes:
+        # Integer conversions between proto enum values and SMALLINT
+        # columns are bounded by the enum definitions.
+        - G115
+    misspell:
+      locale: US
+    staticcheck:
+      checks: ["all", "-ST1000"]
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - linters:
+          - revive
+        text: ".*stutters.*"
+      - linters:
+          - revive
+        text: "unused-parameter:"
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  exclusions:
+    generated: lax
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

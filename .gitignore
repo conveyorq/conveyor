@@ -1,0 +1,10 @@
+bin/
+coverage.out
+*.test
+.idea/
+.vscode/
+.cache/
+.gocache/
+.gomodcache/
+gen/
+.claude/

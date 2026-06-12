@@ -1,0 +1,79 @@
+syntax = "proto3";
+
+package conveyor.v1;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+// TaskState enumerates the lifecycle states of a task.
+//
+// The numeric values are stable and mirror the broker storage encoding;
+// they must never be renumbered.
+enum TaskState {
+  TASK_STATE_UNSPECIFIED = 0;
+  // TASK_STATE_SCHEDULED is a task whose process_at lies in the future.
+  TASK_STATE_SCHEDULED = 1;
+  // TASK_STATE_PENDING is a task that is due and waiting for a lease.
+  TASK_STATE_PENDING = 2;
+  // TASK_STATE_ACTIVE is a task currently leased to a worker.
+  TASK_STATE_ACTIVE = 3;
+  // TASK_STATE_RETRY is a failed task waiting for its backoff to elapse.
+  TASK_STATE_RETRY = 4;
+  // TASK_STATE_COMPLETED is a successfully executed task retained until purge.
+  TASK_STATE_COMPLETED = 5;
+  // TASK_STATE_ARCHIVED is a dead-lettered task (retries exhausted or skipped).
+  TASK_STATE_ARCHIVED = 6;
+  // TASK_STATE_CANCELED is a task canceled via the Admin API before completion.
+  TASK_STATE_CANCELED = 7;
+}
+
+// TaskEnvelope is the internal, durable representation of a task.
+//
+// The payload is opaque bytes plus a content type; user-visible protobuf is
+// forbidden by design. The envelope is what brokers persist and what actor
+// messages reference.
+message TaskEnvelope {
+  // id is the task ULID. Client-assignable; Enqueue is idempotent on it.
+  string id = 1;
+  // queue is the named queue the task belongs to.
+  string queue = 2;
+  // type is the handler routing key, e.g. "email:welcome".
+  string type = 3;
+  // payload is opaque; SDK codecs own the encoding.
+  bytes payload = 4;
+  // content_type describes the payload encoding, e.g. "application/json".
+  string content_type = 5;
+  // metadata carries user tags and trace propagation (e.g. traceparent).
+  map<string, string> metadata = 6;
+  // options are the execution options captured at enqueue time.
+  TaskOptions options = 7;
+  // retried is the number of times the task has been retried so far.
+  int32 retried = 8;
+  // last_error is the message of the most recent failure, if any.
+  string last_error = 9;
+  // enqueued_at is when the task was first committed to the broker.
+  google.protobuf.Timestamp enqueued_at = 10;
+}
+
+// TaskOptions captures the per-task execution options.
+message TaskOptions {
+  // max_retry is the number of retries before archiving. Default 25.
+  int32 max_retry = 1;
+  // timeout bounds a single execution attempt.
+  google.protobuf.Duration timeout = 2;
+  // deadline is the absolute time after which the task must not run.
+  google.protobuf.Timestamp deadline = 3;
+  // process_at delays execution until the given time.
+  google.protobuf.Timestamp process_at = 4;
+  // unique_key enforces uniqueness among incomplete tasks.
+  string unique_key = 5;
+  // unique_ttl bounds how long the uniqueness claim is held.
+  google.protobuf.Duration unique_ttl = 6;
+  // retention keeps the completed task row for inspection before purge.
+  google.protobuf.Duration retention = 7;
+  // priority orders dispatch within a queue, 0..9. Default 4.
+  int32 priority = 8;
+
+  // Reserved for v2: groups, rate limits.
+  reserved 9 to 15;
+}

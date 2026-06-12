@@ -1,0 +1,15 @@
+version: v2
+modules:
+  - path: protos
+lint:
+  use:
+    - STANDARD
+  except:
+    # The worker session stream uses domain frame names (WorkerMessage /
+    # ServerMessage) as part of the public contract.
+    - RPC_REQUEST_STANDARD_NAME
+    - RPC_RESPONSE_STANDARD_NAME
+    - RPC_REQUEST_RESPONSE_UNIQUE
+breaking:
+  use:
+    - WIRE_JSON

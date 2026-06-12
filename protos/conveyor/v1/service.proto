@@ -1,0 +1,319 @@
+syntax = "proto3";
+
+package conveyor.v1;
+
+import "conveyor/v1/task.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+// Public wire contract. One ConnectRPC port serves gRPC, gRPC-Web, and
+// HTTP/JSON. SDKs, the CLI, and the dashboard all consume these services;
+// after v1.0 changes must be additive only.
+
+// TaskService is the enqueue-side API.
+service TaskService {
+  // Enqueue durably commits one task. Idempotent on a client-supplied id.
+  rpc Enqueue(EnqueueRequest) returns (EnqueueResponse) {}
+  // EnqueueBatch commits many tasks in one call; results are per-item.
+  rpc EnqueueBatch(EnqueueBatchRequest) returns (EnqueueBatchResponse) {}
+  // GetTask returns the current state of one task.
+  rpc GetTask(GetTaskRequest) returns (GetTaskResponse) {}
+}
+
+// WorkerService carries worker sessions.
+service WorkerService {
+  // Session is the single bidirectional stream a worker process holds.
+  rpc Session(stream WorkerMessage) returns (stream ServerMessage) {}
+}
+
+// AdminService is the inspection and operations API.
+service AdminService {
+  rpc ListQueues(ListQueuesRequest) returns (ListQueuesResponse) {}
+  rpc PauseQueue(PauseQueueRequest) returns (PauseQueueResponse) {}
+  rpc ResumeQueue(ResumeQueueRequest) returns (ResumeQueueResponse) {}
+  rpc ListTasks(ListTasksRequest) returns (ListTasksResponse) {}
+  rpc CancelTask(CancelTaskRequest) returns (CancelTaskResponse) {}
+  rpc DeleteTask(DeleteTaskRequest) returns (DeleteTaskResponse) {}
+  rpc RunTask(RunTaskRequest) returns (RunTaskResponse) {}
+  rpc ListCron(ListCronRequest) returns (ListCronResponse) {}
+  rpc UpsertCron(UpsertCronRequest) returns (UpsertCronResponse) {}
+  rpc PauseCron(PauseCronRequest) returns (PauseCronResponse) {}
+  rpc ResumeCron(ResumeCronRequest) returns (ResumeCronResponse) {}
+  rpc DeleteCron(DeleteCronRequest) returns (DeleteCronResponse) {}
+  rpc ClusterInfo(ClusterInfoRequest) returns (ClusterInfoResponse) {}
+}
+
+// ---- TaskService messages ----
+
+// EnqueueRequest mirrors the SDK enqueue options. Zero values select the
+// server defaults where one exists; the affected fields document this.
+message EnqueueRequest {
+  // task_id is an optional client-assigned ULID for idempotent retries.
+  string task_id = 1;
+  // queue routes the task; empty selects the "default" queue.
+  string queue = 2;
+  // type is the handler routing key; required.
+  string type = 3;
+  bytes payload = 4;
+  string content_type = 5;
+  map<string, string> metadata = 6;
+  // max_retry is the retry budget; 0 selects the server default (25).
+  // A task that must never retry returns SKIP_RETRY from its handler.
+  int32 max_retry = 7;
+  google.protobuf.Duration timeout = 8;
+  google.protobuf.Timestamp deadline = 9;
+  // process_at and process_in are mutually exclusive delay forms.
+  google.protobuf.Timestamp process_at = 10;
+  google.protobuf.Duration process_in = 11;
+  string unique_key = 12;
+  google.protobuf.Duration unique_ttl = 13;
+  // priority orders dispatch within a queue; 0 selects the default (4),
+  // explicit priorities are 1 (lowest) to 9 (highest).
+  int32 priority = 14;
+  google.protobuf.Duration retention = 15;
+}
+
+message EnqueueResponse {
+  TaskInfo task = 1;
+}
+
+message EnqueueBatchRequest {
+  repeated EnqueueRequest tasks = 1;
+}
+
+message EnqueueBatchResponse {
+  repeated EnqueueResult results = 1;
+}
+
+// EnqueueResult reports the outcome of one item in a batch enqueue.
+message EnqueueResult {
+  TaskInfo task = 1;
+  // error is non-empty when this item failed (e.g. duplicate task).
+  string error = 2;
+}
+
+message GetTaskRequest {
+  string id = 1;
+}
+
+message GetTaskResponse {
+  TaskInfo task = 1;
+}
+
+// TaskInfo is the externally visible view of a task.
+message TaskInfo {
+  string id = 1;
+  string queue = 2;
+  string type = 3;
+  TaskState state = 4;
+  int32 priority = 5;
+  int32 retried = 6;
+  int32 max_retry = 7;
+  string last_error = 8;
+  google.protobuf.Timestamp enqueued_at = 9;
+  google.protobuf.Timestamp process_at = 10;
+  google.protobuf.Timestamp completed_at = 11;
+}
+
+// ---- WorkerService frames ----
+
+// WorkerMessage is every frame a worker may send on its session stream.
+message WorkerMessage {
+  oneof frame {
+    Hello hello = 1;
+    Credit credit = 2;
+    Result result = 3;
+    Heartbeat heartbeat = 4;
+  }
+}
+
+// ServerMessage is every frame the server may send on a session stream.
+message ServerMessage {
+  oneof frame {
+    Welcome welcome = 1;
+    Dispatch dispatch = 2;
+    Cancel cancel = 3;
+    Ping ping = 4;
+  }
+}
+
+// Hello opens a session: queue weights, total concurrency, and identity.
+message Hello {
+  // queues maps queue name to weight for weighted dispatch.
+  map<string, int32> queues = 1;
+  int32 concurrency = 2;
+  map<string, string> labels = 3;
+  string sdk_version = 4;
+}
+
+// Credit opens n free execution slots to the server.
+message Credit {
+  int32 n = 1;
+}
+
+// TaskOutcome is the worker-reported result of one execution attempt.
+enum TaskOutcome {
+  TASK_OUTCOME_UNSPECIFIED = 0;
+  // TASK_OUTCOME_SUCCESS acknowledges the task as completed.
+  TASK_OUTCOME_SUCCESS = 1;
+  // TASK_OUTCOME_RETRY requests a retry; the server computes backoff.
+  TASK_OUTCOME_RETRY = 2;
+  // TASK_OUTCOME_SKIP_RETRY archives the task immediately.
+  TASK_OUTCOME_SKIP_RETRY = 3;
+  // TASK_OUTCOME_RELEASED re-queues without a retry increment
+  // (graceful shutdown).
+  TASK_OUTCOME_RELEASED = 4;
+}
+
+// Result reports the outcome of one dispatched task.
+message Result {
+  string task_id = 1;
+  TaskOutcome outcome = 2;
+  string error_msg = 3;
+  bytes result = 4;
+}
+
+// Heartbeat lists the task ids still executing so their leases extend.
+message Heartbeat {
+  repeated string active_task_ids = 1;
+}
+
+// Welcome acknowledges Hello and carries session parameters.
+message Welcome {
+  string session_id = 1;
+  google.protobuf.Duration lease_ttl = 2;
+  google.protobuf.Duration heartbeat_interval = 3;
+}
+
+// Dispatch delivers one leased task to the worker.
+message Dispatch {
+  TaskEnvelope task = 1;
+  // deadline is the effective execution deadline:
+  // min(task deadline, lease expiry, task timeout).
+  google.protobuf.Timestamp deadline = 2;
+}
+
+// Cancel asks the worker to cancel a running task (best effort).
+message Cancel {
+  string task_id = 1;
+}
+
+// Ping is a server liveness probe; workers need not reply.
+message Ping {}
+
+// ---- AdminService messages ----
+
+message ListQueuesRequest {}
+
+message ListQueuesResponse {
+  repeated QueueInfo queues = 1;
+}
+
+// QueueInfo reports per-queue state counts and pause status.
+message QueueInfo {
+  string name = 1;
+  bool paused = 2;
+  int64 scheduled = 3;
+  int64 pending = 4;
+  int64 active = 5;
+  int64 retry = 6;
+  int64 completed = 7;
+  int64 archived = 8;
+}
+
+message PauseQueueRequest {
+  string queue = 1;
+}
+
+message PauseQueueResponse {}
+
+message ResumeQueueRequest {
+  string queue = 1;
+}
+
+message ResumeQueueResponse {}
+
+message ListTasksRequest {
+  string queue = 1;
+  TaskState state = 2;
+  int32 limit = 3;
+  string page_token = 4;
+}
+
+message ListTasksResponse {
+  repeated TaskInfo tasks = 1;
+  string next_page_token = 2;
+}
+
+message CancelTaskRequest {
+  string id = 1;
+}
+
+message CancelTaskResponse {}
+
+message DeleteTaskRequest {
+  string id = 1;
+}
+
+message DeleteTaskResponse {}
+
+message RunTaskRequest {
+  string id = 1;
+}
+
+message RunTaskResponse {}
+
+message ListCronRequest {}
+
+message ListCronResponse {
+  repeated CronEntry entries = 1;
+}
+
+// CronEntry is a persisted cron schedule that materializes tasks.
+message CronEntry {
+  string id = 1;
+  // spec is a 6-field cron expression (go-quartz format).
+  string spec = 2;
+  string task_type = 3;
+  string queue = 4;
+  bytes payload = 5;
+  string content_type = 6;
+  TaskOptions options = 7;
+  bool paused = 8;
+}
+
+message UpsertCronRequest {
+  CronEntry entry = 1;
+}
+
+message UpsertCronResponse {}
+
+message PauseCronRequest {
+  string id = 1;
+}
+
+message PauseCronResponse {}
+
+message ResumeCronRequest {
+  string id = 1;
+}
+
+message ResumeCronResponse {}
+
+message DeleteCronRequest {
+  string id = 1;
+}
+
+message DeleteCronResponse {}
+
+message ClusterInfoRequest {}
+
+message ClusterInfoResponse {
+  repeated NodeInfo nodes = 1;
+}
+
+// NodeInfo describes one conveyord node (debugging aid).
+message NodeInfo {
+  string address = 1;
+  google.protobuf.Timestamp started_at = 2;
+}

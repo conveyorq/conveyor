@@ -1,0 +1,101 @@
+syntax = "proto3";
+
+package conveyor.v1;
+
+import "conveyor/v1/task.proto";
+import "google/protobuf/timestamp.proto";
+
+// Actor messages exchanged inside the conveyord cluster.
+//
+// Design rule: messages carry hints and identities; the broker carries data.
+// The only data-bearing message is ExecuteTask, whose task is already
+// durably leased. These messages never cross the public API boundary.
+
+// TaskEnqueued tells a queue grain that one new task was committed.
+message TaskEnqueued {
+  string queue = 1;
+}
+
+// TasksAvailable tells a queue grain that due work exists (reaper sweep).
+message TasksAvailable {
+  string queue = 1;
+  // hint is the approximate number of due tasks; informational only.
+  int64 hint = 2;
+}
+
+// RegisterGateway announces a worker gateway and its capacity to a queue
+// grain. Re-sent periodically as a heartbeat to heal grain relocation.
+message RegisterGateway {
+  string queue = 1;
+  // gateway_name is the gateway actor name used for TellActor dispatch.
+  string gateway_name = 2;
+  // capacity is the worker's declared concurrency for this queue.
+  int32 capacity = 3;
+}
+
+// GatewayCredit grants dispatch credits from a gateway to a queue grain.
+message GatewayCredit {
+  string queue = 1;
+  string gateway_name = 2;
+  int32 credits = 3;
+}
+
+// ExecuteTask carries one durably leased task from a queue grain to a
+// gateway for dispatch down the worker stream.
+message ExecuteTask {
+  conveyor.v1.TaskEnvelope task = 1;
+  string lease_id = 2;
+  google.protobuf.Timestamp lease_expires_at = 3;
+}
+
+// TaskCompleted signals a finished execution back to the queue grain. It
+// is also the credit refill signal: the named gateway regains one dispatch
+// credit, which may start another lease cycle.
+message TaskCompleted {
+  string task_id = 1;
+  string queue = 2;
+  bool success = 3;
+  string gateway_name = 4;
+}
+
+// DrainQueue pauses dispatch for a queue (persisted via the broker).
+message DrainQueue {
+  string queue = 1;
+}
+
+// ResumeQueue resumes dispatch for a paused queue.
+message ResumeQueue {
+  string queue = 1;
+}
+
+// CancelActive asks the gateway executing a task to send a Cancel frame to
+// its worker (grain -> gateway -> worker).
+message CancelActive {
+  string task_id = 1;
+}
+
+// FireCron tells the scheduler singleton that a cron entry is due.
+message FireCron {
+  string entry_id = 1;
+}
+
+// CronEntriesChanged tells the scheduler singleton to reload cron entries
+// from the broker after an Admin API mutation.
+message CronEntriesChanged {}
+
+// LeaseCycleCompleted delivers the outcome of an asynchronous lease cycle
+// back to the queue grain that initiated it. A failed cycle carries the
+// broker error message; the next wake-up retries the cycle.
+message LeaseCycleCompleted {
+  repeated conveyor.v1.TaskEnvelope tasks = 1;
+  string lease_id = 2;
+  google.protobuf.Timestamp lease_expires_at = 3;
+  // error is the broker failure message; empty when the cycle succeeded.
+  string error = 4;
+}
+
+// PromoteTick triggers one scheduled-task promotion pass on the scheduler.
+message PromoteTick {}
+
+// ReapTick triggers one maintenance pass on the reaper.
+message ReapTick {}

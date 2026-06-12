@@ -1,0 +1,41 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  # Proto and lint run through the same Dockerfile.tools image as local
+  # `make proto` / `make lint`, so CI and contributors use identical,
+  # pinned tool versions.
+  proto:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Lint protos and regenerate code
+        run: make proto
+      - name: Verify generated code is up to date
+        run: git diff --exit-code internal/proto
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Lint
+        run: make lint
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Test (race)
+        run: go test -race ./...
+      - name: Build
+        run: go build ./...

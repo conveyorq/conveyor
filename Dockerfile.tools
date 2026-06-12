@@ -1,0 +1,29 @@
+# syntax=docker/dockerfile:1
+# Toolchain image consumed by the Makefile. Contributors do not install
+# these tools locally; `make` builds this image and runs targets inside it.
+FROM golang:1.26.4-alpine
+
+ARG GOLANGCI_VERSION=v2.12.2
+ARG BUF_VERSION=v1.70.0
+# Codegen plugins are pinned to the module versions in go.mod so generated
+# code always matches the runtime libraries.
+ARG PROTOC_GEN_GO_VERSION=v1.36.11
+ARG PROTOC_GEN_CONNECT_GO_VERSION=v1.20.0
+
+RUN apk add --no-cache \
+        bash \
+        ca-certificates \
+        curl \
+        gcc \
+        git \
+        libc-dev \
+        make \
+        musl-dev
+
+RUN GOBIN=/usr/local/bin go install google.golang.org/protobuf/cmd/protoc-gen-go@${PROTOC_GEN_GO_VERSION} \
+ && GOBIN=/usr/local/bin go install connectrpc.com/connect/cmd/protoc-gen-connect-go@${PROTOC_GEN_CONNECT_GO_VERSION} \
+ && GOBIN=/usr/local/bin go install github.com/bufbuild/buf/cmd/buf@${BUF_VERSION} \
+ && curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh \
+        | sh -s -- -b /usr/local/bin ${GOLANGCI_VERSION}
+
+WORKDIR /src
