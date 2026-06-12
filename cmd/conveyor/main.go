@@ -10,7 +10,13 @@
 //	enqueue <type> [--queue NAME] [--json PAYLOAD] [--id ID] [--in DUR]
 //	               [--at RFC3339] [--max-retry N] [--priority N]
 //	               [--retention DUR] [--unique DUR] [--unique-key KEY]
+//	stats
+//	queues pause|resume <name>
 //	tasks get <id>
+//	tasks list [--queue NAME] [--state STATE] [--limit N] [--page TOKEN]
+//	tasks run|cancel|delete <id>
+//	cron list | pause <id> | resume <id>
+//	cluster info
 //
 // The server address and token come from --addr/--token or the
 // CONVEYOR_ADDR/CONVEYOR_TOKEN environment variables; flags win.
@@ -20,11 +26,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
 	"time"
+
+	"github.com/spf13/cobra"
 
 	conveyor "github.com/tochemey/conveyor/sdk"
 )
@@ -41,33 +48,6 @@ const (
 	envToken = "CONVEYOR_TOKEN"
 )
 
-// Command names dispatched by run.
-const (
-	// commandEnqueue commits one task.
-	commandEnqueue = "enqueue"
-	// commandTasks groups task inspection subcommands.
-	commandTasks = "tasks"
-	// subcommandGet fetches one task's state.
-	subcommandGet = "get"
-)
-
-// usage is the top-level help text.
-const usage = `conveyor — command-line client for a Conveyor server
-
-Usage:
-
-  conveyor [--addr URL] [--token TOKEN] <command> [arguments]
-
-Commands:
-
-  enqueue <type>   commit one task, e.g.
-                   conveyor enqueue email:welcome --queue critical --json '{"user_id":42}' --in 5m
-  tasks get <id>   print the current state of one task
-
-The server address and token come from --addr/--token or the
-CONVEYOR_ADDR/CONVEYOR_TOKEN environment variables; flags win.
-`
-
 func main() {
 	if err := run(os.Args[1:], os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, "conveyor:", err)
@@ -75,87 +55,215 @@ func main() {
 	}
 }
 
-// run parses the global flags, builds the API client, and dispatches the
-// requested command, writing human-readable output to stdout.
+// run builds a fresh command tree and executes the requested command,
+// writing human-readable output to stdout. A fresh tree per invocation
+// keeps command state out of package globals, which tests rely on.
 func run(args []string, stdout io.Writer) error {
-	globals := flag.NewFlagSet("conveyor", flag.ContinueOnError)
-	addr := globals.String("addr", "", "server base URL (default $CONVEYOR_ADDR or "+defaultAddr+")")
-	token := globals.String("token", "", "bearer token (default $CONVEYOR_TOKEN)")
+	root := newRootCommand()
+	root.SetArgs(args)
+	root.SetOut(stdout)
 
-	globals.Usage = func() { fmt.Fprint(globals.Output(), usage) }
+	return root.Execute()
+}
 
-	if err := globals.Parse(args); err != nil {
-		return err
+// connection carries the resolved server connection settings shared by
+// every subcommand.
+type connection struct {
+	// addr is the --addr flag value; empty falls back to the environment.
+	addr string
+	// token is the --token flag value; empty falls back to the environment.
+	token string
+}
+
+// baseURL resolves the server base URL with flag > environment > default
+// precedence.
+func (c *connection) baseURL() string {
+	return firstNonEmpty(c.addr, os.Getenv(envAddr), defaultAddr)
+}
+
+// bearerToken resolves the bearer token with flag > environment
+// precedence.
+func (c *connection) bearerToken() string {
+	return firstNonEmpty(c.token, os.Getenv(envToken))
+}
+
+// client builds the SDK client for the enqueue-side commands.
+func (c *connection) client() (*conveyor.Client, error) {
+	return conveyor.NewClient(c.baseURL(), conveyor.WithToken(c.bearerToken()))
+}
+
+// newRootCommand assembles the full conveyor command tree.
+func newRootCommand() *cobra.Command {
+	conn := &connection{}
+
+	root := &cobra.Command{
+		Use:   "conveyor",
+		Short: "Command-line client for a Conveyor server",
+		Long: `conveyor — command-line client for a Conveyor server
+
+The server address and token come from --addr/--token or the
+CONVEYOR_ADDR/CONVEYOR_TOKEN environment variables; flags win.`,
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			_ = cmd.Usage()
+
+			return errors.New("a command is required")
+		},
 	}
 
-	remaining := globals.Args()
-	if len(remaining) == 0 {
-		globals.Usage()
+	root.PersistentFlags().StringVar(&conn.addr, "addr", "", "server base URL (default $CONVEYOR_ADDR or "+defaultAddr+")")
+	root.PersistentFlags().StringVar(&conn.token, "token", "", "bearer token (default $CONVEYOR_TOKEN)")
 
-		return errors.New("a command is required")
-	}
-
-	client, err := conveyor.NewClient(firstNonEmpty(*addr, os.Getenv(envAddr), defaultAddr),
-		conveyor.WithToken(firstNonEmpty(*token, os.Getenv(envToken))),
+	root.AddCommand(
+		newEnqueueCommand(conn),
+		newTasksCommand(conn),
+		newStatsCommand(conn),
+		newQueuesCommand(conn),
+		newCronCommand(conn),
+		newClusterCommand(conn),
 	)
-	if err != nil {
-		return err
+
+	return root
+}
+
+// newEnqueueCommand builds the enqueue command.
+func newEnqueueCommand(conn *connection) *cobra.Command {
+	var (
+		queue     string
+		payload   string
+		taskID    string
+		processIn time.Duration
+		processAt string
+		maxRetry  int
+		priority  int
+		retention time.Duration
+		unique    time.Duration
+		uniqueKey string
+	)
+
+	command := &cobra.Command{
+		Use:     "enqueue <type>",
+		Short:   "Commit one task",
+		Example: `  conveyor enqueue email:welcome --queue critical --json '{"user_id":42}' --in 5m`,
+		Args: func(_ *cobra.Command, args []string) error {
+			if len(args) != 1 || args[0] == "" {
+				return errors.New("enqueue: a task type is required, e.g. conveyor enqueue email:welcome --json '{...}'")
+			}
+
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			task, err := buildTask(args[0], payload)
+			if err != nil {
+				return err
+			}
+
+			options, err := buildEnqueueOptions(queue, taskID, processAt, uniqueKey, processIn, retention, unique, maxRetry, priority)
+			if err != nil {
+				return err
+			}
+
+			client, err := conn.client()
+			if err != nil {
+				return err
+			}
+
+			info, err := client.Enqueue(context.Background(), task, options...)
+			if err != nil {
+				return err
+			}
+
+			fmt.Fprintf(cmd.OutOrStdout(), "enqueued %s (queue=%s, state=%s)\n", info.ID, info.Queue, info.State)
+
+			return nil
+		},
 	}
 
-	switch remaining[0] {
-	case commandEnqueue:
-		return runEnqueue(client, remaining[1:], stdout)
+	flags := command.Flags()
+	flags.StringVar(&queue, "queue", "", "target queue (server default when empty)")
+	flags.StringVar(&payload, "json", "", "JSON payload")
+	flags.StringVar(&taskID, "id", "", "client-assigned task id for idempotent retries")
+	flags.DurationVar(&processIn, "in", 0, "delay execution by duration, e.g. 5m")
+	flags.StringVar(&processAt, "at", "", "delay execution until an RFC3339 time")
+	flags.IntVar(&maxRetry, "max-retry", 0, "retry budget (server default when 0)")
+	flags.IntVar(&priority, "priority", 0, "dispatch priority 1..9 (server default when 0)")
+	flags.DurationVar(&retention, "retention", 0, "keep the completed task visible for this long")
+	flags.DurationVar(&unique, "unique", 0, "reject duplicates of this task for the given TTL")
+	flags.StringVar(&uniqueKey, "unique-key", "", "explicit uniqueness key (default: type + payload hash)")
 
-	case commandTasks:
-		return runTasks(client, remaining[1:], stdout)
+	return command
+}
 
-	default:
-		return fmt.Errorf("unknown command %q (run conveyor with no arguments for usage)", remaining[0])
+// newTasksCommand groups the task inspection and operation subcommands.
+func newTasksCommand(conn *connection) *cobra.Command {
+	command := &cobra.Command{
+		Use:   "tasks",
+		Short: "Inspect and operate on tasks",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			_ = cmd.Usage()
+
+			if len(args) > 0 {
+				return fmt.Errorf("tasks: unknown subcommand %q", args[0])
+			}
+
+			return errors.New("tasks: a subcommand is required, e.g. conveyor tasks get <id>")
+		},
+	}
+
+	command.AddCommand(
+		newTasksGetCommand(conn),
+		newTasksListCommand(conn),
+		newTasksRunCommand(conn),
+		newTasksCancelCommand(conn),
+		newTasksDeleteCommand(conn),
+	)
+
+	return command
+}
+
+// newTasksGetCommand builds the tasks get subcommand.
+func newTasksGetCommand(conn *connection) *cobra.Command {
+	return &cobra.Command{
+		Use:   "get <id>",
+		Short: "Print the current state of one task",
+		Args:  exactTaskID("tasks get"),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			client, err := conn.client()
+			if err != nil {
+				return err
+			}
+
+			info, err := client.GetTask(context.Background(), args[0])
+			if err != nil {
+				return err
+			}
+
+			stdout := cmd.OutOrStdout()
+			fmt.Fprintf(stdout, "id:          %s\n", info.ID)
+			fmt.Fprintf(stdout, "queue:       %s\n", info.Queue)
+			fmt.Fprintf(stdout, "type:        %s\n", info.Type)
+			fmt.Fprintf(stdout, "state:       %s\n", info.State)
+			fmt.Fprintf(stdout, "priority:    %d\n", info.Priority)
+			fmt.Fprintf(stdout, "retried:     %d/%d\n", info.Retried, info.MaxRetry)
+			fmt.Fprintf(stdout, "last_error:  %s\n", orDash(info.LastError))
+			fmt.Fprintf(stdout, "enqueued_at: %s\n", formatTime(info.EnqueuedAt))
+			fmt.Fprintf(stdout, "process_at:  %s\n", formatTime(info.ProcessAt))
+
+			return nil
+		},
 	}
 }
 
-// runEnqueue commits one task from the command line.
-func runEnqueue(client *conveyor.Client, args []string, stdout io.Writer) error {
-	if len(args) == 0 || len(args[0]) == 0 || args[0][0] == '-' {
-		return errors.New("enqueue: a task type is required, e.g. conveyor enqueue email:welcome --json '{...}'")
+// exactTaskID validates that exactly one task id argument is present.
+func exactTaskID(command string) cobra.PositionalArgs {
+	return func(_ *cobra.Command, args []string) error {
+		if len(args) != 1 {
+			return fmt.Errorf("%s: exactly one task id is required", command)
+		}
+
+		return nil
 	}
-
-	taskType := args[0]
-
-	flags := flag.NewFlagSet(commandEnqueue, flag.ContinueOnError)
-	queue := flags.String("queue", "", "target queue (server default when empty)")
-	payload := flags.String("json", "", "JSON payload")
-	taskID := flags.String("id", "", "client-assigned task id for idempotent retries")
-	processIn := flags.Duration("in", 0, "delay execution by duration, e.g. 5m")
-	processAt := flags.String("at", "", "delay execution until an RFC3339 time")
-	maxRetry := flags.Int("max-retry", 0, "retry budget (server default when 0)")
-	priority := flags.Int("priority", 0, "dispatch priority 1..9 (server default when 0)")
-	retention := flags.Duration("retention", 0, "keep the completed task visible for this long")
-	unique := flags.Duration("unique", 0, "reject duplicates of this task for the given TTL")
-	uniqueKey := flags.String("unique-key", "", "explicit uniqueness key (default: type + payload hash)")
-
-	if err := flags.Parse(args[1:]); err != nil {
-		return err
-	}
-
-	task, err := buildTask(taskType, *payload)
-	if err != nil {
-		return err
-	}
-
-	options, err := buildEnqueueOptions(*queue, *taskID, *processAt, *uniqueKey, *processIn, *retention, *unique, *maxRetry, *priority)
-	if err != nil {
-		return err
-	}
-
-	info, err := client.Enqueue(context.Background(), task, options...)
-	if err != nil {
-		return err
-	}
-
-	fmt.Fprintf(stdout, "enqueued %s (queue=%s, state=%s)\n", info.ID, info.Queue, info.State)
-
-	return nil
 }
 
 // buildTask assembles the enqueueable task from the type and the optional
@@ -219,45 +327,6 @@ func buildEnqueueOptions(queue, taskID, processAt, uniqueKey string, processIn, 
 	}
 
 	return options, nil
-}
-
-// runTasks dispatches the task inspection subcommands.
-func runTasks(client *conveyor.Client, args []string, stdout io.Writer) error {
-	if len(args) == 0 {
-		return errors.New("tasks: a subcommand is required, e.g. conveyor tasks get <id>")
-	}
-
-	switch args[0] {
-	case subcommandGet:
-		return runTasksGet(client, args[1:], stdout)
-
-	default:
-		return fmt.Errorf("tasks: unknown subcommand %q", args[0])
-	}
-}
-
-// runTasksGet prints the current state of one task.
-func runTasksGet(client *conveyor.Client, args []string, stdout io.Writer) error {
-	if len(args) != 1 {
-		return errors.New("tasks get: exactly one task id is required")
-	}
-
-	info, err := client.GetTask(context.Background(), args[0])
-	if err != nil {
-		return err
-	}
-
-	fmt.Fprintf(stdout, "id:          %s\n", info.ID)
-	fmt.Fprintf(stdout, "queue:       %s\n", info.Queue)
-	fmt.Fprintf(stdout, "type:        %s\n", info.Type)
-	fmt.Fprintf(stdout, "state:       %s\n", info.State)
-	fmt.Fprintf(stdout, "priority:    %d\n", info.Priority)
-	fmt.Fprintf(stdout, "retried:     %d/%d\n", info.Retried, info.MaxRetry)
-	fmt.Fprintf(stdout, "last_error:  %s\n", orDash(info.LastError))
-	fmt.Fprintf(stdout, "enqueued_at: %s\n", formatTime(info.EnqueuedAt))
-	fmt.Fprintf(stdout, "process_at:  %s\n", formatTime(info.ProcessAt))
-
-	return nil
 }
 
 // firstNonEmpty returns the first non-empty value, encoding the

@@ -39,6 +39,22 @@ const (
 	MaxListLimit = 1000
 )
 
+// EffectiveListLimit resolves a requested ListTasks limit to the one a
+// broker actually applies. Implementations and pagination logic above the
+// broker must both use it so "page is full" stays a reliable
+// has-more-results signal.
+func EffectiveListLimit(limit int) int {
+	if limit <= 0 {
+		return DefaultListLimit
+	}
+
+	if limit > MaxListLimit {
+		return MaxListLimit
+	}
+
+	return limit
+}
+
 // LeaseExpiredMessage is recorded as the task's last error when the reaper
 // reclaims an expired lease.
 const LeaseExpiredMessage = "lease expired"
@@ -62,6 +78,36 @@ type CronEntry struct {
 	Options *conveyorv1.TaskOptions
 	// Paused suspends materialization without deleting the entry.
 	Paused bool
+}
+
+// QueueStat reports one queue's persisted pause flag and its task counts
+// per lifecycle state.
+type QueueStat struct {
+	// Queue is the queue name.
+	Queue string
+	// Paused is the persisted pause flag.
+	Paused bool
+	// Scheduled counts tasks waiting for their process_at.
+	Scheduled int64
+	// Pending counts tasks due for dispatch.
+	Pending int64
+	// Active counts tasks executing under a lease.
+	Active int64
+	// Retry counts tasks awaiting a retry attempt.
+	Retry int64
+	// Completed counts retained completed tasks.
+	Completed int64
+	// Archived counts dead-lettered tasks.
+	Archived int64
+}
+
+// TaskRecord pairs a task envelope with its current lifecycle state in
+// ListTasks results.
+type TaskRecord struct {
+	// Envelope is the stored task with execution fields overlaid.
+	Envelope *conveyorv1.TaskEnvelope
+	// State is the task's current lifecycle state.
+	State conveyorv1.TaskState
 }
 
 // TaskQuery filters ListTasks. Zero values mean "no filter".
@@ -151,6 +197,10 @@ type Broker interface {
 	// for dispatch right now (pending or retry with process_at reached).
 	PendingCount(ctx context.Context) (map[string]int64, error)
 
+	// QueueStats returns one entry per known queue — any queue holding
+	// tasks or a persisted pause flag — ordered by queue name.
+	QueueStats(ctx context.Context) ([]QueueStat, error)
+
 	// SetQueuePaused persists the paused flag for a queue.
 	SetQueuePaused(ctx context.Context, queue string, paused bool) error
 
@@ -163,7 +213,7 @@ type Broker interface {
 
 	// ListTasks returns tasks matching the query, ordered by id
 	// descending (newest first for ULID ids).
-	ListTasks(ctx context.Context, query TaskQuery) ([]*conveyorv1.TaskEnvelope, error)
+	ListTasks(ctx context.Context, query TaskQuery) ([]TaskRecord, error)
 
 	// CancelTask cancels a scheduled, pending, or retry task. It returns
 	// ErrInvalidState in any other state; canceling an executing task is

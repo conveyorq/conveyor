@@ -165,3 +165,45 @@ func FuzzSessionFrameStateMachine(f *testing.F) {
 		}
 	})
 }
+
+// TestHelloRejectsOutdatedSDKVersion covers the version-skew failure
+// matrix row: a worker on a release older than the supported minimum is
+// turned away with an actionable error, while dev builds and unknown
+// versions are admitted.
+func TestHelloRejectsOutdatedSDKVersion(t *testing.T) {
+	// The shipped minimum admits every build; raise it here to prove the
+	// gate works for the day a wire change leaves old SDKs behind.
+	previous := minSDKVersion
+	t.Cleanup(func() { minSDKVersion = previous })
+
+	minSDKVersion = "v0.5.0"
+
+	outdated := &conveyorv1.WorkerMessage{
+		Frame: &conveyorv1.WorkerMessage_Hello{
+			Hello: &conveyorv1.Hello{
+				Queues:      map[string]int32{"default": 1},
+				Concurrency: 1,
+				SdkVersion:  "v0.0.1",
+			},
+		},
+	}
+
+	err := (&sessionState{}).check(outdated)
+	require.ErrorContains(t, err, "upgrade the worker SDK")
+
+	admitted := []string{"", "unknown", "(devel)", minSDKVersion, "v9.9.9"}
+
+	for _, version := range admitted {
+		hello := &conveyorv1.WorkerMessage{
+			Frame: &conveyorv1.WorkerMessage_Hello{
+				Hello: &conveyorv1.Hello{
+					Queues:      map[string]int32{"default": 1},
+					Concurrency: 1,
+					SdkVersion:  version,
+				},
+			},
+		}
+
+		require.NoError(t, (&sessionState{}).check(hello), "version %q must be admitted", version)
+	}
+}

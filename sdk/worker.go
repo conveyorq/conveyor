@@ -82,9 +82,11 @@ func NewWorker(baseURL string, opts ...Option) (*Worker, error) {
 
 // Run processes dispatched tasks until ctx is canceled, reconnecting with
 // jittered exponential backoff whenever the session fails or the stream
-// drops. Authentication failures return immediately: a rejected token
-// never heals by retrying. Cancellation returns nil: the server releases
-// everything still in flight for immediate redelivery elsewhere.
+// drops. Permanent rejections return immediately instead of retrying: a
+// rejected token never heals, and neither does a session contract the
+// server refuses (an outdated SDK version, an invalid queue declaration).
+// Cancellation returns nil: the server releases everything still in
+// flight for immediate redelivery elsewhere.
 func (w *Worker) Run(ctx context.Context, mux *Mux) error {
 	if mux == nil {
 		return errors.New("conveyor: mux is required")
@@ -104,6 +106,17 @@ func (w *Worker) Run(ctx context.Context, mux *Mux) error {
 		switch connect.CodeOf(err) {
 		case connect.CodeUnauthenticated, connect.CodePermissionDenied:
 			return err
+
+		case connect.CodeInvalidArgument:
+			// The server rejected the session contract itself — an
+			// outdated SDK version or a malformed Hello. The same binary
+			// can never succeed by retrying. The wire check matters: a
+			// connection severed mid-frame synthesizes the same code
+			// locally ("protocol error: incomplete envelope"), and that
+			// case must keep reconnecting.
+			if connect.IsWireError(err) {
+				return err
+			}
 		}
 
 		failures++

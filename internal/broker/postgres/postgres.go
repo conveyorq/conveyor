@@ -506,6 +506,74 @@ func (b *Broker) PendingCount(ctx context.Context) (map[string]int64, error) {
 	return counts, nil
 }
 
+// queueStatsQuery aggregates task counts per (queue, state) and joins the
+// persisted pause flags, so queues that only hold a pause flag still
+// appear with zero counts.
+const queueStatsQuery = `SELECT
+  COALESCE(t.queue, s.queue) AS queue,
+  COALESCE(s.paused, FALSE) AS paused,
+  t.state,
+  t.task_count
+FROM (
+  SELECT queue, state, COUNT(*) AS task_count
+  FROM conveyor_tasks
+  GROUP BY queue, state
+) t
+FULL OUTER JOIN conveyor_queue_state s ON s.queue = t.queue
+ORDER BY 1`
+
+// QueueStats aggregates task counts and pause flags per queue; see
+// broker.Broker.
+func (b *Broker) QueueStats(ctx context.Context) ([]broker.QueueStat, error) {
+	rows, err := b.pool.Query(ctx, queueStatsQuery)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: queue stats: %w", err)
+	}
+	defer rows.Close()
+
+	var stats []broker.QueueStat
+
+	for rows.Next() {
+		var (
+			queue     string
+			paused    bool
+			state     pgtype.Int2
+			taskCount pgtype.Int8
+		)
+
+		if err = rows.Scan(&queue, &paused, &state, &taskCount); err != nil {
+			return nil, fmt.Errorf("postgres: scan queue stats: %w", err)
+		}
+
+		if len(stats) == 0 || stats[len(stats)-1].Queue != queue {
+			stats = append(stats, broker.QueueStat{Queue: queue, Paused: paused})
+		}
+
+		stat := &stats[len(stats)-1]
+
+		switch conveyorv1.TaskState(state.Int16) {
+		case conveyorv1.TaskState_TASK_STATE_SCHEDULED:
+			stat.Scheduled = taskCount.Int64
+		case conveyorv1.TaskState_TASK_STATE_PENDING:
+			stat.Pending = taskCount.Int64
+		case conveyorv1.TaskState_TASK_STATE_ACTIVE:
+			stat.Active = taskCount.Int64
+		case conveyorv1.TaskState_TASK_STATE_RETRY:
+			stat.Retry = taskCount.Int64
+		case conveyorv1.TaskState_TASK_STATE_COMPLETED:
+			stat.Completed = taskCount.Int64
+		case conveyorv1.TaskState_TASK_STATE_ARCHIVED:
+			stat.Archived = taskCount.Int64
+		}
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres: queue stats: %w", err)
+	}
+
+	return stats, nil
+}
+
 // SetQueuePaused persists the queue pause flag; see broker.Broker.
 func (b *Broker) SetQueuePaused(ctx context.Context, queue string, paused bool) error {
 	const upsertPause = `INSERT INTO conveyor_queue_state (queue, paused, updated_at)
@@ -564,15 +632,8 @@ func (b *Broker) GetTask(ctx context.Context, id string) (*conveyorv1.TaskEnvelo
 }
 
 // ListTasks returns tasks matching the query; see broker.Broker.
-func (b *Broker) ListTasks(ctx context.Context, query broker.TaskQuery) ([]*conveyorv1.TaskEnvelope, error) {
-	limit := query.Limit
-	if limit <= 0 {
-		limit = broker.DefaultListLimit
-	}
-
-	if limit > broker.MaxListLimit {
-		limit = broker.MaxListLimit
-	}
+func (b *Broker) ListTasks(ctx context.Context, query broker.TaskQuery) ([]broker.TaskRecord, error) {
+	limit := broker.EffectiveListLimit(query.Limit)
 
 	var (
 		conditions []string
@@ -596,7 +657,7 @@ func (b *Broker) ListTasks(ctx context.Context, query broker.TaskQuery) ([]*conv
 		addCondition("id", "<", query.AfterID)
 	}
 
-	listTasks := "SELECT payload, retried, last_error FROM conveyor_tasks"
+	listTasks := "SELECT payload, retried, last_error, state FROM conveyor_tasks"
 	if len(conditions) > 0 {
 		listTasks += " WHERE " + strings.Join(conditions, " AND ")
 	}
@@ -610,7 +671,33 @@ func (b *Broker) ListTasks(ctx context.Context, query broker.TaskQuery) ([]*conv
 	}
 	defer rows.Close()
 
-	return scanEnvelopes(rows)
+	var records []broker.TaskRecord
+
+	for rows.Next() {
+		var (
+			payload   []byte
+			retried   int32
+			lastError string
+			state     int16
+		)
+
+		if err = rows.Scan(&payload, &retried, &lastError, &state); err != nil {
+			return nil, fmt.Errorf("postgres: scan task: %w", err)
+		}
+
+		envelope, err := unmarshalEnvelope(payload, retried, lastError)
+		if err != nil {
+			return nil, err
+		}
+
+		records = append(records, broker.TaskRecord{Envelope: envelope, State: conveyorv1.TaskState(state)})
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres: read tasks: %w", err)
+	}
+
+	return records, nil
 }
 
 // CancelTask cancels a not-yet-running task; see broker.Broker.

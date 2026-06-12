@@ -2,6 +2,9 @@ package api
 
 import (
 	"context"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -188,4 +191,86 @@ func TestSessionCloseReleasesInflight(t *testing.T) {
 			state == conveyorv1.TaskState_TASK_STATE_PENDING &&
 			envelope.GetRetried() == 0
 	}, 10*time.Second, 20*time.Millisecond, "in-flight task must be released with no retry penalty")
+}
+
+// TestSessionDrainOnShutdown verifies the server-side graceful drain: a
+// drain ends live sessions, releases their in-flight tasks with no retry
+// penalty, and rejects new sessions while draining.
+func TestSessionDrainOnShutdown(t *testing.T) {
+	engine, taskLog := startTestEngine(t)
+	workerService := NewWorkerService(engine, slog.New(slog.DiscardHandler))
+
+	mux := http.NewServeMux()
+	mux.Handle(conveyorv1connect.NewWorkerServiceHandler(workerService))
+
+	server := httptest.NewUnstartedServer(mux)
+
+	protocols := new(http.Protocols)
+	protocols.SetHTTP1(true)
+	protocols.SetHTTP2(true)
+	protocols.SetUnencryptedHTTP2(true)
+
+	server.Config.Protocols = protocols
+	server.Start()
+	t.Cleanup(server.Close)
+
+	client := conveyorv1connect.NewWorkerServiceClient(h2cHTTPClient(), server.URL)
+	stream := client.Session(context.Background())
+
+	t.Cleanup(func() {
+		_ = stream.CloseRequest()
+		_ = stream.CloseResponse()
+	})
+
+	require.NoError(t, stream.Send(helloFrame(map[string]int32{"default": 1}, 1)))
+
+	first, err := stream.Receive()
+	require.NoError(t, err)
+	require.NotNil(t, first.GetWelcome())
+
+	ctx := context.Background()
+
+	task := &conveyorv1.TaskEnvelope{
+		Id:          "task-drain-1",
+		Queue:       "default",
+		Type:        "test:drain",
+		Payload:     []byte(`{}`),
+		ContentType: "application/json",
+		Options:     &conveyorv1.TaskOptions{MaxRetry: 3, Priority: 4},
+	}
+	require.NoError(t, engine.Enqueue(ctx, task))
+
+	dispatched, err := stream.Receive()
+	require.NoError(t, err)
+	require.NotNil(t, dispatched.GetDispatch())
+
+	// Drain with the task still executing: the session must end and the
+	// task must be released with no retry penalty before Drain returns.
+	drainCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	require.NoError(t, workerService.DrainSessions(drainCtx))
+
+	envelope, state, err := taskLog.GetTask(ctx, "task-drain-1")
+	require.NoError(t, err)
+	require.Equal(t, conveyorv1.TaskState_TASK_STATE_PENDING, state)
+	require.Zero(t, envelope.GetRetried(), "drain release must not count as a retry")
+
+	// The worker sees its stream end.
+	_, err = stream.Receive()
+	require.Error(t, err, "drained session stream must be closed")
+
+	// New sessions are turned away while draining.
+	second := client.Session(context.Background())
+
+	t.Cleanup(func() {
+		_ = second.CloseRequest()
+		_ = second.CloseResponse()
+	})
+
+	require.NoError(t, second.Send(helloFrame(map[string]int32{"default": 1}, 1)))
+
+	_, err = second.Receive()
+	require.Error(t, err)
+	require.Equal(t, connect.CodeUnavailable, connect.CodeOf(err))
 }

@@ -5,12 +5,23 @@ import (
 	"fmt"
 	"regexp"
 
+	"golang.org/x/mod/semver"
+
 	conveyorv1 "github.com/tochemey/conveyor/internal/proto/conveyor/v1"
 )
 
 // queueNamePattern restricts queue names to what grain identity names
 // accept; a queue name becomes part of its grain's cluster-wide identity.
 var queueNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9-_.]*$`)
+
+// minSDKVersion is the oldest worker SDK version admitted to a session.
+// Versions that do not parse as semver — dev builds, "unknown", custom
+// clients — are admitted: the gate only rejects releases known to predate
+// the wire protocol. The current value admits every build, including the
+// v0.0.0 pseudo-versions Go stamps on untagged checkouts; bump it when a
+// wire change leaves older SDKs behind. A variable, not a constant, so
+// tests can exercise the gate.
+var minSDKVersion = "v0.0.0-0"
 
 // Protocol violation errors. Each one ends the offending session.
 var (
@@ -81,9 +92,15 @@ func (s *sessionState) check(message *conveyorv1.WorkerMessage) error {
 	}
 }
 
-// validateHello checks the session-opening frame: at least one validly
-// named queue with a positive weight, and positive concurrency.
+// validateHello checks the session-opening frame: a supported SDK
+// version, at least one validly named queue with a positive weight, and
+// positive concurrency.
 func validateHello(hello *conveyorv1.Hello) error {
+	version := hello.GetSdkVersion()
+	if semver.IsValid(version) && semver.Compare(version, minSDKVersion) < 0 {
+		return fmt.Errorf("sdk version %s is no longer supported, the minimum is %s; upgrade the worker SDK", version, minSDKVersion)
+	}
+
 	if hello.GetConcurrency() <= 0 {
 		return fmt.Errorf("protocol violation: concurrency must be positive, got %d", hello.GetConcurrency())
 	}

@@ -114,6 +114,10 @@ func (g *QueueGrain) OnReceive(ctx *goakt.GrainContext) {
 		g.finishLeaseCycle(ctx, message)
 		ctx.NoErr()
 
+	case *conveyorv1.CancelActive:
+		g.broadcastCancel(ctx, message)
+		ctx.NoErr()
+
 	case *conveyorv1.DrainQueue:
 		g.setPaused(ctx, true)
 
@@ -320,6 +324,19 @@ func (g *QueueGrain) pickGateway() *gatewayCredits {
 	}
 
 	return nil
+}
+
+// broadcastCancel forwards an admin cancel request for an active task to
+// every registered gateway. Only the session executing the task reacts
+// with a worker Cancel frame; the others drop the unknown id. The
+// forwarding is best-effort, matching the documented cancel contract for
+// active tasks.
+func (g *QueueGrain) broadcastCancel(ctx *goakt.GrainContext, message *conveyorv1.CancelActive) {
+	for _, gateway := range g.gateways {
+		if err := ctx.TellActor(gateway.name, message); err != nil {
+			g.runtime.Logger().Warn("cancel broadcast failed", "queue", g.queue, "gateway", gateway.name, "task_id", message.GetTaskId(), "error", err)
+		}
+	}
 }
 
 // removeGateway forgets a gateway and its credits.

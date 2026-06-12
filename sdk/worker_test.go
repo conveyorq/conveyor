@@ -3,15 +3,19 @@ package conveyor
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
 
 	conveyorv1 "github.com/tochemey/conveyor/internal/proto/conveyor/v1"
+	"github.com/tochemey/conveyor/internal/proto/conveyor/v1/conveyorv1connect"
 )
 
 func TestNewWorkerValidation(t *testing.T) {
@@ -204,6 +208,51 @@ func TestWorkerRunFailsFastOnBadToken(t *testing.T) {
 
 	case <-time.After(10 * time.Second):
 		t.Fatal("worker kept retrying an unauthenticated session")
+	}
+}
+
+// rejectingWorkerService refuses every session the way a server gates an
+// outdated SDK version: a permanent InvalidArgument rejection.
+type rejectingWorkerService struct{}
+
+// Session implements conveyorv1connect.WorkerServiceHandler.
+func (rejectingWorkerService) Session(_ context.Context, _ *connect.BidiStream[conveyorv1.WorkerMessage, conveyorv1.ServerMessage]) error {
+	return connect.NewError(connect.CodeInvalidArgument, errors.New("sdk version v0.0.1 is no longer supported"))
+}
+
+// TestWorkerRunFailsFastOnRejectedSession pins the second reconnect
+// exception: a session contract the server permanently refuses (outdated
+// SDK version, malformed Hello) never heals with the same binary, so Run
+// must surface the error instead of silently retrying forever.
+func TestWorkerRunFailsFastOnRejectedSession(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.Handle(conveyorv1connect.NewWorkerServiceHandler(rejectingWorkerService{}))
+
+	server := httptest.NewUnstartedServer(mux)
+
+	protocols := new(http.Protocols)
+	protocols.SetHTTP1(true)
+	protocols.SetHTTP2(true)
+	protocols.SetUnencryptedHTTP2(true)
+
+	server.Config.Protocols = protocols
+	server.Start()
+	t.Cleanup(server.Close)
+
+	worker, err := NewWorker(server.URL,
+		WithQueues(map[string]int{"default": 1}), WithConcurrency(1))
+	require.NoError(t, err)
+
+	runDone := make(chan error, 1)
+
+	go func() { runDone <- worker.Run(context.Background(), NewMux()) }()
+
+	select {
+	case err := <-runDone:
+		require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+
+	case <-time.After(10 * time.Second):
+		t.Fatal("worker kept retrying a permanently rejected session")
 	}
 }
 

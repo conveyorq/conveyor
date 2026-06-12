@@ -66,6 +66,7 @@ func Run(t *testing.T, factory Factory) {
 		{"DeleteTask", testDeleteTask},
 		{"RunTaskNow", testRunTaskNow},
 		{"QueuePauseFlag", testQueuePauseFlag},
+		{"QueueStats", testQueueStats},
 		{"CronEntries", testCronEntries},
 		{"ListTasks", testListTasks},
 		{"ConcurrentLeaseNoDoubleDelivery", testConcurrentLeaseNoDoubleDelivery},
@@ -672,6 +673,62 @@ func testQueuePauseFlag(t *testing.T, b broker.Broker, _ *clock.Fake) {
 	}
 }
 
+func testQueueStats(t *testing.T, b broker.Broker, _ *clock.Fake) {
+	ctx := context.Background()
+
+	// Drive one task of the default queue into each lifecycle state.
+	mustEnqueue(t, b, newTask("task-001"))
+	mustLease(t, b, queueName, 1, "lease-1")
+
+	if err := b.Ack(ctx, "task-001", "lease-1", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	mustEnqueue(t, b, newTask("task-002"))
+	mustLease(t, b, queueName, 1, "lease-2")
+
+	if err := b.Fail(ctx, "task-002", "lease-2", "boom", start.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	mustEnqueue(t, b, newTask("task-003"))
+	mustLease(t, b, queueName, 1, "lease-3")
+
+	if err := b.Archive(ctx, "task-003", "lease-3", "dead"); err != nil {
+		t.Fatal(err)
+	}
+
+	mustEnqueue(t, b, newTask("task-004"))
+	mustLease(t, b, queueName, 1, "lease-4")
+	mustEnqueue(t, b, newTask("task-005"))
+	mustEnqueue(t, b, newTask("task-006", withProcessAt(start.Add(time.Hour))))
+	mustEnqueue(t, b, newTask("task-007", withQueue("other")))
+
+	// A paused queue with no tasks must still appear.
+	if err := b.SetQueuePaused(ctx, "idle", true); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := b.SetQueuePaused(ctx, "other", true); err != nil {
+		t.Fatal(err)
+	}
+
+	stats, err := b.QueueStats(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []broker.QueueStat{
+		{Queue: queueName, Scheduled: 1, Pending: 1, Active: 1, Retry: 1, Completed: 1, Archived: 1},
+		{Queue: "idle", Paused: true},
+		{Queue: "other", Paused: true, Pending: 1},
+	}
+
+	if !slices.Equal(stats, want) {
+		t.Fatalf("QueueStats = %+v, want %+v", stats, want)
+	}
+}
+
 func testCronEntries(t *testing.T, b broker.Broker, _ *clock.Fake) {
 	entry := &broker.CronEntry{
 		ID:          "cron-b",
@@ -736,28 +793,43 @@ func testListTasks(t *testing.T, b broker.Broker, _ *clock.Fake) {
 	mustLease(t, b, queueName, 1, "lease-1")
 
 	// Newest first.
-	tasks, err := b.ListTasks(context.Background(), broker.TaskQuery{Queue: queueName})
+	records, err := b.ListTasks(context.Background(), broker.TaskQuery{Queue: queueName})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if len(tasks) != 5 || tasks[0].GetId() != "task-005" {
-		t.Fatalf("list = %v, want 5 tasks newest first", leasedIDs(tasks))
+	if len(records) != 5 || records[0].Envelope.GetId() != "task-005" {
+		t.Fatalf("list = %v, want 5 tasks newest first", recordIDs(records))
+	}
+
+	// Every record carries its current state.
+	if records[4].State != conveyorv1.TaskState_TASK_STATE_ACTIVE || records[0].State != conveyorv1.TaskState_TASK_STATE_PENDING {
+		t.Fatalf("record states = %v/%v, want active/pending", records[4].State, records[0].State)
 	}
 
 	// State filter.
-	tasks, _ = b.ListTasks(context.Background(), broker.TaskQuery{State: conveyorv1.TaskState_TASK_STATE_ACTIVE})
-	if len(tasks) != 1 || tasks[0].GetId() != "task-001" {
-		t.Fatalf("active filter = %v, want [task-001]", leasedIDs(tasks))
+	records, _ = b.ListTasks(context.Background(), broker.TaskQuery{State: conveyorv1.TaskState_TASK_STATE_ACTIVE})
+	if len(records) != 1 || records[0].Envelope.GetId() != "task-001" {
+		t.Fatalf("active filter = %v, want [task-001]", recordIDs(records))
 	}
 
 	// Keyset pagination.
-	tasks, _ = b.ListTasks(context.Background(), broker.TaskQuery{Queue: queueName, Limit: 2})
-	tasks, _ = b.ListTasks(context.Background(), broker.TaskQuery{Queue: queueName, Limit: 2, AfterID: tasks[1].GetId()})
+	records, _ = b.ListTasks(context.Background(), broker.TaskQuery{Queue: queueName, Limit: 2})
+	records, _ = b.ListTasks(context.Background(), broker.TaskQuery{Queue: queueName, Limit: 2, AfterID: records[1].Envelope.GetId()})
 
-	if len(tasks) != 2 || tasks[0].GetId() != "task-003" {
-		t.Fatalf("page 2 = %v, want [task-003 task-002]", leasedIDs(tasks))
+	if len(records) != 2 || records[0].Envelope.GetId() != "task-003" {
+		t.Fatalf("page 2 = %v, want [task-003 task-002]", recordIDs(records))
 	}
+}
+
+// recordIDs projects the ids of listed task records.
+func recordIDs(records []broker.TaskRecord) []string {
+	ids := make([]string, 0, len(records))
+	for _, record := range records {
+		ids = append(ids, record.Envelope.GetId())
+	}
+
+	return ids
 }
 
 func testConcurrentLeaseNoDoubleDelivery(t *testing.T, b broker.Broker, _ *clock.Fake) {

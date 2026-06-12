@@ -458,6 +458,60 @@ func (b *Broker) PendingCount(_ context.Context) (map[string]int64, error) {
 	return counts, nil
 }
 
+// QueueStats aggregates task counts and pause flags per queue; see
+// broker.Broker.
+func (b *Broker) QueueStats(_ context.Context) ([]broker.QueueStat, error) {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	stats := make(map[string]*broker.QueueStat)
+
+	queueStat := func(queue string) *broker.QueueStat {
+		stat, exists := stats[queue]
+
+		if !exists {
+			stat = &broker.QueueStat{Queue: queue, Paused: b.pausedQueues[queue]}
+			stats[queue] = stat
+		}
+
+		return stat
+	}
+
+	for queue := range b.pausedQueues {
+		queueStat(queue)
+	}
+
+	for _, row := range b.tasks {
+		stat := queueStat(row.envelope.GetQueue())
+
+		switch row.state {
+		case conveyorv1.TaskState_TASK_STATE_SCHEDULED:
+			stat.Scheduled++
+		case conveyorv1.TaskState_TASK_STATE_PENDING:
+			stat.Pending++
+		case conveyorv1.TaskState_TASK_STATE_ACTIVE:
+			stat.Active++
+		case conveyorv1.TaskState_TASK_STATE_RETRY:
+			stat.Retry++
+		case conveyorv1.TaskState_TASK_STATE_COMPLETED:
+			stat.Completed++
+		case conveyorv1.TaskState_TASK_STATE_ARCHIVED:
+			stat.Archived++
+		}
+	}
+
+	ordered := make([]broker.QueueStat, 0, len(stats))
+	for _, stat := range stats {
+		ordered = append(ordered, *stat)
+	}
+
+	slices.SortFunc(ordered, func(a, other broker.QueueStat) int {
+		return strings.Compare(a.Queue, other.Queue)
+	})
+
+	return ordered, nil
+}
+
 // SetQueuePaused persists the queue pause flag; see broker.Broker.
 func (b *Broker) SetQueuePaused(_ context.Context, queue string, paused bool) error {
 	b.mutex.Lock()
@@ -490,18 +544,11 @@ func (b *Broker) GetTask(_ context.Context, id string) (*conveyorv1.TaskEnvelope
 }
 
 // ListTasks returns tasks matching the query; see broker.Broker.
-func (b *Broker) ListTasks(_ context.Context, query broker.TaskQuery) ([]*conveyorv1.TaskEnvelope, error) {
+func (b *Broker) ListTasks(_ context.Context, query broker.TaskQuery) ([]broker.TaskRecord, error) {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 
-	limit := query.Limit
-	if limit <= 0 {
-		limit = broker.DefaultListLimit
-	}
-
-	if limit > broker.MaxListLimit {
-		limit = broker.MaxListLimit
-	}
+	limit := broker.EffectiveListLimit(query.Limit)
 
 	var matched []*taskRow
 
@@ -529,12 +576,12 @@ func (b *Broker) ListTasks(_ context.Context, query broker.TaskQuery) ([]*convey
 		matched = matched[:limit]
 	}
 
-	tasks := make([]*conveyorv1.TaskEnvelope, 0, len(matched))
+	records := make([]broker.TaskRecord, 0, len(matched))
 	for _, row := range matched {
-		tasks = append(tasks, overlay(row))
+		records = append(records, broker.TaskRecord{Envelope: overlay(row), State: row.state})
 	}
 
-	return tasks, nil
+	return records, nil
 }
 
 // CancelTask cancels a not-yet-running task; see broker.Broker.

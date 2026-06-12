@@ -25,6 +25,13 @@ const defaultPriority = 4
 // maxPriority is the highest accepted task priority.
 const maxPriority = 9
 
+// maxPayloadBytes caps one task payload. Larger blobs belong in object
+// storage with a reference in the payload.
+const maxPayloadBytes = 1 << 20
+
+// maxBatchTasks caps the number of items in one EnqueueBatch request.
+const maxBatchTasks = 1000
+
 // TaskService serves the enqueue-side API.
 type TaskService struct {
 	// engine commits tasks and wakes their queue grains.
@@ -62,7 +69,7 @@ func (s *TaskService) Enqueue(ctx context.Context, request *connect.Request[conv
 	}
 
 	return connect.NewResponse(&conveyorv1.EnqueueResponse{
-		Task: s.taskInfo(envelope, s.initialState(envelope)),
+		Task: taskInfo(envelope, s.initialState(envelope)),
 	}), nil
 }
 
@@ -72,6 +79,11 @@ func (s *TaskService) EnqueueBatch(ctx context.Context, request *connect.Request
 	items := request.Msg.GetTasks()
 	if len(items) == 0 {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("batch must contain at least one task"))
+	}
+
+	if len(items) > maxBatchTasks {
+		return nil, connect.NewError(connect.CodeInvalidArgument,
+			fmt.Errorf("batch holds %d tasks, the maximum is %d; split it into smaller batches", len(items), maxBatchTasks))
 	}
 
 	results := make([]*conveyorv1.EnqueueResult, 0, len(items))
@@ -89,7 +101,7 @@ func (s *TaskService) EnqueueBatch(ctx context.Context, request *connect.Request
 		}
 
 		results = append(results, &conveyorv1.EnqueueResult{
-			Task: s.taskInfo(envelope, s.initialState(envelope)),
+			Task: taskInfo(envelope, s.initialState(envelope)),
 		})
 	}
 
@@ -112,7 +124,7 @@ func (s *TaskService) GetTask(ctx context.Context, request *connect.Request[conv
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 
-	return connect.NewResponse(&conveyorv1.GetTaskResponse{Task: s.taskInfo(envelope, state)}), nil
+	return connect.NewResponse(&conveyorv1.GetTaskResponse{Task: taskInfo(envelope, state)}), nil
 }
 
 // envelopeFromRequest validates one enqueue request and builds the durable
@@ -129,6 +141,10 @@ func (s *TaskService) envelopeFromRequest(request *conveyorv1.EnqueueRequest) (*
 
 	if !queueNamePattern.MatchString(queue) {
 		return nil, fmt.Errorf("invalid queue name %q", queue)
+	}
+
+	if len(request.GetPayload()) > maxPayloadBytes {
+		return nil, fmt.Errorf("payload is %d bytes, the maximum is %d; store large blobs elsewhere and enqueue a reference", len(request.GetPayload()), maxPayloadBytes)
 	}
 
 	if request.GetProcessAt().IsValid() && request.GetProcessIn().IsValid() {
@@ -196,7 +212,7 @@ func (s *TaskService) initialState(envelope *conveyorv1.TaskEnvelope) conveyorv1
 }
 
 // taskInfo maps a task envelope and state to the external task view.
-func (s *TaskService) taskInfo(envelope *conveyorv1.TaskEnvelope, state conveyorv1.TaskState) *conveyorv1.TaskInfo {
+func taskInfo(envelope *conveyorv1.TaskEnvelope, state conveyorv1.TaskState) *conveyorv1.TaskInfo {
 	// completed_at stays unset: the broker does not expose the completion
 	// instant yet; the admin surface will extend it.
 	return &conveyorv1.TaskInfo{

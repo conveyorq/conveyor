@@ -88,6 +88,8 @@ func startAPIServer(t *testing.T, engine *actors.Engine, taskLog broker.Broker, 
 		NewTaskService(engine, taskLog, clock.System(), testDefaultMaxRetry), options...))
 	mux.Handle(conveyorv1connect.NewWorkerServiceHandler(
 		NewWorkerService(engine, slog.New(slog.DiscardHandler)), options...))
+	mux.Handle(conveyorv1connect.NewAdminServiceHandler(
+		NewAdminService(engine, taskLog, clock.System()), options...))
 
 	server := httptest.NewUnstartedServer(mux)
 

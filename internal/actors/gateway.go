@@ -8,6 +8,7 @@ import (
 	"time"
 
 	goakt "github.com/tochemey/goakt/v4/actor"
+	"github.com/tochemey/goakt/v4/breaker"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/tochemey/conveyor/internal/backoff"
@@ -25,6 +26,42 @@ const registerInterval = 30 * time.Second
 // retriesExhaustedMessage prefixes the archive reason when a retryable
 // failure lands on a task that has no retries left.
 const retriesExhaustedMessage = "retries exhausted: "
+
+// canceledByAdminMessage prefixes the archive reason when an admin
+// canceled a task mid-execution and its aborted attempt would otherwise
+// have been retried.
+const canceledByAdminMessage = "canceled by admin: "
+
+// Per-task-type circuit breaker parameters. A type whose recent outcomes
+// are mostly retryable failures stops earning immediate credit refills,
+// so a dead downstream cannot burn through retries at full speed.
+const (
+	// breakerFailureRate is the sliding-window failure rate that opens
+	// the breaker.
+	breakerFailureRate = 0.5
+	// breakerMinRequests is the minimum number of recorded outcomes
+	// before the failure rate is evaluated.
+	breakerMinRequests = 10
+	// breakerOpenTimeout is how long an open breaker withholds credit
+	// refills before probing again.
+	breakerOpenTimeout = 30 * time.Second
+)
+
+// errRetryableFailure feeds RETRY outcomes into the circuit breaker's
+// failure stats.
+var errRetryableFailure = errors.New("retryable task failure")
+
+// deferredCompletion re-enters a completion report that was withheld
+// while the task type's circuit breaker was open. It is a plain local
+// message: the gateway never relocates.
+type deferredCompletion struct {
+	// queue is the queue grain owed the completion report.
+	queue string
+	// taskID identifies the resolved task.
+	taskID string
+	// success is the recorded outcome of the execution.
+	success bool
+}
 
 // registerTick asks the gateway to re-announce itself to its queue grains.
 // It is a plain local message: the gateway never relocates, so it never
@@ -68,10 +105,15 @@ type inflightTask struct {
 	leaseID string
 	// queue is the queue the task was leased from.
 	queue string
+	// taskType is the handler routing key, keying the circuit breaker.
+	taskType string
 	// retried is the task's retry counter at dispatch time.
 	retried int32
 	// maxRetry is the task's retry budget.
 	maxRetry int32
+	// cancelRequested records an admin cancel for this delivery: an
+	// aborted attempt archives instead of retrying.
+	cancelRequested bool
 }
 
 // Gateway is the per-session bridge between the actor world and one worker
@@ -102,6 +144,8 @@ type Gateway struct {
 	identities map[string]*goakt.GrainIdentity
 	// inflight tracks dispatched tasks by id until their result arrives.
 	inflight map[string]*inflightTask
+	// breakers holds the per-task-type circuit breakers.
+	breakers map[string]*breaker.CircuitBreaker
 }
 
 // enforce interface compliance at compile time.
@@ -125,6 +169,7 @@ func (g *Gateway) PreStart(ctx *goakt.Context) error {
 	g.strategy = backoff.New(backoff.DefaultBase, backoff.DefaultCap)
 	g.identities = make(map[string]*goakt.GrainIdentity, len(g.session.Queues))
 	g.inflight = make(map[string]*inflightTask)
+	g.breakers = make(map[string]*breaker.CircuitBreaker)
 
 	return nil
 }
@@ -154,6 +199,12 @@ func (g *Gateway) Receive(ctx *goakt.ReceiveContext) {
 
 	case *conveyorv1.Credit:
 		g.credit(ctx, message)
+
+	case *conveyorv1.CancelActive:
+		g.cancelActive(message)
+
+	case deferredCompletion:
+		g.reportCompletion(ctx, message.queue, message.taskID, message.success)
 
 	default:
 		ctx.Unhandled()
@@ -230,6 +281,7 @@ func (g *Gateway) dispatch(message *conveyorv1.ExecuteTask) {
 	g.inflight[task.GetId()] = &inflightTask{
 		leaseID:  message.GetLeaseId(),
 		queue:    task.GetQueue(),
+		taskType: task.GetType(),
 		retried:  task.GetRetried(),
 		maxRetry: task.GetOptions().GetMaxRetry(),
 	}
@@ -302,9 +354,16 @@ func (g *Gateway) result(ctx *goakt.ReceiveContext, message *conveyorv1.Result) 
 		err = taskLog.Ack(goCtx, taskID, entry.leaseID, message.GetResult())
 
 	case conveyorv1.TaskOutcome_TASK_OUTCOME_RETRY:
-		if entry.retried >= entry.maxRetry {
+		switch {
+		case entry.cancelRequested:
+			// The admin canceled this delivery; the handler aborted and
+			// must not earn a retry.
+			err = taskLog.Archive(goCtx, taskID, entry.leaseID, canceledByAdminMessage+message.GetErrorMsg())
+
+		case entry.retried >= entry.maxRetry:
 			err = taskLog.Archive(goCtx, taskID, entry.leaseID, retriesExhaustedMessage+message.GetErrorMsg())
-		} else {
+
+		default:
 			processAt := g.runtime.Clock().Now().Add(g.strategy.Delay(entry.retried))
 			err = taskLog.Fail(goCtx, taskID, entry.leaseID, message.GetErrorMsg(), processAt)
 		}
@@ -332,7 +391,79 @@ func (g *Gateway) result(ctx *goakt.ReceiveContext, message *conveyorv1.Result) 
 
 	success := message.GetOutcome() == conveyorv1.TaskOutcome_TASK_OUTCOME_SUCCESS && err == nil
 
+	g.recordOutcome(entry.taskType, message.GetOutcome())
+
+	if g.breakerFor(entry.taskType).State() == breaker.Open {
+		g.deferCompletion(ctx, entry.queue, taskID, success)
+
+		return
+	}
+
 	g.reportCompletion(ctx, entry.queue, taskID, success)
+}
+
+// breakerFor returns the task type's circuit breaker, creating it on
+// first use.
+func (g *Gateway) breakerFor(taskType string) *breaker.CircuitBreaker {
+	circuitBreaker, exists := g.breakers[taskType]
+
+	if !exists {
+		circuitBreaker = breaker.NewCircuitBreaker(
+			breaker.WithFailureRate(breakerFailureRate),
+			breaker.WithMinRequests(breakerMinRequests),
+			breaker.WithOpenTimeout(breakerOpenTimeout),
+		)
+		g.breakers[taskType] = circuitBreaker
+	}
+
+	return circuitBreaker
+}
+
+// recordOutcome feeds one execution outcome into the task type's circuit
+// breaker: RETRY counts as a failure, SUCCESS as a success, and all other
+// outcomes (release, skip-retry) carry no health signal.
+func (g *Gateway) recordOutcome(taskType string, outcome conveyorv1.TaskOutcome) {
+	var failed bool
+
+	switch outcome {
+	case conveyorv1.TaskOutcome_TASK_OUTCOME_SUCCESS:
+		failed = false
+
+	case conveyorv1.TaskOutcome_TASK_OUTCOME_RETRY:
+		failed = true
+
+	default:
+		return
+	}
+
+	// Execute with an instant probe records the outcome in the breaker's
+	// sliding window; while open it rejects, which simply drops the
+	// sample.
+	_, _ = g.breakerFor(taskType).Execute(context.Background(), func(context.Context) (any, error) {
+		if failed {
+			return nil, errRetryableFailure
+		}
+
+		return nil, nil
+	})
+}
+
+// deferCompletion withholds a completion report — and with it the queue
+// grain's credit refill — until the open breaker's timeout lapses, so a
+// failing task type drains at probe speed instead of full speed. If the
+// deferral cannot be scheduled the report goes out immediately: losing
+// throughput capping is safer than losing a credit.
+func (g *Gateway) deferCompletion(ctx *goakt.ReceiveContext, queue, taskID string, success bool) {
+	deferred := deferredCompletion{queue: queue, taskID: taskID, success: success}
+
+	if err := ctx.ActorSystem().ScheduleOnce(ctx.Context(), deferred, ctx.Self(), breakerOpenTimeout); err != nil {
+		g.runtime.Logger().Warn("deferring completion failed; reporting immediately", "task_id", taskID, "error", err)
+		g.reportCompletion(ctx, queue, taskID, success)
+
+		return
+	}
+
+	g.runtime.Logger().Debug("completion withheld: circuit open for task type", "task_id", taskID, "queue", queue)
 }
 
 // heartbeat extends the lease of every task the worker reports as still
@@ -373,6 +504,32 @@ func (g *Gateway) heartbeat(message *conveyorv1.Heartbeat) {
 
 		g.runtime.Logger().Debug("lease lost; worker canceled", "task_id", taskID, "gateway", g.name)
 	}
+}
+
+// cancelActive forwards a best-effort Cancel frame for an admin-canceled
+// task this session is executing; an unknown id belongs to another session
+// and is dropped. The delivery is marked so the handler's aborted attempt
+// archives instead of earning a retry; only a genuine success outcome
+// still completes the task.
+func (g *Gateway) cancelActive(message *conveyorv1.CancelActive) {
+	entry, ok := g.inflight[message.GetTaskId()]
+	if !ok {
+		return
+	}
+
+	entry.cancelRequested = true
+
+	cancel := &conveyorv1.ServerMessage{
+		Frame: &conveyorv1.ServerMessage_Cancel{Cancel: &conveyorv1.Cancel{TaskId: message.GetTaskId()}},
+	}
+
+	if err := g.sender.Send(cancel); err != nil {
+		g.runtime.Logger().Warn("admin cancel frame send failed", "task_id", message.GetTaskId(), "error", err)
+
+		return
+	}
+
+	g.runtime.Logger().Debug("admin cancel forwarded to worker", "task_id", message.GetTaskId(), "gateway", g.name)
 }
 
 // credit forwards worker-opened slots to every declared queue grain. The

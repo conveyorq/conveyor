@@ -90,7 +90,11 @@ func (e *Engine) Start(ctx context.Context) error {
 		return fmt.Errorf("building actor system: %w", err)
 	}
 
-	if err = system.Start(ctx); err != nil {
+	// GoAkt captures the start context as the base context of its remoting
+	// server: a boot- or signal-scoped context would silently kill all
+	// grain messaging the moment it ends. The engine's lifetime is
+	// controlled by Stop alone, so the system starts detached.
+	if err = system.Start(context.WithoutCancel(ctx)); err != nil {
 		return fmt.Errorf("starting actor system: %w", err)
 	}
 
@@ -127,7 +131,10 @@ func (e *Engine) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop shuts the actor system down.
+// Stop shuts the actor system down. Worker sessions must be drained
+// before this call: GoAkt rejects every user message the moment its stop
+// sequence begins, so a gateway can no longer process a drain request —
+// or any durable transition — once the system is stopping.
 func (e *Engine) Stop(ctx context.Context) error {
 	return e.system.Stop(ctx)
 }

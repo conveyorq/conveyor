@@ -64,6 +64,9 @@ type Server struct {
 	taskLog broker.Broker
 	// engine is the coordination layer; nil until Start succeeds.
 	engine *actors.Engine
+	// workerService holds the live worker sessions; nil until Start
+	// succeeds. The engine drains it during coordinated shutdown.
+	workerService *api.WorkerService
 }
 
 // New assembles a Server from a validated configuration. All components
@@ -215,8 +218,11 @@ func (s *Server) buildMux() *http.ServeMux {
 	taskService := api.NewTaskService(s.engine, s.taskLog, clock.System(), int32(s.config.Engine.DefaultMaxRetry))
 	mux.Handle(conveyorv1connect.NewTaskServiceHandler(taskService, options...))
 
-	workerService := api.NewWorkerService(s.engine, s.logger)
-	mux.Handle(conveyorv1connect.NewWorkerServiceHandler(workerService, options...))
+	s.workerService = api.NewWorkerService(s.engine, s.logger)
+	mux.Handle(conveyorv1connect.NewWorkerServiceHandler(s.workerService, options...))
+
+	adminService := api.NewAdminService(s.engine, s.taskLog, clock.System())
+	mux.Handle(conveyorv1connect.NewAdminServiceHandler(adminService, options...))
 
 	return mux
 }
@@ -252,16 +258,30 @@ func (s *Server) Addr() string {
 }
 
 // Stop gracefully shuts the server down, honoring the context deadline:
-// the API listener stops accepting work, the engine drains, and the
-// broker closes last. Stop is idempotent.
+// worker sessions drain first (releasing in-flight tasks for redelivery
+// elsewhere), then the API listener and the engine stop, and the broker
+// closes last. Stop is idempotent.
 func (s *Server) Stop(ctx context.Context) error {
 	s.logger.Info("conveyord stopping")
 
 	var errs []error
 
-	if err := s.http.Shutdown(ctx); err != nil {
-		errs = append(errs, fmt.Errorf("stopping API server: %w", err))
+	// The drain must complete before the engine stops: GoAkt rejects all
+	// user messages once its stop sequence begins, after which gateways
+	// can no longer release their in-flight tasks.
+	if s.workerService != nil {
+		if err := s.workerService.DrainSessions(ctx); err != nil {
+			errs = append(errs, fmt.Errorf("draining worker sessions: %w", err))
+		}
 	}
+
+	// Shutdown closes the listener immediately; the drained session
+	// streams have already ended, so only short unary requests remain.
+	httpDone := make(chan error, 1)
+
+	go func() {
+		httpDone <- s.http.Shutdown(ctx)
+	}()
 
 	if s.engine != nil {
 		if err := s.engine.Stop(ctx); err != nil {
@@ -269,6 +289,10 @@ func (s *Server) Stop(ctx context.Context) error {
 		} else {
 			s.engine = nil
 		}
+	}
+
+	if err := <-httpDone; err != nil {
+		errs = append(errs, fmt.Errorf("stopping API server: %w", err))
 	}
 
 	if s.taskLog != nil {

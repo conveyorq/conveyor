@@ -5,19 +5,13 @@ package transport
 
 import (
 	"context"
-	"net/http"
 
 	"connectrpc.com/connect"
 
 	conveyorv1 "github.com/tochemey/conveyor/internal/proto/conveyor/v1"
 	"github.com/tochemey/conveyor/internal/proto/conveyor/v1/conveyorv1connect"
+	"github.com/tochemey/conveyor/internal/wire"
 )
-
-// authorizationHeader is the HTTP header carrying the bearer token.
-const authorizationHeader = "Authorization"
-
-// bearerPrefix is the authorization scheme prefix.
-const bearerPrefix = "Bearer "
 
 // Client is the SDK's wire client: task RPCs and worker sessions over one
 // HTTP/2 connection pool.
@@ -33,15 +27,11 @@ type Client struct {
 // unencrypted HTTP/2, which the worker stream requires; https negotiates
 // HTTP/2 via ALPN.
 func New(baseURL, token string) *Client {
-	protocols := new(http.Protocols)
-	protocols.SetHTTP2(true)
-	protocols.SetUnencryptedHTTP2(true)
-
-	httpClient := &http.Client{Transport: &http.Transport{Protocols: protocols}}
+	httpClient := wire.NewH2CClient()
 
 	var options []connect.ClientOption
 	if token != "" {
-		options = append(options, connect.WithInterceptors(&authInterceptor{token: token}))
+		options = append(options, connect.WithInterceptors(wire.NewBearerInterceptor(token)))
 	}
 
 	return &Client{
@@ -73,38 +63,4 @@ func (c *Client) GetTask(ctx context.Context, id string) (*conveyorv1.TaskInfo, 
 // Session opens one worker session stream.
 func (c *Client) Session(ctx context.Context) *connect.BidiStreamForClient[conveyorv1.WorkerMessage, conveyorv1.ServerMessage] {
 	return c.workers.Session(ctx)
-}
-
-// authInterceptor injects the bearer token into every call and stream.
-type authInterceptor struct {
-	// token is the bearer token presented to the server.
-	token string
-}
-
-// enforce interface compliance at compile time.
-var _ connect.Interceptor = (*authInterceptor)(nil)
-
-// WrapUnary implements connect.Interceptor.
-func (i *authInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
-	return func(ctx context.Context, request connect.AnyRequest) (connect.AnyResponse, error) {
-		request.Header().Set(authorizationHeader, bearerPrefix+i.token)
-
-		return next(ctx, request)
-	}
-}
-
-// WrapStreamingClient implements connect.Interceptor.
-func (i *authInterceptor) WrapStreamingClient(next connect.StreamingClientFunc) connect.StreamingClientFunc {
-	return func(ctx context.Context, spec connect.Spec) connect.StreamingClientConn {
-		conn := next(ctx, spec)
-		conn.RequestHeader().Set(authorizationHeader, bearerPrefix+i.token)
-
-		return conn
-	}
-}
-
-// WrapStreamingHandler implements connect.Interceptor; the SDK never
-// serves streams.
-func (i *authInterceptor) WrapStreamingHandler(next connect.StreamingHandlerFunc) connect.StreamingHandlerFunc {
-	return next
 }

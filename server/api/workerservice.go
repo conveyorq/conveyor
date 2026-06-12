@@ -25,9 +25,18 @@ const heartbeatDivisor = 3
 // gatewayStopTimeout bounds gateway drain and shutdown on session close.
 const gatewayStopTimeout = 15 * time.Second
 
+// sessionDrainPoll is how often DrainSessions re-checks that every closed
+// session has finished releasing its in-flight tasks.
+const sessionDrainPoll = 50 * time.Millisecond
+
 // errSessionSetupFailed is the client-visible error when the gateway
 // cannot be spawned; details stay in the server log.
 var errSessionSetupFailed = errors.New("session setup failed")
+
+// errNodeDraining is the client-visible error when a session arrives on a
+// node that is shutting down; the worker's reconnect loop lands it on
+// another node.
+var errNodeDraining = errors.New("node is shutting down; reconnect to another node")
 
 // WorkerService serves the worker session protocol: one bidirectional
 // stream per worker process, bridged to a per-session gateway actor.
@@ -36,6 +45,12 @@ type WorkerService struct {
 	engine *actors.Engine
 	// logger reports session lifecycle and failures.
 	logger *slog.Logger
+	// sessionMutex guards sessions and draining.
+	sessionMutex sync.Mutex
+	// sessions maps live session ids to the cancel function ending them.
+	sessions map[string]context.CancelFunc
+	// draining rejects new sessions once shutdown has begun.
+	draining bool
 }
 
 // enforce interface compliance at compile time.
@@ -43,7 +58,88 @@ var _ conveyorv1connect.WorkerServiceHandler = (*WorkerService)(nil)
 
 // NewWorkerService assembles the worker session service.
 func NewWorkerService(engine *actors.Engine, logger *slog.Logger) *WorkerService {
-	return &WorkerService{engine: engine, logger: logger}
+	return &WorkerService{
+		engine:   engine,
+		logger:   logger,
+		sessions: make(map[string]context.CancelFunc),
+	}
+}
+
+// DrainSessions ends every live worker session and rejects new ones, then
+// waits until each closed session has stopped its gateway — releasing all
+// in-flight tasks for immediate redelivery — or the context lapses. The
+// server runs it before stopping the engine: once the actor system begins
+// stopping it rejects all user messages, and gateways can no longer
+// process drain requests.
+func (s *WorkerService) DrainSessions(ctx context.Context) error {
+	s.sessionMutex.Lock()
+	s.draining = true
+
+	cancels := make([]context.CancelFunc, 0, len(s.sessions))
+	for _, cancel := range s.sessions {
+		cancels = append(cancels, cancel)
+	}
+
+	s.sessionMutex.Unlock()
+
+	if len(cancels) == 0 {
+		return nil
+	}
+
+	s.logger.Info("draining worker sessions for shutdown", "sessions", len(cancels))
+
+	for _, cancel := range cancels {
+		cancel()
+	}
+
+	ticker := time.NewTicker(sessionDrainPoll)
+	defer ticker.Stop()
+
+	for {
+		s.sessionMutex.Lock()
+		remaining := len(s.sessions)
+		s.sessionMutex.Unlock()
+
+		if remaining == 0 {
+			s.logger.Info("worker sessions drained")
+
+			return nil
+		}
+
+		select {
+		case <-ctx.Done():
+			s.logger.Warn("session drain incomplete; lease expiry will recover", "remaining", remaining)
+
+			return ctx.Err()
+
+		case <-ticker.C:
+		}
+	}
+}
+
+// registerSession admits one accepted session into the registry, or
+// reports that the node is draining.
+func (s *WorkerService) registerSession(sessionID string, cancel context.CancelFunc) error {
+	s.sessionMutex.Lock()
+	defer s.sessionMutex.Unlock()
+
+	if s.draining {
+		return errNodeDraining
+	}
+
+	s.sessions[sessionID] = cancel
+
+	return nil
+}
+
+// unregisterSession removes one session from the registry. It runs after
+// the session's gateway has stopped, so an empty registry means every
+// in-flight task has been released.
+func (s *WorkerService) unregisterSession(sessionID string) {
+	s.sessionMutex.Lock()
+	defer s.sessionMutex.Unlock()
+
+	delete(s.sessions, sessionID)
 }
 
 // streamSender adapts the session stream to the gateway's FrameSender.
@@ -91,6 +187,18 @@ func (s *WorkerService) Session(ctx context.Context, stream *connect.BidiStream[
 		Concurrency: hello.GetConcurrency(),
 	}
 
+	sessionCtx, sessionCancel := context.WithCancel(ctx)
+	defer sessionCancel()
+
+	if err := s.registerSession(sessionID, sessionCancel); err != nil {
+		return connect.NewError(connect.CodeUnavailable, err)
+	}
+
+	// Unregistration is deferred first so it runs after the gateway stop
+	// below: an empty registry guarantees every in-flight task has been
+	// released, which is what DrainSessions waits for.
+	defer s.unregisterSession(sessionID)
+
 	handle, err := s.engine.SpawnGateway(ctx, session, sender)
 	if err != nil {
 		s.logger.Error("gateway spawn failed", "session_id", sessionID, "error", err)
@@ -126,31 +234,90 @@ func (s *WorkerService) Session(ctx context.Context, stream *connect.BidiStream[
 	s.logger.Info("worker session opened", "session_id", sessionID, "queues", queues,
 		"concurrency", hello.GetConcurrency(), "sdk_version", hello.GetSdkVersion())
 
-	for {
-		message, err := stream.Receive()
+	// Receiving runs in its own goroutine so the session loop can also
+	// react to a drain: a blocked Receive only ends when the stream does.
+	frames := make(chan *conveyorv1.WorkerMessage)
+	receiveErrs := make(chan error, 1)
 
-		if errors.Is(err, io.EOF) {
-			s.logger.Info("worker session closed", "session_id", sessionID)
+	go func() {
+		for {
+			message, err := stream.Receive()
+			if err != nil {
+				select {
+				case receiveErrs <- err:
+				case <-sessionCtx.Done():
+				}
+
+				return
+			}
+
+			select {
+			case frames <- message:
+			case <-sessionCtx.Done():
+				return
+			}
+		}
+	}()
+
+	for {
+		select {
+		case <-sessionCtx.Done():
+			// Drain or request teardown: frames already received are
+			// still applied — dropping a buffered Result would re-run a
+			// task its worker completed. Then returning closes the
+			// stream and the deferred gateway stop releases everything
+			// genuinely still in flight.
+			s.flushFrames(ctx, sessionID, state, handle, frames)
+			s.logger.Info("worker session closed by server", "session_id", sessionID)
 
 			return nil
-		}
 
-		if err != nil {
+		case err := <-receiveErrs:
+			if errors.Is(err, io.EOF) {
+				s.logger.Info("worker session closed", "session_id", sessionID)
+
+				return nil
+			}
+
 			s.logger.Info("worker session ended", "session_id", sessionID, "error", err)
 
 			return err
+
+		case message := <-frames:
+			if err := state.check(message); err != nil {
+				s.logger.Warn("worker session protocol violation", "session_id", sessionID, "error", err)
+
+				return connect.NewError(connect.CodeInvalidArgument, err)
+			}
+
+			if err := s.forward(ctx, handle, message); err != nil {
+				s.logger.Error("frame forwarding failed", "session_id", sessionID, "error", err)
+
+				return connect.NewError(connect.CodeInternal, errSessionSetupFailed)
+			}
 		}
+	}
+}
 
-		if err := state.check(message); err != nil {
-			s.logger.Warn("worker session protocol violation", "session_id", sessionID, "error", err)
+// flushFrames applies the frames that were already received when the
+// session was told to close. Validation failures are only logged: the
+// session is ending either way.
+func (s *WorkerService) flushFrames(ctx context.Context, sessionID string, state *sessionState, handle *actors.GatewayHandle, frames <-chan *conveyorv1.WorkerMessage) {
+	for {
+		select {
+		case message := <-frames:
+			if err := state.check(message); err != nil {
+				s.logger.Warn("frame dropped at session close", "session_id", sessionID, "error", err)
 
-			return connect.NewError(connect.CodeInvalidArgument, err)
-		}
+				continue
+			}
 
-		if err := s.forward(ctx, handle, message); err != nil {
-			s.logger.Error("frame forwarding failed", "session_id", sessionID, "error", err)
+			if err := s.forward(ctx, handle, message); err != nil {
+				s.logger.Warn("frame forwarding failed at session close", "session_id", sessionID, "error", err)
+			}
 
-			return connect.NewError(connect.CodeInternal, errSessionSetupFailed)
+		default:
+			return
 		}
 	}
 }

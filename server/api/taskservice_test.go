@@ -38,6 +38,7 @@ func TestEnqueueValidation(t *testing.T) {
 		"negative max_retry": {Type: "test:ok", MaxRetry: -1},
 		"negative priority":  {Type: "test:ok", Priority: -1},
 		"priority too high":  {Type: "test:ok", Priority: 10},
+		"oversized payload":  {Type: "test:ok", Payload: make([]byte, maxPayloadBytes+1)},
 	}
 
 	for name, request := range cases {
@@ -108,6 +109,11 @@ func TestEnqueueBatch(t *testing.T) {
 
 	_, err := service.EnqueueBatch(ctx, connect.NewRequest(&conveyorv1.EnqueueBatchRequest{}))
 	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+
+	oversized := &conveyorv1.EnqueueBatchRequest{Tasks: make([]*conveyorv1.EnqueueRequest, maxBatchTasks+1)}
+	_, err = service.EnqueueBatch(ctx, connect.NewRequest(oversized))
+	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.ErrorContains(t, err, "split it into smaller batches")
 
 	response, err := service.EnqueueBatch(ctx, connect.NewRequest(&conveyorv1.EnqueueBatchRequest{
 		Tasks: []*conveyorv1.EnqueueRequest{

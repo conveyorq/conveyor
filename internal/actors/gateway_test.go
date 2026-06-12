@@ -3,6 +3,7 @@ package actors
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -234,6 +235,123 @@ func TestGatewayOutcomeTransitions(t *testing.T) {
 	require.Zero(t, envelope.GetRetried(), "release must not count as a retry")
 }
 
+// TestGatewayBreakerWithholdsCreditsOnPoisonType drives the poison-task
+// failure-matrix row: a task type failing every attempt opens its circuit
+// breaker after breakerMinRequests outcomes, after which completion
+// reports — and the credit refills they carry — are withheld for the
+// breaker's open timeout. The durable transitions themselves still land,
+// so the tasks sit safely in retry.
+func TestGatewayBreakerWithholdsCreditsOnPoisonType(t *testing.T) {
+	const queue = "poison"
+
+	ctx := context.Background()
+	taskLog := memory.New(clock.System())
+	pauseQueue(t, taskLog, queue)
+	engine := startEngine(t, taskLog)
+	recorder := newFrameRecorder()
+
+	handle, err := engine.SpawnGateway(ctx, GatewaySession{
+		SessionID:   "session-poison",
+		Queues:      []string{queue},
+		Concurrency: 16,
+	}, recorder)
+	require.NoError(t, err)
+
+	t.Cleanup(func() { _ = handle.Stop(ctx) })
+
+	// Lease everything upfront: failing as we go would put early tasks
+	// back in retry, and once their backoff lapses leaseOne would claim
+	// them instead of the fresh task.
+	executes := make([]*conveyorv1.ExecuteTask, 0, breakerMinRequests)
+
+	for sequence := range breakerMinRequests {
+		id := fmt.Sprintf("task-%03d", sequence)
+		executes = append(executes, leaseOne(t, engine, queue, id, fmt.Sprintf("lease-%d", sequence)))
+	}
+
+	// Every result is a retryable failure of the same task type; the
+	// breaker opens on the breakerMinRequests-th sample, so that final
+	// completion report is the first one withheld.
+	for _, execute := range executes {
+		require.NoError(t, handle.Tell(ctx, execute))
+		require.NoError(t, handle.Tell(ctx, &conveyorv1.Result{
+			TaskId:   execute.GetTask().GetId(),
+			Outcome:  conveyorv1.TaskOutcome_TASK_OUTCOME_RETRY,
+			ErrorMsg: "downstream dead",
+		}))
+
+		requireTaskState(t, engine, execute.GetTask().GetId(), conveyorv1.TaskState_TASK_STATE_RETRY)
+	}
+
+	reported := breakerMinRequests - 1
+
+	require.Eventually(t, func() bool {
+		return engine.Counters().Failed.Load() == int64(reported)
+	}, 10*time.Second, 10*time.Millisecond, "reports before the breaker opened must reach the grain")
+
+	// The withheld report stays deferred for the breaker's open timeout;
+	// the failure counter must not advance in the meantime.
+	time.Sleep(500 * time.Millisecond)
+	require.EqualValues(t, reported, engine.Counters().Failed.Load(),
+		"open breaker must withhold the completion report")
+}
+
+// TestGatewayStaleResultAfterLeaseExpiry covers the stalled-handler
+// failure-matrix row: a worker that ignores its deadline holds the lease
+// until it expires, the reaper resets the task to retry with a penalty,
+// and the handler's eventual late result hits ErrLeaseLost and is
+// discarded instead of overwriting the newer delivery's state.
+func TestGatewayStaleResultAfterLeaseExpiry(t *testing.T) {
+	const queue = "stalled"
+
+	ctx := context.Background()
+	taskLog := memory.New(clock.System())
+	pauseQueue(t, taskLog, queue)
+	engine := startEngine(t, taskLog)
+	recorder := newFrameRecorder()
+
+	handle, err := engine.SpawnGateway(ctx, GatewaySession{
+		SessionID:   "session-stalled",
+		Queues:      []string{queue},
+		Concurrency: 4,
+	}, recorder)
+	require.NoError(t, err)
+
+	t.Cleanup(func() { _ = handle.Stop(ctx) })
+
+	// Lease with a TTL far below the reap interval so the lease expires
+	// under the still-running handler.
+	require.NoError(t, taskLog.Enqueue(ctx, newTask("task-stalled", queue, "test:manual", 4)))
+
+	leased, err := taskLog.Lease(ctx, queue, 1, 50*time.Millisecond, "lease-stalled")
+	require.NoError(t, err)
+	require.Len(t, leased, 1)
+
+	require.NoError(t, handle.Tell(ctx, &conveyorv1.ExecuteTask{Task: leased[0], LeaseId: "lease-stalled"}))
+
+	// The reaper reclaims the expired lease: retry, with a penalty.
+	requireTaskState(t, engine, "task-stalled", conveyorv1.TaskState_TASK_STATE_RETRY)
+
+	envelope, _, err := taskLog.GetTask(ctx, "task-stalled")
+	require.NoError(t, err)
+	require.EqualValues(t, 1, envelope.GetRetried())
+	require.Equal(t, broker.LeaseExpiredMessage, envelope.GetLastError())
+
+	// The stalled handler finally reports success; the lease is lost, so
+	// the result must be discarded.
+	require.NoError(t, handle.Tell(ctx, &conveyorv1.Result{
+		TaskId:  "task-stalled",
+		Outcome: conveyorv1.TaskOutcome_TASK_OUTCOME_SUCCESS,
+	}))
+
+	time.Sleep(300 * time.Millisecond)
+
+	_, state, err := taskLog.GetTask(ctx, "task-stalled")
+	require.NoError(t, err)
+	require.Equal(t, conveyorv1.TaskState_TASK_STATE_RETRY, state,
+		"a result from a lost lease must never complete the task")
+}
+
 // TestGatewayHeartbeatLeaseLostSendsCancel verifies that a heartbeat naming
 // a task whose lease this delivery no longer owns triggers a Cancel frame.
 func TestGatewayHeartbeatLeaseLostSendsCancel(t *testing.T) {
@@ -268,6 +386,55 @@ func TestGatewayHeartbeatLeaseLostSendsCancel(t *testing.T) {
 
 		return len(ids) == 1 && ids[0] == "task-stale"
 	}, 10*time.Second, 10*time.Millisecond, "lease loss should cancel exactly the stale task")
+}
+
+// TestGatewayAdminCancelForwardsFrame verifies the admin cancel path: a
+// CancelActive for an in-flight task reaches the worker as a Cancel frame
+// (an unknown id is dropped silently), and the aborted attempt archives
+// instead of earning a retry.
+func TestGatewayAdminCancelForwardsFrame(t *testing.T) {
+	const queue = "admin-cancel"
+
+	ctx := context.Background()
+	taskLog := memory.New(clock.System())
+	pauseQueue(t, taskLog, queue)
+	engine := startEngine(t, taskLog)
+	recorder := newFrameRecorder()
+
+	handle, err := engine.SpawnGateway(ctx, GatewaySession{
+		SessionID:   "session-admin-cancel",
+		Queues:      []string{queue},
+		Concurrency: 4,
+	}, recorder)
+	require.NoError(t, err)
+
+	t.Cleanup(func() { _ = handle.Stop(ctx) })
+
+	execute := leaseOne(t, engine, queue, "task-running", "lease-1")
+	require.NoError(t, handle.Tell(ctx, execute))
+
+	require.NoError(t, handle.Tell(ctx, &conveyorv1.CancelActive{TaskId: "task-elsewhere"}))
+	require.NoError(t, handle.Tell(ctx, &conveyorv1.CancelActive{TaskId: "task-running"}))
+
+	require.Eventually(t, func() bool {
+		ids := recorder.cancels()
+
+		return len(ids) == 1 && ids[0] == "task-running"
+	}, 10*time.Second, 10*time.Millisecond, "admin cancel should reach only the owning session")
+
+	// The handler aborts on the canceled context and reports a retryable
+	// failure; the canceled delivery must archive, not retry.
+	require.NoError(t, handle.Tell(ctx, &conveyorv1.Result{
+		TaskId:   "task-running",
+		Outcome:  conveyorv1.TaskOutcome_TASK_OUTCOME_RETRY,
+		ErrorMsg: "context canceled",
+	}))
+
+	requireTaskState(t, engine, "task-running", conveyorv1.TaskState_TASK_STATE_ARCHIVED)
+
+	envelope, _, err := taskLog.GetTask(ctx, "task-running")
+	require.NoError(t, err)
+	require.Contains(t, envelope.GetLastError(), canceledByAdminMessage)
 }
 
 // TestGatewayStopReleasesInflight verifies the release-on-close contract:
