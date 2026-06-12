@@ -2,6 +2,8 @@ package conveyor
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
@@ -107,6 +109,11 @@ func (c *Client) Enqueue(ctx context.Context, task *Task, opts ...EnqueueOption)
 		return nil, errors.New("conveyor: ProcessAt and ProcessIn are mutually exclusive")
 	}
 
+	uniqueKey := settings.uniqueKey
+	if uniqueKey == "" && settings.uniqueTTL > 0 {
+		uniqueKey = derivedUniqueKey(task.taskType, task.payload)
+	}
+
 	request := &conveyorv1.EnqueueRequest{
 		TaskId:      settings.taskID,
 		Queue:       settings.queue,
@@ -116,6 +123,7 @@ func (c *Client) Enqueue(ctx context.Context, task *Task, opts ...EnqueueOption)
 		Metadata:    task.metadata,
 		MaxRetry:    int32(settings.maxRetry),
 		Priority:    int32(settings.priority),
+		UniqueKey:   uniqueKey,
 	}
 
 	if !settings.processAt.IsZero() {
@@ -128,6 +136,10 @@ func (c *Client) Enqueue(ctx context.Context, task *Task, opts ...EnqueueOption)
 
 	if settings.retention > 0 {
 		request.Retention = durationpb.New(settings.retention)
+	}
+
+	if settings.uniqueTTL > 0 {
+		request.UniqueTtl = durationpb.New(settings.uniqueTTL)
 	}
 
 	info, err := c.wire.Enqueue(ctx, request)
@@ -150,6 +162,18 @@ func (c *Client) GetTask(ctx context.Context, id string) (*TaskInfo, error) {
 	}
 
 	return taskInfoFromProto(info), nil
+}
+
+// derivedUniqueKey computes the default uniqueness key of a task: a hash
+// over its type and payload, so re-enqueueing the same work collides.
+func derivedUniqueKey(taskType string, payload []byte) string {
+	digest := sha256.New()
+	// hash.Hash.Write never returns an error.
+	_, _ = digest.Write([]byte(taskType))
+	_, _ = digest.Write([]byte{0})
+	_, _ = digest.Write(payload)
+
+	return hex.EncodeToString(digest.Sum(nil))
 }
 
 // wireError maps transport failures to the SDK sentinel errors.

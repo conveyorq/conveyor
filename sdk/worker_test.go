@@ -3,7 +3,9 @@ package conveyor
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -168,13 +170,208 @@ func TestWorkerStopsOnContextCancel(t *testing.T) {
 	}
 }
 
-func TestWorkerRunFailsAgainstUnreachableServer(t *testing.T) {
+// TestWorkerRetriesUnreachableServerUntilCanceled pins the reconnect
+// contract: connection failures are retried with backoff instead of ending
+// Run, and cancellation is still a clean nil shutdown.
+func TestWorkerRetriesUnreachableServerUntilCanceled(t *testing.T) {
 	worker, err := NewWorker("http://127.0.0.1:1",
 		WithQueues(map[string]int{"default": 1}), WithConcurrency(1))
 	require.NoError(t, err)
 
-	err = worker.Run(context.Background(), NewMux())
-	require.Error(t, err)
+	runCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	require.NoError(t, worker.Run(runCtx, NewMux()))
+}
+
+// TestWorkerRunFailsFastOnBadToken pins the one reconnect exception: a
+// rejected token never heals, so Run must return instead of retrying.
+func TestWorkerRunFailsFastOnBadToken(t *testing.T) {
+	baseURL := startTestServer(t, []string{"secret"})
+
+	worker, err := NewWorker(baseURL,
+		WithToken("wrong"),
+		WithQueues(map[string]int{"default": 1}), WithConcurrency(1))
+	require.NoError(t, err)
+
+	runDone := make(chan error, 1)
+
+	go func() { runDone <- worker.Run(context.Background(), NewMux()) }()
+
+	select {
+	case err := <-runDone:
+		require.Error(t, err)
+
+	case <-time.After(10 * time.Second):
+		t.Fatal("worker kept retrying an unauthenticated session")
+	}
+}
+
+// TestWorkerReconnectsAfterStreamDrop drives the reconnect loop end to
+// end: the worker's connection is severed mid-session and the same Run
+// call must establish a new session and process new work unattended. A
+// TCP proxy stands between worker and server so the test can cut the wire
+// without restarting the server.
+func TestWorkerReconnectsAfterStreamDrop(t *testing.T) {
+	baseURL := startTestServer(t, nil)
+	proxy := newDroppingProxy(t, strings.TrimPrefix(baseURL, "http://"))
+
+	worker, err := NewWorker("http://"+proxy.addr(),
+		WithQueues(map[string]int{"default": 1}), WithConcurrency(1))
+	require.NoError(t, err)
+
+	var processed atomic.Int64
+
+	mux := NewMux()
+
+	mux.HandleFunc("test:ok", func(context.Context, *Task) error {
+		processed.Add(1)
+
+		return nil
+	})
+
+	runCtx, stopWorker := context.WithCancel(context.Background())
+	defer stopWorker()
+
+	runDone := make(chan error, 1)
+
+	go func() { runDone <- worker.Run(runCtx, mux) }()
+
+	ctx := context.Background()
+
+	client, err := NewClient(baseURL)
+	require.NoError(t, err)
+
+	info, err := client.Enqueue(ctx, NewTask("test:ok", JSON("x")), Retention(time.Hour))
+	require.NoError(t, err)
+
+	awaitTaskState(t, client, info.ID, TaskStateCompleted)
+
+	proxy.dropAll()
+
+	second, err := client.Enqueue(ctx, NewTask("test:ok", JSON("y")), Retention(time.Hour))
+	require.NoError(t, err)
+
+	awaitTaskState(t, client, second.ID, TaskStateCompleted)
+	require.GreaterOrEqual(t, processed.Load(), int64(2))
+
+	stopWorker()
+	require.NoError(t, <-runDone)
+}
+
+// TestWorkerSurvivesPanickingHandler pins the panic recovery contract: a
+// panicking handler is reported as a retryable failure and the worker
+// keeps processing.
+func TestWorkerSurvivesPanickingHandler(t *testing.T) {
+	baseURL := startTestServer(t, nil)
+
+	client, err := NewClient(baseURL)
+	require.NoError(t, err)
+
+	worker, err := NewWorker(baseURL,
+		WithQueues(map[string]int{"default": 1}), WithConcurrency(1))
+	require.NoError(t, err)
+
+	mux := NewMux()
+
+	mux.HandleFunc("test:panic", func(_ context.Context, task *Task) error {
+		if task.Retried() == 0 {
+			panic("boom")
+		}
+
+		return nil
+	})
+
+	runCtx, stopWorker := context.WithCancel(context.Background())
+	defer stopWorker()
+
+	runDone := make(chan error, 1)
+
+	go func() { runDone <- worker.Run(runCtx, mux) }()
+
+	info, err := client.Enqueue(context.Background(), NewTask("test:panic", JSON("x")), Retention(time.Hour))
+	require.NoError(t, err)
+
+	awaitTaskState(t, client, info.ID, TaskStateCompleted)
+
+	final, err := client.GetTask(context.Background(), info.ID)
+	require.NoError(t, err)
+	require.Equal(t, 1, final.Retried, "the panic must count as one retryable failure")
+
+	stopWorker()
+	require.NoError(t, <-runDone)
+}
+
+func TestInvokeRecoversPanicsWithStack(t *testing.T) {
+	handler := func(context.Context, *Task) error { panic("kaboom") }
+
+	err := invoke(context.Background(), handler, &Task{})
+	require.ErrorContains(t, err, "handler panic: kaboom")
+	require.ErrorContains(t, err, "worker_test.go", "the error must carry the stack")
+	require.False(t, IsSkipRetry(err), "panics are retryable failures")
+}
+
+// TestHandlerContextCarriesTaskValues drives the context helpers through a
+// real dispatch.
+func TestHandlerContextCarriesTaskValues(t *testing.T) {
+	baseURL := startTestServer(t, nil)
+
+	client, err := NewClient(baseURL)
+	require.NoError(t, err)
+
+	worker, err := NewWorker(baseURL,
+		WithQueues(map[string]int{"default": 1}), WithConcurrency(1))
+	require.NoError(t, err)
+
+	type seenValues struct {
+		id       string
+		retries  int
+		budget   int
+		idOK     bool
+		retryOK  bool
+		budgetOK bool
+	}
+
+	seen := make(chan seenValues, 1)
+
+	mux := NewMux()
+
+	mux.HandleFunc("test:ctx", func(ctx context.Context, _ *Task) error {
+		var values seenValues
+		values.id, values.idOK = GetTaskID(ctx)
+		values.retries, values.retryOK = GetRetryCount(ctx)
+		values.budget, values.budgetOK = GetMaxRetry(ctx)
+		seen <- values
+
+		return nil
+	})
+
+	runCtx, stopWorker := context.WithCancel(context.Background())
+	defer stopWorker()
+
+	runDone := make(chan error, 1)
+
+	go func() { runDone <- worker.Run(runCtx, mux) }()
+
+	info, err := client.Enqueue(context.Background(), NewTask("test:ctx", JSON("x")),
+		MaxRetry(7), Retention(time.Hour))
+	require.NoError(t, err)
+
+	select {
+	case values := <-seen:
+		require.True(t, values.idOK)
+		require.True(t, values.retryOK)
+		require.True(t, values.budgetOK)
+		require.Equal(t, info.ID, values.id)
+		require.Equal(t, 0, values.retries)
+		require.Equal(t, 7, values.budget)
+
+	case <-time.After(30 * time.Second):
+		t.Fatal("handler never ran")
+	}
+
+	stopWorker()
+	require.NoError(t, <-runDone)
 }
 
 func TestOutcomeForError(t *testing.T) {

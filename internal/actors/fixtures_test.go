@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net"
 	"sync"
 	"testing"
 	"time"
@@ -16,6 +15,7 @@ import (
 
 	"github.com/tochemey/conveyor/internal/broker"
 	"github.com/tochemey/conveyor/internal/clock"
+	"github.com/tochemey/conveyor/internal/dynaport"
 	conveyorv1 "github.com/tochemey/conveyor/internal/proto/conveyor/v1"
 )
 
@@ -46,24 +46,12 @@ var recoverySettings = Settings{
 	PassivateAfter:  5 * time.Minute,
 }
 
-// freePorts reserves n distinct free TCP ports.
+// freePorts reserves n distinct free loopback ports.
 func freePorts(t *testing.T, n int) []int {
 	t.Helper()
 
-	ports := make([]int, 0, n)
-	listeners := make([]net.Listener, 0, n)
-
-	for range n {
-		listener, err := net.Listen("tcp", testBindAddr+":0")
-		require.NoError(t, err)
-
-		listeners = append(listeners, listener)
-		ports = append(ports, listener.Addr().(*net.TCPAddr).Port)
-	}
-
-	for _, listener := range listeners {
-		require.NoError(t, listener.Close())
-	}
+	ports, err := dynaport.Get(n)
+	require.NoError(t, err)
 
 	return ports
 }

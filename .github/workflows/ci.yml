@@ -39,3 +39,18 @@ jobs:
         run: go test -race ./...
       - name: Build
         run: go build ./...
+
+  # The DX gate: the scripted README quickstart must complete in 60s.
+  # Module download and build cache are warmed first so the budget measures
+  # the workflow, not the compiler's cold start.
+  quickstart:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Warm the build cache
+        run: go build ./...
+      - name: Quickstart (60s budget)
+        run: timeout 60 make quickstart

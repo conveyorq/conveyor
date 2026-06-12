@@ -35,6 +35,8 @@ func TestEnqueueOptionsApply(t *testing.T) {
 		ProcessAt(processAt),
 		ProcessIn(5 * time.Minute),
 		Retention(48 * time.Hour),
+		Unique(24 * time.Hour),
+		UniqueKey("user:42:welcome"),
 	} {
 		opt(settings)
 	}
@@ -46,4 +48,6 @@ func TestEnqueueOptionsApply(t *testing.T) {
 	require.Equal(t, processAt, settings.processAt)
 	require.Equal(t, 5*time.Minute, settings.processIn)
 	require.Equal(t, 48*time.Hour, settings.retention)
+	require.Equal(t, 24*time.Hour, settings.uniqueTTL)
+	require.Equal(t, "user:42:welcome", settings.uniqueKey)
 }

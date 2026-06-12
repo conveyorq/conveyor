@@ -53,6 +53,10 @@ type enqueueOptions struct {
 	processIn time.Duration
 	// retention keeps the completed task visible before purge.
 	retention time.Duration
+	// uniqueKey enforces uniqueness among incomplete tasks.
+	uniqueKey string
+	// uniqueTTL bounds how long the uniqueness claim is held.
+	uniqueTTL time.Duration
 }
 
 // TaskID assigns a client-chosen task id, making Enqueue retries
@@ -91,4 +95,18 @@ func ProcessIn(d time.Duration) EnqueueOption {
 // given duration before it is purged.
 func Retention(d time.Duration) EnqueueOption {
 	return func(o *enqueueOptions) { o.retention = d }
+}
+
+// Unique rejects the enqueue with ErrDuplicateTask while an incomplete
+// task with the same uniqueness key exists, for at most ttl. The key is
+// derived from the task type and payload; combine with UniqueKey to choose
+// it explicitly.
+func Unique(ttl time.Duration) EnqueueOption {
+	return func(o *enqueueOptions) { o.uniqueTTL = ttl }
+}
+
+// UniqueKey sets the explicit uniqueness key compared by Unique, e.g.
+// "user:42:welcome", instead of the derived type-and-payload key.
+func UniqueKey(key string) EnqueueOption {
+	return func(o *enqueueOptions) { o.uniqueKey = key }
 }

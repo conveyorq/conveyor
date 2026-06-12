@@ -10,6 +10,7 @@ import (
 
 	"connectrpc.com/connect"
 
+	"github.com/tochemey/conveyor/internal/backoff"
 	conveyorv1 "github.com/tochemey/conveyor/internal/proto/conveyor/v1"
 	"github.com/tochemey/conveyor/sdk/internal/transport"
 )
@@ -20,6 +21,15 @@ const modulePath = "github.com/tochemey/conveyor"
 
 // unknownVersion is reported when build info carries no module version.
 const unknownVersion = "devel"
+
+// Reconnect backoff bounds: full-jitter exponential delays between session
+// attempts, so a worker fleet does not stampede a restarting server.
+const (
+	// reconnectBaseDelay is the delay ceiling after the first failure.
+	reconnectBaseDelay = 500 * time.Millisecond
+	// reconnectMaxDelay bounds the delay regardless of failure count.
+	reconnectMaxDelay = 30 * time.Second
+)
 
 // Worker holds one session to a Conveyor server and executes dispatched
 // tasks through a Mux.
@@ -70,14 +80,55 @@ func NewWorker(baseURL string, opts ...Option) (*Worker, error) {
 	}, nil
 }
 
-// Run opens the worker session and processes dispatched tasks until ctx is
-// canceled or the stream fails. Cancellation returns nil: the server
-// releases everything still in flight for immediate redelivery elsewhere.
+// Run processes dispatched tasks until ctx is canceled, reconnecting with
+// jittered exponential backoff whenever the session fails or the stream
+// drops. Authentication failures return immediately: a rejected token
+// never heals by retrying. Cancellation returns nil: the server releases
+// everything still in flight for immediate redelivery elsewhere.
 func (w *Worker) Run(ctx context.Context, mux *Mux) error {
 	if mux == nil {
 		return errors.New("conveyor: mux is required")
 	}
 
+	strategy := backoff.New(reconnectBaseDelay, reconnectMaxDelay)
+
+	var failures int32
+
+	for {
+		established, err := w.runSession(ctx, mux)
+
+		if ctx.Err() != nil {
+			return nil
+		}
+
+		switch connect.CodeOf(err) {
+		case connect.CodeUnauthenticated, connect.CodePermissionDenied:
+			return err
+		}
+
+		failures++
+
+		if established {
+			failures = 0
+		}
+
+		timer := time.NewTimer(strategy.Delay(failures - 1))
+
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+
+			return nil
+
+		case <-timer.C:
+		}
+	}
+}
+
+// runSession opens one worker session and drives it until it ends. The
+// bool reports whether the session was established (Welcome received), so
+// Run can reset its reconnect backoff.
+func (w *Worker) runSession(ctx context.Context, mux *Mux) (bool, error) {
 	stream := w.wire.Session(ctx)
 
 	defer func() {
@@ -101,17 +152,17 @@ func (w *Worker) Run(ctx context.Context, mux *Mux) error {
 	}
 
 	if err := stream.Send(hello); err != nil {
-		return fmt.Errorf("conveyor: opening session: %w", err)
+		return false, fmt.Errorf("conveyor: opening session: %w", err)
 	}
 
 	first, err := stream.Receive()
 	if err != nil {
-		return fmt.Errorf("conveyor: awaiting Welcome: %w", err)
+		return false, fmt.Errorf("conveyor: awaiting Welcome: %w", err)
 	}
 
 	welcome := first.GetWelcome()
 	if welcome == nil {
-		return errors.New("conveyor: protocol violation: first server frame is not Welcome")
+		return false, errors.New("conveyor: protocol violation: first server frame is not Welcome")
 	}
 
 	session := &workerSession{
@@ -123,7 +174,7 @@ func (w *Worker) Run(ctx context.Context, mux *Mux) error {
 		runContext: ctx,
 	}
 
-	return session.run(welcome.GetHeartbeatInterval().AsDuration())
+	return true, session.run(welcome.GetHeartbeatInterval().AsDuration())
 }
 
 // workerSession is the state of one live session stream.
@@ -148,7 +199,12 @@ type workerSession struct {
 }
 
 // run drives the receive loop and the heartbeat until the stream ends.
+// Executions still in flight are canceled on the way out: the server
+// releases their leases the moment the stream closes, so finishing them
+// here would only duplicate work the cluster is already redelivering.
 func (s *workerSession) run(heartbeatInterval time.Duration) error {
+	defer s.cancelAll()
+
 	done := make(chan struct{})
 	defer close(done)
 
@@ -268,7 +324,19 @@ func (s *workerSession) execute(ctx context.Context, cancel context.CancelFunc, 
 		return
 	}
 
-	s.finish(task.id, handler(ctx, task))
+	s.finish(task.id, invoke(withTaskValues(ctx, task), handler, task))
+}
+
+// invoke runs one handler, converting a panic into a retryable error
+// carrying the stack: a panicking handler never kills the worker process.
+func invoke(ctx context.Context, handler HandlerFunc, task *Task) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("handler panic: %v\n%s", recovered, debug.Stack())
+		}
+	}()
+
+	return handler(ctx, task)
 }
 
 // finish reports one execution outcome and forgets the task.
@@ -290,6 +358,16 @@ func (s *workerSession) finish(taskID string, handlerErr error) {
 	// A send failure means the stream is gone; the server releases the
 	// task on stream close and redelivers it.
 	_ = s.send(frame)
+}
+
+// cancelAll aborts every execution still in flight.
+func (s *workerSession) cancelAll() {
+	s.stateMutex.Lock()
+	defer s.stateMutex.Unlock()
+
+	for _, cancelFunc := range s.cancels {
+		cancelFunc()
+	}
 }
 
 // cancel aborts the execution of one task, if it is still running.

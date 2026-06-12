@@ -2,37 +2,28 @@ package conveyor
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/tochemey/conveyor/internal/dynaport"
 	"github.com/tochemey/conveyor/server"
 )
 
 // testLoopback is the host every test server binds to.
 const testLoopback = "127.0.0.1"
 
-// freeTestPorts reserves n distinct free TCP ports.
+// freeTestPorts reserves n distinct free loopback ports.
 func freeTestPorts(t *testing.T, n int) []int {
 	t.Helper()
 
-	ports := make([]int, 0, n)
-	listeners := make([]net.Listener, 0, n)
-
-	for range n {
-		listener, err := net.Listen("tcp", testLoopback+":0")
-		require.NoError(t, err)
-
-		listeners = append(listeners, listener)
-		ports = append(ports, listener.Addr().(*net.TCPAddr).Port)
-	}
-
-	for _, listener := range listeners {
-		require.NoError(t, listener.Close())
-	}
+	ports, err := dynaport.Get(n)
+	require.NoError(t, err)
 
 	return ports
 }
@@ -65,6 +56,89 @@ func startTestServer(t *testing.T, tokens []string) string {
 	})
 
 	return "http://" + node.Addr()
+}
+
+// droppingProxy forwards TCP between the worker and a backend and can cut
+// every live connection on demand, simulating a network drop or a server
+// going away mid-session.
+type droppingProxy struct {
+	// listener accepts worker connections.
+	listener net.Listener
+	// backend is the real server address.
+	backend string
+	// mutex guards conns.
+	mutex sync.Mutex
+	// conns are all live connections, worker- and backend-side.
+	conns []net.Conn
+}
+
+// newDroppingProxy starts a proxy in front of backend on a free loopback
+// port.
+func newDroppingProxy(t *testing.T, backend string) *droppingProxy {
+	t.Helper()
+
+	listener, err := net.Listen("tcp", testLoopback+":0")
+	require.NoError(t, err)
+
+	proxy := &droppingProxy{listener: listener, backend: backend}
+
+	go proxy.serve()
+
+	t.Cleanup(func() {
+		require.NoError(t, listener.Close())
+		proxy.dropAll()
+	})
+
+	return proxy
+}
+
+// addr returns the address workers should connect to.
+func (p *droppingProxy) addr() string {
+	return p.listener.Addr().String()
+}
+
+// serve accepts worker connections and pipes them to the backend until
+// the listener closes.
+func (p *droppingProxy) serve() {
+	for {
+		workerConn, err := p.listener.Accept()
+		if err != nil {
+			return
+		}
+
+		backendConn, err := net.Dial("tcp", p.backend)
+		if err != nil {
+			_ = workerConn.Close()
+
+			continue
+		}
+
+		p.mutex.Lock()
+		p.conns = append(p.conns, workerConn, backendConn)
+		p.mutex.Unlock()
+
+		go pipeConn(workerConn, backendConn)
+		go pipeConn(backendConn, workerConn)
+	}
+}
+
+// pipeConn copies one direction and closes both ends when it stops.
+func pipeConn(dst, src net.Conn) {
+	_, _ = io.Copy(dst, src)
+	_ = dst.Close()
+	_ = src.Close()
+}
+
+// dropAll severs every live connection.
+func (p *droppingProxy) dropAll() {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+
+	for _, conn := range p.conns {
+		_ = conn.Close()
+	}
+
+	p.conns = nil
 }
 
 // awaitTaskState polls GetTask until the task reaches the wanted state.

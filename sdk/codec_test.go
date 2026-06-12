@@ -4,6 +4,9 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
+
+	conveyorv1 "github.com/tochemey/conveyor/internal/proto/conveyor/v1"
 )
 
 func TestJSONPayloadEncodes(t *testing.T) {
@@ -28,4 +31,27 @@ func TestBytesPayloadIsVerbatim(t *testing.T) {
 	require.NoError(t, payload.err)
 	require.Equal(t, raw, payload.data)
 	require.Equal(t, ContentTypeBytes, payload.contentType)
+}
+
+func TestProtoPayloadRoundTrips(t *testing.T) {
+	message := &conveyorv1.Hello{Concurrency: 8, SdkVersion: "v1.2.3"}
+	payload := Proto(message)
+
+	require.NoError(t, payload.err)
+	require.Equal(t, ContentTypeProto, payload.contentType)
+
+	task := &Task{payload: payload.data, contentType: payload.contentType}
+
+	var decoded conveyorv1.Hello
+
+	require.NoError(t, task.Bind(&decoded))
+	require.True(t, proto.Equal(message, &decoded))
+}
+
+func TestProtoBindRejectsNonMessage(t *testing.T) {
+	task := &Task{payload: nil, contentType: ContentTypeProto}
+
+	var wrong string
+
+	require.ErrorContains(t, task.Bind(&wrong), "bind to a proto.Message")
 }

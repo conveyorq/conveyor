@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -18,6 +17,7 @@ import (
 	"github.com/tochemey/conveyor/internal/broker"
 	"github.com/tochemey/conveyor/internal/broker/memory"
 	"github.com/tochemey/conveyor/internal/clock"
+	"github.com/tochemey/conveyor/internal/dynaport"
 	"github.com/tochemey/conveyor/internal/proto/conveyor/v1/conveyorv1connect"
 )
 
@@ -27,24 +27,12 @@ const testLoopback = "127.0.0.1"
 // testDefaultMaxRetry is the configured default retry budget in tests.
 const testDefaultMaxRetry = int32(25)
 
-// freeTestPorts reserves n distinct free TCP ports.
+// freeTestPorts reserves n distinct free loopback ports.
 func freeTestPorts(t *testing.T, n int) []int {
 	t.Helper()
 
-	ports := make([]int, 0, n)
-	listeners := make([]net.Listener, 0, n)
-
-	for range n {
-		listener, err := net.Listen("tcp", testLoopback+":0")
-		require.NoError(t, err)
-
-		listeners = append(listeners, listener)
-		ports = append(ports, listener.Addr().(*net.TCPAddr).Port)
-	}
-
-	for _, listener := range listeners {
-		require.NoError(t, listener.Close())
-	}
+	ports, err := dynaport.Get(n)
+	require.NoError(t, err)
 
 	return ports
 }

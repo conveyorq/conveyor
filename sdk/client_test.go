@@ -135,6 +135,27 @@ func TestClientAuthentication(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestClientEnqueueUniqueIsAccepted(t *testing.T) {
+	baseURL := startTestServer(t, nil)
+
+	client, err := NewClient(baseURL)
+	require.NoError(t, err)
+
+	info, err := client.Enqueue(context.Background(), NewTask("test:unique", JSON("x")),
+		Unique(24*time.Hour), Retention(time.Hour))
+	require.NoError(t, err)
+	require.NotEmpty(t, info.ID)
+}
+
+func TestDerivedUniqueKeyIsDeterministic(t *testing.T) {
+	key := derivedUniqueKey("email:welcome", []byte(`{"user_id":42}`))
+
+	require.Equal(t, key, derivedUniqueKey("email:welcome", []byte(`{"user_id":42}`)))
+	require.NotEqual(t, key, derivedUniqueKey("email:welcome", []byte(`{"user_id":43}`)))
+	require.NotEqual(t, key, derivedUniqueKey("email:goodbye", []byte(`{"user_id":42}`)))
+	require.Len(t, key, 64, "the key is hex-encoded SHA-256")
+}
+
 func TestWireErrorMapsSentinels(t *testing.T) {
 	duplicate := wireError(connect.NewError(connect.CodeAlreadyExists, errors.New("dup")))
 	require.ErrorIs(t, duplicate, ErrDuplicateTask)

@@ -25,7 +25,7 @@ DOCKER_RUN := docker run --rm \
 	-w $(WORKDIR) \
 	$(IMAGE)
 
-.PHONY: help all image build test lint proto proto-format proto-lint proto-breaking chaos helm-lint release clean
+.PHONY: help all image build test lint proto proto-format proto-lint proto-breaking quickstart chaos helm-lint release clean
 
 help: ## Show available targets
 	@awk 'BEGIN{FS=":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -35,8 +35,12 @@ all: proto lint test build ## Regenerate protos, lint, test, and build
 image: ## Build the tools Docker image
 	docker build -t $(IMAGE) -f Dockerfile.tools .
 
-build: ## Build the conveyord binary
+build: ## Build the conveyord and conveyor binaries
 	$(GO) build -o bin/conveyord ./cmd/conveyord
+	$(GO) build -o bin/conveyor ./cmd/conveyor
+
+quickstart: ## Run the scripted README quickstart (CI enforces a 60s budget)
+	./hack/quickstart.sh
 
 test: ## Run all tests with the race detector (needs the host Docker daemon)
 	$(GO) test -race ./...

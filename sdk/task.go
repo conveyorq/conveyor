@@ -3,6 +3,8 @@ package conveyor
 import (
 	"encoding/json"
 	"fmt"
+
+	"google.golang.org/protobuf/proto"
 )
 
 // Task is a unit of work: what clients enqueue and what handlers receive.
@@ -65,9 +67,9 @@ func (t *Task) MaxRetry() int { return t.maxRetry }
 func (t *Task) Metadata() map[string]string { return t.metadata }
 
 // Bind decodes the payload into v according to the content type: JSON
-// payloads unmarshal into any value, binary payloads bind to *[]byte.
-// Handlers typically wrap a Bind failure in SkipRetry: a payload that
-// cannot decode now never will.
+// payloads unmarshal into any value, binary payloads bind to *[]byte, and
+// protobuf payloads bind to a proto.Message. Handlers typically wrap a
+// Bind failure in SkipRetry: a payload that cannot decode now never will.
 func (t *Task) Bind(v any) error {
 	switch t.contentType {
 	case ContentTypeJSON:
@@ -84,6 +86,18 @@ func (t *Task) Bind(v any) error {
 		}
 
 		*target = t.payload
+
+		return nil
+
+	case ContentTypeProto:
+		message, ok := v.(proto.Message)
+		if !ok {
+			return fmt.Errorf("conveyor: protobuf payloads bind to a proto.Message, got %T", v)
+		}
+
+		if err := proto.Unmarshal(t.payload, message); err != nil {
+			return fmt.Errorf("conveyor: binding protobuf payload: %w", err)
+		}
 
 		return nil
 

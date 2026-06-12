@@ -2,6 +2,7 @@ package conveyor
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -39,4 +40,64 @@ func TestMuxHandleFuncPanicsOnDuplicate(t *testing.T) {
 	require.Panics(t, func() {
 		mux.HandleFunc("email:welcome", func(context.Context, *Task) error { return nil })
 	})
+}
+
+func TestMuxUseWrapsHandlersInOrder(t *testing.T) {
+	var calls []string
+
+	record := func(name string) MiddlewareFunc {
+		return func(next HandlerFunc) HandlerFunc {
+			return func(ctx context.Context, task *Task) error {
+				calls = append(calls, name)
+
+				return next(ctx, task)
+			}
+		}
+	}
+
+	mux := NewMux()
+	mux.Use(record("first"))
+
+	mux.HandleFunc("email:welcome", func(context.Context, *Task) error {
+		calls = append(calls, "handler")
+
+		return nil
+	})
+
+	// Use after HandleFunc still applies: middleware wraps at dispatch.
+	mux.Use(record("second"))
+
+	handler, ok := mux.handler("email:welcome")
+	require.True(t, ok)
+	require.NoError(t, handler(context.Background(), &Task{}))
+	require.Equal(t, []string{"first", "second", "handler"}, calls)
+}
+
+func TestMuxUsePanicsOnNilMiddleware(t *testing.T) {
+	require.PanicsWithValue(t, "conveyor: Use with nil middleware", func() {
+		NewMux().Use(nil)
+	})
+}
+
+func TestMuxMiddlewareSeesHandlerError(t *testing.T) {
+	handlerErr := errors.New("boom")
+
+	var seen error
+
+	mux := NewMux()
+
+	mux.Use(func(next HandlerFunc) HandlerFunc {
+		return func(ctx context.Context, task *Task) error {
+			seen = next(ctx, task)
+
+			return seen
+		}
+	})
+
+	mux.HandleFunc("email:welcome", func(context.Context, *Task) error { return handlerErr })
+
+	handler, ok := mux.handler("email:welcome")
+	require.True(t, ok)
+	require.ErrorIs(t, handler(context.Background(), &Task{}), handlerErr)
+	require.ErrorIs(t, seen, handlerErr)
 }

@@ -3,6 +3,8 @@ package conveyor
 import (
 	"encoding/json"
 	"fmt"
+
+	"google.golang.org/protobuf/proto"
 )
 
 // Content types produced by the built-in payload constructors.
@@ -11,6 +13,8 @@ const (
 	ContentTypeJSON = "application/json"
 	// ContentTypeBytes marks an opaque binary payload.
 	ContentTypeBytes = "application/octet-stream"
+	// ContentTypeProto marks a protobuf-encoded payload.
+	ContentTypeProto = "application/x-protobuf"
 )
 
 // Payload is an encoded task payload plus its content type. Build one with
@@ -39,4 +43,17 @@ func JSON(v any) Payload {
 // application/octet-stream.
 func Bytes(b []byte) Payload {
 	return Payload{data: b, contentType: ContentTypeBytes}
+}
+
+// Proto encodes m as the task payload with content type
+// application/x-protobuf. An opt-in convenience: the payload is still
+// opaque bytes on the wire, and the handler side binds it back with
+// Task.Bind into a value of the same message type.
+func Proto(m proto.Message) Payload {
+	data, err := proto.Marshal(m)
+	if err != nil {
+		return Payload{err: fmt.Errorf("conveyor: encoding protobuf payload: %w", err)}
+	}
+
+	return Payload{data: data, contentType: ContentTypeProto}
 }

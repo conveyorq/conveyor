@@ -1,10 +1,12 @@
 // Package conveyor is the public Go SDK for the Conveyor task processing
 // system.
 //
-// The full client and worker surface (Client, Worker, Mux, Task, codecs) is
-// not implemented yet; this package currently pins the error contract that
-// every later layer builds on. No exported identifier in this package will
-// ever reference protobuf or GoAkt types.
+// A Client enqueues tasks; a Worker executes them through a Mux that
+// routes by task type, with middleware, codecs (JSON, Bytes, Proto), and
+// per-task options (queue, priority, scheduling, retries, uniqueness).
+// Worker.Run reconnects with jittered backoff and recovers handler
+// panics, reporting them as retryable failures. No exported identifier in
+// this package references protobuf or GoAkt types.
 package conveyor
 
 import (

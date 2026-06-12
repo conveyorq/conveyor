@@ -11,15 +11,34 @@ import (
 // Handlers must be idempotent and should honor ctx cancellation.
 type HandlerFunc func(ctx context.Context, task *Task) error
 
+// MiddlewareFunc decorates a HandlerFunc, e.g. with logging or metrics.
+// The returned handler must call next to keep the task flowing.
+type MiddlewareFunc func(next HandlerFunc) HandlerFunc
+
 // Mux routes dispatched tasks to handlers by task type.
 type Mux struct {
 	// handlers maps task type to its handler.
 	handlers map[string]HandlerFunc
+	// middleware decorates every handler, outermost first.
+	middleware []MiddlewareFunc
 }
 
 // NewMux builds an empty task router.
 func NewMux() *Mux {
 	return &Mux{handlers: make(map[string]HandlerFunc)}
+}
+
+// Use appends middleware applied to every handler of this Mux, regardless
+// of registration order relative to HandleFunc. The first middleware
+// registered runs outermost. Registering a nil middleware panics.
+func (m *Mux) Use(middleware ...MiddlewareFunc) {
+	for _, wrap := range middleware {
+		if wrap == nil {
+			panic("conveyor: Use with nil middleware")
+		}
+
+		m.middleware = append(m.middleware, wrap)
+	}
 }
 
 // HandleFunc registers the handler of one task type. Registering a nil
@@ -42,9 +61,17 @@ func (m *Mux) HandleFunc(taskType string, handler HandlerFunc) {
 	m.handlers[taskType] = handler
 }
 
-// handler returns the handler registered for a task type.
+// handler returns the handler registered for a task type, wrapped in the
+// registered middleware.
 func (m *Mux) handler(taskType string) (HandlerFunc, bool) {
 	handler, ok := m.handlers[taskType]
+	if !ok {
+		return nil, false
+	}
 
-	return handler, ok
+	for i := len(m.middleware) - 1; i >= 0; i-- {
+		handler = m.middleware[i](handler)
+	}
+
+	return handler, true
 }

@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,30 +11,19 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/tochemey/conveyor/internal/dynaport"
 	conveyor "github.com/tochemey/conveyor/sdk"
 )
 
 // e2eTaskCount is the workload size of the worker-kill end-to-end test.
 const e2eTaskCount = 60
 
-// freePorts reserves n distinct free TCP ports.
+// freePorts reserves n distinct free loopback ports.
 func freePorts(t *testing.T, n int) []int {
 	t.Helper()
 
-	ports := make([]int, 0, n)
-	listeners := make([]net.Listener, 0, n)
-
-	for range n {
-		listener, err := net.Listen("tcp", "127.0.0.1:0")
-		require.NoError(t, err)
-
-		listeners = append(listeners, listener)
-		ports = append(ports, listener.Addr().(*net.TCPAddr).Port)
-	}
-
-	for _, listener := range listeners {
-		require.NoError(t, listener.Close())
-	}
+	ports, err := dynaport.Get(n)
+	require.NoError(t, err)
 
 	return ports
 }
