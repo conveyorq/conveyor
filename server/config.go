@@ -76,6 +76,7 @@ const maxPortNumber = 65535
 // Configuration defaults applied before file and environment overrides.
 const (
 	defaultAPIListen       = ":8080"
+	defaultBindAddr        = "127.0.0.1"
 	defaultRemotingPort    = 9000
 	defaultDiscoveryPort   = 9001
 	defaultPeersPort       = 9002
@@ -140,6 +141,11 @@ type APIConfig struct {
 type ClusterConfig struct {
 	// Discovery selects the peer discovery provider.
 	Discovery string `koanf:"discovery"`
+	// BindAddr is the host the node binds and advertises to peers for
+	// remoting, gossip, and the peers protocol. The default loopback serves
+	// standalone (cluster-of-one) and dev; multi-node deployments must set a
+	// routable address peers can dial.
+	BindAddr string `koanf:"bind_addr"`
 	// StaticPeers lists host:port peers for discovery=static; empty means
 	// self-discovery (a cluster of one).
 	StaticPeers []string `koanf:"static_peers"`
@@ -197,6 +203,7 @@ func DefaultConfig() *Config {
 		API:    APIConfig{Listen: defaultAPIListen},
 		Cluster: ClusterConfig{
 			Discovery:     DiscoveryStatic,
+			BindAddr:      defaultBindAddr,
 			RemotingPort:  defaultRemotingPort,
 			DiscoveryPort: defaultDiscoveryPort,
 			PeersPort:     defaultPeersPort,
@@ -328,8 +335,13 @@ func (c *Config) Validate() error {
 		DiscoveryStatic, DiscoveryNATS, DiscoveryConsul, DiscoveryEtcd,
 		DiscoveryMDNS, DiscoveryDNSSD, DiscoveryKubernetes,
 	}
+
 	if !slices.Contains(providers, c.Cluster.Discovery) {
 		return fmt.Errorf("cluster.discovery: %q is not one of %v", c.Cluster.Discovery, providers)
+	}
+
+	if c.Cluster.BindAddr == "" {
+		return fmt.Errorf("cluster.bind_addr: must not be empty")
 	}
 
 	ports := map[string]int{

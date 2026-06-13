@@ -2,11 +2,14 @@ package actors
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 
 	goakt "github.com/tochemey/goakt/v4/actor"
 	"github.com/tochemey/goakt/v4/discovery"
+	gerrors "github.com/tochemey/goakt/v4/errors"
 	goaktlog "github.com/tochemey/goakt/v4/log"
 	"github.com/tochemey/goakt/v4/remote"
 	"google.golang.org/protobuf/proto"
@@ -16,11 +19,12 @@ import (
 	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 )
 
-// Name prefixes of the per-node maintenance actors. Actor names are
-// cluster-wide unique, so each node suffixes its remoting port until the
-// clustering phase converts these to cluster singletons. Concurrent
-// maintenance actors are safe: every broker maintenance operation is
-// atomic, extra passes are no-ops.
+// Names of the maintenance singletons. Each is spawned as a cluster
+// singleton: exactly one instance runs cluster-wide, placed on the leader
+// and relocated to a survivor on node loss. Every node calls SpawnSingleton
+// with the same name, which is idempotent — the leader hosts it and the
+// rest no-op. Each singleton schedules its own recurring tick on start, so
+// the tick stream follows the singleton across failover.
 const (
 	schedulerActorName = "conveyor-scheduler"
 	reaperActorName    = "conveyor-reaper"
@@ -57,6 +61,21 @@ type Engine struct {
 	config Config
 	// system is the GoAkt actor system; nil until Start succeeds.
 	system goakt.ActorSystem
+	// wakers coalesces enqueue wake-ups per queue (queue -> *queueWaker).
+	wakers sync.Map
+}
+
+// queueWaker coalesces wake-up hints for one queue. A burst of enqueues
+// produces at most one in-flight wake because the grain drains the broker on
+// each wake; redundant hints would only flood its mailbox. dirty records that
+// a wake is owed; running records that the drain goroutine is live.
+type queueWaker struct {
+	// mu guards dirty and running.
+	mu sync.Mutex
+	// dirty is true when an enqueue happened since the last wake was sent.
+	dirty bool
+	// running is true while a drain goroutine is sending wakes.
+	running bool
 }
 
 // NewEngine assembles an engine node around a broker.
@@ -84,6 +103,7 @@ func (e *Engine) Start(ctx context.Context) error {
 			WithPeersPort(e.config.PeersPort).
 			WithMinimumPeersQuorum(1).
 			WithReplicaCount(1).
+			WithKinds(NewScheduler(), NewReaper()).
 			WithGrains(new(QueueGrain))),
 	)
 	if err != nil {
@@ -100,33 +120,28 @@ func (e *Engine) Start(ctx context.Context) error {
 
 	e.system = system
 
-	scheduler, err := system.Spawn(ctx,
-		fmt.Sprintf("%s-%d", schedulerActorName, e.config.RemotingPort),
-		NewScheduler(),
-		goakt.WithLongLived(),
-		goakt.WithRelocationDisabled())
-	if err != nil {
-		return fmt.Errorf("spawning scheduler: %w", err)
+	if err = spawnSingleton(ctx, system, schedulerActorName, NewScheduler()); err != nil {
+		return fmt.Errorf("spawning scheduler singleton: %w", err)
 	}
 
-	reaper, err := system.Spawn(ctx,
-		fmt.Sprintf("%s-%d", reaperActorName, e.config.RemotingPort),
-		NewReaper(),
-		goakt.WithLongLived(),
-		goakt.WithRelocationDisabled())
-	if err != nil {
-		return fmt.Errorf("spawning reaper: %w", err)
-	}
-
-	if err = system.Schedule(ctx, new(conveyorv1.PromoteTick), scheduler, e.config.Settings.PromoteInterval); err != nil {
-		return fmt.Errorf("scheduling promotion ticks: %w", err)
-	}
-
-	if err = system.Schedule(ctx, new(conveyorv1.ReapTick), reaper, e.config.Settings.ReapInterval); err != nil {
-		return fmt.Errorf("scheduling reaper ticks: %w", err)
+	if err = spawnSingleton(ctx, system, reaperActorName, NewReaper()); err != nil {
+		return fmt.Errorf("spawning reaper singleton: %w", err)
 	}
 
 	e.runtime.Logger().Info("engine started", "system", e.config.Name, "bind", e.config.BindAddr, "discovery", e.config.Provider.ID())
+
+	return nil
+}
+
+// spawnSingleton spawns a cluster singleton, tolerating the already-exists
+// outcome. Every node calls this with the same name on start; the leader
+// hosts the singleton and the rest see ErrSingletonAlreadyExists, which is
+// the desired state — exactly one instance runs cluster-wide. GoAkt's
+// relocator re-spawns it on a survivor when the host node is lost.
+func spawnSingleton(ctx context.Context, system goakt.ActorSystem, name string, actor goakt.Actor) error {
+	if _, err := system.SpawnSingleton(ctx, name, actor); err != nil && !errors.Is(err, gerrors.ErrSingletonAlreadyExists) {
+		return err
+	}
 
 	return nil
 }
@@ -173,12 +188,57 @@ func (e *Engine) Enqueue(ctx context.Context, task *conveyorv1.TaskEnvelope) err
 	}
 
 	e.runtime.Counters().Enqueued.Add(1)
-
-	if err := e.TellQueue(ctx, task.GetQueue(), &conveyorv1.TaskEnqueued{Queue: task.GetQueue()}); err != nil {
-		e.runtime.Logger().Warn("enqueue wake-up failed; reaper sweep will recover", "queue", task.GetQueue(), "error", err)
-	}
+	e.wake(task.GetQueue())
 
 	return nil
+}
+
+// wake schedules a coalesced, asynchronous wake-up for a queue's grain. It
+// never blocks the caller: GoAkt's TellGrain waits for the grain to process
+// the hint, so waking per enqueue would serialize a burst on the grain's
+// turn rate. Coalescing keeps at most one wake in flight per queue, which is
+// enough because the grain drains the broker on each one.
+func (e *Engine) wake(queue string) {
+	value, _ := e.wakers.LoadOrStore(queue, &queueWaker{})
+	waker := value.(*queueWaker)
+
+	waker.mu.Lock()
+	waker.dirty = true
+
+	if waker.running {
+		waker.mu.Unlock()
+
+		return
+	}
+
+	waker.running = true
+	waker.mu.Unlock()
+
+	go e.drainWaker(queue, waker)
+}
+
+// drainWaker sends wake-ups for a queue until no enqueue is owed, then exits.
+// The dirty flag is checked and cleared under the lock, so an enqueue that
+// arrives during a send is never lost: it either re-arms this loop or starts
+// a fresh goroutine. A failed send is best-effort; the reaper sweep recovers.
+func (e *Engine) drainWaker(queue string, waker *queueWaker) {
+	for {
+		waker.mu.Lock()
+
+		if !waker.dirty {
+			waker.running = false
+			waker.mu.Unlock()
+
+			return
+		}
+
+		waker.dirty = false
+		waker.mu.Unlock()
+
+		if err := e.TellQueue(context.Background(), queue, &conveyorv1.TasksAvailable{Queue: queue}); err != nil {
+			e.runtime.Logger().Warn("queue wake-up failed; reaper sweep will recover", "queue", queue, "error", err)
+		}
+	}
 }
 
 // TellQueue sends a message to a queue's grain, activating it if needed.

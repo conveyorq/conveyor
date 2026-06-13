@@ -8,6 +8,11 @@ import (
 	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 )
 
+// reapScheduleRef is the reaper's stable tick reference. The reaper
+// singleton schedules its own maintenance ticks on start; the reference
+// lets the entry be canceled or replaced rather than duplicated.
+const reapScheduleRef = "conveyor-reaper-reap"
+
 // Reaper is the maintenance loop: on every ReapTick it reclaims expired
 // leases, purges retention-expired completed tasks, and sweeps for queues
 // with due work whose wake-up hints were lost. The sweep is what makes
@@ -41,13 +46,25 @@ func (r *Reaper) PreStart(ctx *goakt.Context) error {
 func (r *Reaper) Receive(ctx *goakt.ReceiveContext) {
 	switch ctx.Message().(type) {
 	case *goakt.PostStart:
-		// Lifecycle notification; nothing to initialize.
+		r.scheduleTicks(ctx)
 
 	case *conveyorv1.ReapTick:
 		r.maintain(ctx)
 
 	default:
 		ctx.Unhandled()
+	}
+}
+
+// scheduleTicks arms the recurring maintenance tick on the node now hosting
+// the singleton. On failover GoAkt relocates the singleton and the new
+// host re-arms here, while the previous host's entry stops itself once
+// delivery to the departed actor fails.
+func (r *Reaper) scheduleTicks(ctx *goakt.ReceiveContext) {
+	interval := r.runtime.Settings().ReapInterval
+
+	if err := ctx.ActorSystem().Schedule(ctx.Context(), new(conveyorv1.ReapTick), ctx.Self(), interval, goakt.WithReference(reapScheduleRef)); err != nil {
+		r.runtime.Logger().Error("scheduling maintenance ticks failed", "error", err)
 	}
 }
 

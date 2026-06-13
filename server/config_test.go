@@ -156,6 +156,7 @@ func TestValidateRejections(t *testing.T) {
 		{"empty listen", func(c *Config) { c.API.Listen = "" }, "api.listen"},
 		{"half tls", func(c *Config) { c.API.TLS.CertFile = "cert.pem" }, "api.tls"},
 		{"bad discovery", func(c *Config) { c.Cluster.Discovery = "zookeeper" }, "cluster.discovery"},
+		{"empty bind addr", func(c *Config) { c.Cluster.BindAddr = "" }, "cluster.bind_addr"},
 		{"bad port", func(c *Config) { c.Cluster.RemotingPort = 0 }, "cluster.remoting_port"},
 		{"zero lease ttl", func(c *Config) { c.Engine.LeaseTTL = 0 }, "engine.lease_ttl"},
 		{"zero batch", func(c *Config) { c.Engine.LeaseBatchMax = 0 }, "engine.lease_batch_max"},

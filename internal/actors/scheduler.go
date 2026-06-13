@@ -9,6 +9,11 @@ import (
 	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 )
 
+// promoteScheduleRef is the scheduler's stable tick reference. The
+// scheduler singleton schedules its own promotion ticks on start; the
+// reference lets the entry be canceled or replaced rather than duplicated.
+const promoteScheduleRef = "conveyor-scheduler-promote"
+
 // queueGrainFactory creates an empty QueueGrain shell; all state is
 // rebuilt from the broker in OnActivate.
 func queueGrainFactory(_ context.Context) (goakt.Grain, error) {
@@ -68,13 +73,25 @@ func (s *Scheduler) PreStart(ctx *goakt.Context) error {
 func (s *Scheduler) Receive(ctx *goakt.ReceiveContext) {
 	switch ctx.Message().(type) {
 	case *goakt.PostStart:
-		// Lifecycle notification; nothing to initialize.
+		s.scheduleTicks(ctx)
 
 	case *conveyorv1.PromoteTick:
 		s.promote(ctx)
 
 	default:
 		ctx.Unhandled()
+	}
+}
+
+// scheduleTicks arms the recurring promotion tick on the node now hosting
+// the singleton. On failover GoAkt relocates the singleton and the new
+// host re-arms here, while the previous host's entry stops itself once
+// delivery to the departed actor fails.
+func (s *Scheduler) scheduleTicks(ctx *goakt.ReceiveContext) {
+	interval := s.runtime.Settings().PromoteInterval
+
+	if err := ctx.ActorSystem().Schedule(ctx.Context(), new(conveyorv1.PromoteTick), ctx.Self(), interval, goakt.WithReference(promoteScheduleRef)); err != nil {
+		s.runtime.Logger().Error("scheduling promotion ticks failed", "error", err)
 	}
 }
 

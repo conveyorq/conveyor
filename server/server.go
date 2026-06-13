@@ -43,12 +43,6 @@ const readyzTimeout = 2 * time.Second
 // systemName is the actor system name; every node of a cluster shares it.
 const systemName = "conveyor"
 
-// remotingBindAddr is the host the actor system binds remoting, gossip,
-// and peers ports to. Loopback serves the standalone (cluster-of-one)
-// mode; multi-node deployments will bind a routable address when the
-// remaining discovery providers are wired in.
-const remotingBindAddr = "127.0.0.1"
-
 // Server is one conveyord node: the broker, the engine (actor system),
 // and the API listener serving the ConnectRPC services.
 type Server struct {
@@ -100,7 +94,7 @@ func (s *Server) Start(ctx context.Context) error {
 
 	engine := actors.NewEngine(taskLog, clock.System(), s.logger, actors.Config{
 		Name:          systemName,
-		BindAddr:      remotingBindAddr,
+		BindAddr:      s.config.Cluster.BindAddr,
 		RemotingPort:  s.config.Cluster.RemotingPort,
 		DiscoveryPort: s.config.Cluster.DiscoveryPort,
 		PeersPort:     s.config.Cluster.PeersPort,
@@ -188,7 +182,7 @@ func (s *Server) buildDiscovery() (discovery.Provider, error) {
 		hosts := s.config.Cluster.StaticPeers
 
 		if len(hosts) == 0 {
-			hosts = []string{fmt.Sprintf("%s:%d", remotingBindAddr, s.config.Cluster.DiscoveryPort)}
+			hosts = []string{fmt.Sprintf("%s:%d", s.config.Cluster.BindAddr, s.config.Cluster.DiscoveryPort)}
 		}
 
 		return static.NewDiscovery(&static.Config{Hosts: hosts}), nil
