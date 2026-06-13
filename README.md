@@ -128,8 +128,10 @@ and scheduled tasks, cron, unique tasks, retention/archival, and a read-only
 admin/inspection API — all enforced server-side. Your code only writes
 handlers and enqueues tasks.
 
-The internal design (coordination, flow control, failover, guarantees G1–G7)
-is documented in [`.claude/DESIGN.md`](.claude/DESIGN.md).
+The server coordinates all of this across a cluster of `conveyord` nodes:
+queues, scheduling, and lease recovery rebalance automatically when a node is
+lost, and no task is dropped. Scale by adding nodes; the broker is the only
+stateful dependency.
 
 ## Development
 
