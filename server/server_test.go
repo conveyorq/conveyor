@@ -175,6 +175,27 @@ func TestBuildDiscoveryRejectsUnwiredProviders(t *testing.T) {
 	}
 }
 
+func TestBuildDiscoveryWiresKubernetes(t *testing.T) {
+	config := DevConfig()
+	config.Cluster.Discovery = DiscoveryKubernetes
+	config.Cluster.Kubernetes.Namespace = "conveyor"
+	config.Cluster.Kubernetes.PodLabels = map[string]string{"app": "conveyor"}
+
+	node, err := New(config, NewLogger(config.Log))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	provider, err := node.buildDiscovery()
+	if err != nil {
+		t.Fatalf("kubernetes discovery must be wired: %v", err)
+	}
+
+	if provider == nil {
+		t.Fatal("expected a non-nil kubernetes discovery provider")
+	}
+}
+
 func TestNewLoggerCoversAllLevelsAndFormats(t *testing.T) {
 	for _, level := range []string{LogLevelDebug, LogLevelInfo, LogLevelWarn, LogLevelError} {
 		for _, format := range []string{LogFormatJSON, LogFormatText} {

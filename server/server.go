@@ -12,6 +12,7 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/tochemey/goakt/v4/discovery"
+	"github.com/tochemey/goakt/v4/discovery/kubernetes"
 	"github.com/tochemey/goakt/v4/discovery/static"
 
 	"github.com/conveyorq/conveyor/internal/actors"
@@ -187,8 +188,19 @@ func (s *Server) buildDiscovery() (discovery.Provider, error) {
 
 		return static.NewDiscovery(&static.Config{Hosts: hosts}), nil
 
+	case DiscoveryKubernetes:
+		k8s := s.config.Cluster.Kubernetes
+
+		return kubernetes.NewDiscovery(&kubernetes.Config{
+			Namespace:         k8s.Namespace,
+			PodLabels:         k8s.PodLabels,
+			DiscoveryPortName: k8s.DiscoveryPortName,
+			RemotingPortName:  k8s.RemotingPortName,
+			PeersPortName:     k8s.PeersPortName,
+		}), nil
+
 	default:
-		return nil, fmt.Errorf("cluster.discovery: provider %q is not wired yet; use %q", s.config.Cluster.Discovery, DiscoveryStatic)
+		return nil, fmt.Errorf("cluster.discovery: provider %q is not wired yet; use %q or %q", s.config.Cluster.Discovery, DiscoveryStatic, DiscoveryKubernetes)
 	}
 }
 

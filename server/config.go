@@ -80,6 +80,10 @@ const (
 	defaultRemotingPort    = 9000
 	defaultDiscoveryPort   = 9001
 	defaultPeersPort       = 9002
+	// Kubernetes named container ports the discovery provider reads.
+	defaultDiscoveryPortName = "gossip"
+	defaultRemotingPortName  = "remoting"
+	defaultPeersPortName     = "cluster"
 	defaultLeaseTTL        = 60 * time.Second
 	defaultLeaseBatchMax   = 100
 	defaultReapInterval    = 15 * time.Second
@@ -157,6 +161,25 @@ type ClusterConfig struct {
 	PeersPort int `koanf:"peers_port"`
 	// TLS optionally enables mTLS on cluster remoting.
 	TLS TLSConfig `koanf:"tls"`
+	// Kubernetes configures the kubernetes discovery provider; required when
+	// discovery is "kubernetes".
+	Kubernetes KubernetesConfig `koanf:"kubernetes"`
+}
+
+// KubernetesConfig configures GoAkt's Kubernetes discovery provider, which
+// finds peers by listing pods. The port names must match the named container
+// ports the node exposes for gossip, remoting, and the peers protocol.
+type KubernetesConfig struct {
+	// Namespace is the namespace the node's pods run in.
+	Namespace string `koanf:"namespace"`
+	// PodLabels selects the peer pods to discover; at least one is required.
+	PodLabels map[string]string `koanf:"pod_labels"`
+	// DiscoveryPortName is the named container port for gossip bootstrap.
+	DiscoveryPortName string `koanf:"discovery_port_name"`
+	// RemotingPortName is the named container port for remoting.
+	RemotingPortName string `koanf:"remoting_port_name"`
+	// PeersPortName is the named container port for the peers protocol.
+	PeersPortName string `koanf:"peers_port_name"`
 }
 
 // EngineConfig tunes the dispatch and maintenance behavior.
@@ -207,6 +230,11 @@ func DefaultConfig() *Config {
 			RemotingPort:  defaultRemotingPort,
 			DiscoveryPort: defaultDiscoveryPort,
 			PeersPort:     defaultPeersPort,
+			Kubernetes: KubernetesConfig{
+				DiscoveryPortName: defaultDiscoveryPortName,
+				RemotingPortName:  defaultRemotingPortName,
+				PeersPortName:     defaultPeersPortName,
+			},
 		},
 		Engine: EngineConfig{
 			LeaseTTL:        defaultLeaseTTL,
@@ -342,6 +370,16 @@ func (c *Config) Validate() error {
 
 	if c.Cluster.BindAddr == "" {
 		return fmt.Errorf("cluster.bind_addr: must not be empty")
+	}
+
+	if c.Cluster.Discovery == DiscoveryKubernetes {
+		if c.Cluster.Kubernetes.Namespace == "" {
+			return fmt.Errorf("cluster.kubernetes.namespace: required when discovery is %q", DiscoveryKubernetes)
+		}
+
+		if len(c.Cluster.Kubernetes.PodLabels) == 0 {
+			return fmt.Errorf("cluster.kubernetes.pod_labels: at least one label is required when discovery is %q", DiscoveryKubernetes)
+		}
 	}
 
 	ports := map[string]int{

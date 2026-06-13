@@ -78,6 +78,41 @@ engine:
 	}
 }
 
+func TestLoadConfigKubernetesDiscovery(t *testing.T) {
+	path := writeConfigFile(t, `
+mode: kubernetes
+broker:
+  driver: postgres
+  dsn: postgres://localhost/conveyor
+cluster:
+  discovery: kubernetes
+  kubernetes:
+    namespace: conveyor
+    pod_labels:
+      app: conveyor
+      component: server
+`)
+
+	config, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	k8s := config.Cluster.Kubernetes
+	if k8s.Namespace != "conveyor" {
+		t.Errorf("namespace = %q, want conveyor", k8s.Namespace)
+	}
+
+	if k8s.PodLabels["app"] != "conveyor" || k8s.PodLabels["component"] != "server" {
+		t.Errorf("pod_labels = %v, want app=conveyor and component=server", k8s.PodLabels)
+	}
+
+	// Untouched port names keep their defaults.
+	if k8s.DiscoveryPortName != defaultDiscoveryPortName {
+		t.Errorf("discovery_port_name = %q, want default %q", k8s.DiscoveryPortName, defaultDiscoveryPortName)
+	}
+}
+
 func TestLoadConfigExpandsEnvInFile(t *testing.T) {
 	t.Setenv("TEST_DATABASE_URL", "postgres://expanded/conveyor")
 
@@ -157,6 +192,14 @@ func TestValidateRejections(t *testing.T) {
 		{"half tls", func(c *Config) { c.API.TLS.CertFile = "cert.pem" }, "api.tls"},
 		{"bad discovery", func(c *Config) { c.Cluster.Discovery = "zookeeper" }, "cluster.discovery"},
 		{"empty bind addr", func(c *Config) { c.Cluster.BindAddr = "" }, "cluster.bind_addr"},
+		{"k8s without namespace", func(c *Config) {
+			c.Cluster.Discovery = DiscoveryKubernetes
+			c.Cluster.Kubernetes.PodLabels = map[string]string{"app": "conveyor"}
+		}, "cluster.kubernetes.namespace"},
+		{"k8s without pod labels", func(c *Config) {
+			c.Cluster.Discovery = DiscoveryKubernetes
+			c.Cluster.Kubernetes.Namespace = "conveyor"
+		}, "cluster.kubernetes.pod_labels"},
 		{"bad port", func(c *Config) { c.Cluster.RemotingPort = 0 }, "cluster.remoting_port"},
 		{"zero lease ttl", func(c *Config) { c.Engine.LeaseTTL = 0 }, "engine.lease_ttl"},
 		{"zero batch", func(c *Config) { c.Engine.LeaseBatchMax = 0 }, "engine.lease_batch_max"},
@@ -196,6 +239,11 @@ func TestValidateAcceptsAllModesAndProviders(t *testing.T) {
 	for _, p := range providers {
 		config := DevConfig()
 		config.Cluster.Discovery = p
+
+		if p == DiscoveryKubernetes {
+			config.Cluster.Kubernetes.Namespace = "conveyor"
+			config.Cluster.Kubernetes.PodLabels = map[string]string{"app": "conveyor"}
+		}
 
 		if err := config.Validate(); err != nil {
 			t.Errorf("discovery %q must validate: %v", p, err)
