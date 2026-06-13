@@ -86,6 +86,51 @@ worker := system.Worker(conveyor.WithQueues(map[string]int{"default": 1}), conve
 See [`examples/embedded`](examples/embedded). Moving to a real cluster is
 swapping the constructors; handler and enqueue code is identical.
 
+## How it works
+
+Conveyor has three moving parts: your **client** enqueues tasks, the
+**server** (`conveyord`) owns them, and your **workers** process them. A
+durable **broker** — Postgres in production, in-memory for dev — is the source
+of truth. Tasks are persisted *before* they're dispatched, so they survive any
+crash.
+
+```
+ ┌──────────┐  enqueue   ┌─────────────────────────┐   dispatch ↓  ┌──────────┐
+ │  Client  │ ──────────▶│        conveyord        │ ─────────────▶│  Worker  │
+ │ (or CLI) │            │  · accepts enqueues     │   results  ↑  │ (handler │
+ └──────────┘            │  · pushes work to ready │◀───────────── │  code)   │
+                         │    workers (no polling) │               └──────────┘
+                         │  · retries, backoff,    │
+                         │    scheduling, cron     │
+                         └────────────┬────────────┘
+                                      │ persists before dispatch
+                              ┌───────▼────────┐
+                              │     Broker     │  durable source of truth
+                              │ Postgres / mem │  (tasks survive crashes)
+                              └────────────────┘
+```
+
+**Push, not poll.** The server pushes tasks to workers the instant work
+exists and a worker has free capacity — there's no poll interval to tune and
+no Redis. Each worker opens one persistent connection, tells the server which
+queues it serves and how much it can handle, and receives work over that
+stream. When a worker is saturated it simply stops accepting more, and the
+extra work waits safely in the broker.
+
+**At-least-once execution.** A task is delivered until a worker acknowledges
+it. If a worker dies mid-task, the task is redelivered — so **handlers must be
+idempotent**. Return `conveyor.SkipRetry(err)` to dead-letter immediately;
+panics are recovered and treated as retryable failures.
+
+**What the server gives you:** named queues with weights, bounded worker
+concurrency, retries with exponential backoff, per-task priorities, delayed
+and scheduled tasks, cron, unique tasks, retention/archival, and a read-only
+admin/inspection API — all enforced server-side. Your code only writes
+handlers and enqueues tasks.
+
+The internal design (coordination, flow control, failover, guarantees G1–G7)
+is documented in [`.claude/DESIGN.md`](.claude/DESIGN.md).
+
 ## Development
 
 ```sh

@@ -75,23 +75,23 @@ const maxPortNumber = 65535
 
 // Configuration defaults applied before file and environment overrides.
 const (
-	defaultAPIListen       = ":8080"
-	defaultBindAddr        = "127.0.0.1"
-	defaultRemotingPort    = 9000
-	defaultDiscoveryPort   = 9001
-	defaultPeersPort       = 9002
+	defaultAPIListen     = ":8080"
+	defaultBindAddr      = "127.0.0.1"
+	defaultRemotingPort  = 9000
+	defaultDiscoveryPort = 9001
+	defaultPeersPort     = 9002
 	// Kubernetes named container ports the discovery provider reads.
 	defaultDiscoveryPortName = "gossip"
 	defaultRemotingPortName  = "remoting"
 	defaultPeersPortName     = "cluster"
-	defaultLeaseTTL        = 60 * time.Second
-	defaultLeaseBatchMax   = 100
-	defaultReapInterval    = 15 * time.Second
-	defaultPromoteInterval = time.Second
-	defaultPassivateAfter  = 5 * time.Minute
-	defaultMaxRetry        = 25
-	defaultShutdownTimeout = 30 * time.Second
-	defaultOtelServiceName = "conveyord"
+	defaultLeaseTTL          = 60 * time.Second
+	defaultLeaseBatchMax     = 100
+	defaultReapInterval      = 15 * time.Second
+	defaultPromoteInterval   = time.Second
+	defaultPassivateAfter    = 5 * time.Minute
+	defaultMaxRetry          = 25
+	defaultShutdownTimeout   = 30 * time.Second
+	defaultOtelServiceName   = "conveyord"
 )
 
 // Config is the full conveyord configuration.
