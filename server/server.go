@@ -14,13 +14,13 @@ import (
 	"github.com/tochemey/goakt/v4/discovery"
 	"github.com/tochemey/goakt/v4/discovery/static"
 
-	"github.com/tochemey/conveyor/internal/actors"
-	"github.com/tochemey/conveyor/internal/broker"
-	"github.com/tochemey/conveyor/internal/broker/memory"
-	"github.com/tochemey/conveyor/internal/broker/postgres"
-	"github.com/tochemey/conveyor/internal/clock"
-	"github.com/tochemey/conveyor/internal/proto/conveyor/v1/conveyorv1connect"
-	"github.com/tochemey/conveyor/server/api"
+	"github.com/conveyorq/conveyor/internal/actors"
+	"github.com/conveyorq/conveyor/internal/broker"
+	"github.com/conveyorq/conveyor/internal/broker/memory"
+	"github.com/conveyorq/conveyor/internal/broker/postgres"
+	"github.com/conveyorq/conveyor/internal/clock"
+	"github.com/conveyorq/conveyor/internal/proto/conveyor/v1/conveyorv1connect"
+	"github.com/conveyorq/conveyor/server/api"
 )
 
 // Health endpoints. healthz reports process liveness only; readyz reports

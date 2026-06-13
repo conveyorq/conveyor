@@ -9,7 +9,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/tochemey/conveyor/embedded"
+	"github.com/conveyorq/conveyor/embedded"
 )
 
 // testTimeout bounds the embedded system boot and shutdown in tests.

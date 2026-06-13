@@ -13,12 +13,12 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tochemey/goakt/v4/discovery/static"
 
-	"github.com/tochemey/conveyor/internal/actors"
-	"github.com/tochemey/conveyor/internal/broker"
-	"github.com/tochemey/conveyor/internal/broker/memory"
-	"github.com/tochemey/conveyor/internal/clock"
-	"github.com/tochemey/conveyor/internal/dynaport"
-	"github.com/tochemey/conveyor/internal/proto/conveyor/v1/conveyorv1connect"
+	"github.com/conveyorq/conveyor/internal/actors"
+	"github.com/conveyorq/conveyor/internal/broker"
+	"github.com/conveyorq/conveyor/internal/broker/memory"
+	"github.com/conveyorq/conveyor/internal/clock"
+	"github.com/conveyorq/conveyor/internal/dynaport"
+	"github.com/conveyorq/conveyor/internal/proto/conveyor/v1/conveyorv1connect"
 )
 
 // testLoopback is the host every test component binds to.

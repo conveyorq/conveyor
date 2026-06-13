@@ -9,9 +9,9 @@ import (
 	goakt "github.com/tochemey/goakt/v4/actor"
 	goaktlog "github.com/tochemey/goakt/v4/log"
 
-	"github.com/tochemey/conveyor/internal/broker/memory"
-	"github.com/tochemey/conveyor/internal/clock"
-	conveyorv1 "github.com/tochemey/conveyor/internal/proto/conveyor/v1"
+	"github.com/conveyorq/conveyor/internal/broker/memory"
+	"github.com/conveyorq/conveyor/internal/clock"
+	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 )
 
 func TestReaperPreStartRequiresRuntimeExtension(t *testing.T) {

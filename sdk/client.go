@@ -12,8 +12,8 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	conveyorv1 "github.com/tochemey/conveyor/internal/proto/conveyor/v1"
-	"github.com/tochemey/conveyor/sdk/internal/transport"
+	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
+	"github.com/conveyorq/conveyor/sdk/internal/transport"
 )
 
 // TaskState is the lifecycle state of a task as reported by the server.

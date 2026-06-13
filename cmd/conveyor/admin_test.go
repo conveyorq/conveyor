@@ -8,8 +8,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/tochemey/conveyor/embedded"
-	conveyorv1 "github.com/tochemey/conveyor/internal/proto/conveyor/v1"
+	"github.com/conveyorq/conveyor/embedded"
+	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 )
 
 // startEmbeddedNode boots an embedded system and returns its base URL.

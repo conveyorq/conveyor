@@ -16,8 +16,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/tochemey/conveyor/embedded"
-	conveyor "github.com/tochemey/conveyor/sdk"
+	"github.com/conveyorq/conveyor/embedded"
+	conveyor "github.com/conveyorq/conveyor/sdk"
 )
 
 // taskCount is how many welcome emails this run enqueues and awaits.

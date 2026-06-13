@@ -10,14 +10,14 @@ import (
 
 	"connectrpc.com/connect"
 
-	"github.com/tochemey/conveyor/internal/backoff"
-	conveyorv1 "github.com/tochemey/conveyor/internal/proto/conveyor/v1"
-	"github.com/tochemey/conveyor/sdk/internal/transport"
+	"github.com/conveyorq/conveyor/internal/backoff"
+	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
+	"github.com/conveyorq/conveyor/sdk/internal/transport"
 )
 
 // modulePath identifies this module in build info for the SDK version
 // reported at session open.
-const modulePath = "github.com/tochemey/conveyor"
+const modulePath = "github.com/conveyorq/conveyor"
 
 // unknownVersion is reported when build info carries no module version.
 const unknownVersion = "devel"

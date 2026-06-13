@@ -5,7 +5,7 @@ import (
 
 	goakt "github.com/tochemey/goakt/v4/actor"
 
-	conveyorv1 "github.com/tochemey/conveyor/internal/proto/conveyor/v1"
+	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 )
 
 // Reaper is the maintenance loop: on every ReapTick it reclaims expired

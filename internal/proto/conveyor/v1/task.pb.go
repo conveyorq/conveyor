@@ -380,8 +380,8 @@ const file_conveyor_v1_task_proto_rawDesc = "" +
 	"\x10TASK_STATE_RETRY\x10\x04\x12\x18\n" +
 	"\x14TASK_STATE_COMPLETED\x10\x05\x12\x17\n" +
 	"\x13TASK_STATE_ARCHIVED\x10\x06\x12\x17\n" +
-	"\x13TASK_STATE_CANCELED\x10\aB\xad\x01\n" +
-	"\x0fcom.conveyor.v1B\tTaskProtoP\x01ZBgithub.com/tochemey/conveyor/internal/proto/conveyor/v1;conveyorv1\xa2\x02\x03CXX\xaa\x02\vConveyor.V1\xca\x02\vConveyor\\V1\xe2\x02\x17Conveyor\\V1\\GPBMetadata\xea\x02\fConveyor::V1b\x06proto3"
+	"\x13TASK_STATE_CANCELED\x10\aB\xae\x01\n" +
+	"\x0fcom.conveyor.v1B\tTaskProtoP\x01ZCgithub.com/conveyorq/conveyor/internal/proto/conveyor/v1;conveyorv1\xa2\x02\x03CXX\xaa\x02\vConveyor.V1\xca\x02\vConveyor\\V1\xe2\x02\x17Conveyor\\V1\\GPBMetadata\xea\x02\fConveyor::V1b\x06proto3"
 
 var (
 	file_conveyor_v1_task_proto_rawDescOnce sync.Once

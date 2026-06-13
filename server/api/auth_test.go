@@ -8,8 +8,8 @@ import (
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
 
-	conveyorv1 "github.com/tochemey/conveyor/internal/proto/conveyor/v1"
-	"github.com/tochemey/conveyor/internal/proto/conveyor/v1/conveyorv1connect"
+	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
+	"github.com/conveyorq/conveyor/internal/proto/conveyor/v1/conveyorv1connect"
 )
 
 func TestAuthorizeHeaderHandling(t *testing.T) {

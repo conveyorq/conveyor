@@ -788,8 +788,8 @@ const file_conveyor_v1_messages_proto_rawDesc = "" +
 	"\x05error\x18\x04 \x01(\tR\x05error\"\r\n" +
 	"\vPromoteTick\"\n" +
 	"\n" +
-	"\bReapTickB\xb1\x01\n" +
-	"\x0fcom.conveyor.v1B\rMessagesProtoP\x01ZBgithub.com/tochemey/conveyor/internal/proto/conveyor/v1;conveyorv1\xa2\x02\x03CXX\xaa\x02\vConveyor.V1\xca\x02\vConveyor\\V1\xe2\x02\x17Conveyor\\V1\\GPBMetadata\xea\x02\fConveyor::V1b\x06proto3"
+	"\bReapTickB\xb2\x01\n" +
+	"\x0fcom.conveyor.v1B\rMessagesProtoP\x01ZCgithub.com/conveyorq/conveyor/internal/proto/conveyor/v1;conveyorv1\xa2\x02\x03CXX\xaa\x02\vConveyor.V1\xca\x02\vConveyor\\V1\xe2\x02\x17Conveyor\\V1\\GPBMetadata\xea\x02\fConveyor::V1b\x06proto3"
 
 var (
 	file_conveyor_v1_messages_proto_rawDescOnce sync.Once

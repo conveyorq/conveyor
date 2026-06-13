@@ -11,9 +11,9 @@ import (
 	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
 
-	conveyorv1 "github.com/tochemey/conveyor/internal/proto/conveyor/v1"
-	"github.com/tochemey/conveyor/internal/proto/conveyor/v1/conveyorv1connect"
-	"github.com/tochemey/conveyor/internal/wire"
+	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
+	"github.com/conveyorq/conveyor/internal/proto/conveyor/v1/conveyorv1connect"
+	"github.com/conveyorq/conveyor/internal/wire"
 )
 
 // taskStatePrefix is stripped from TaskState enum names for CLI input and

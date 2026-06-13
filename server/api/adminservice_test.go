@@ -10,9 +10,9 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/types/known/durationpb"
 
-	"github.com/tochemey/conveyor/internal/broker"
-	"github.com/tochemey/conveyor/internal/clock"
-	conveyorv1 "github.com/tochemey/conveyor/internal/proto/conveyor/v1"
+	"github.com/conveyorq/conveyor/internal/broker"
+	"github.com/conveyorq/conveyor/internal/clock"
+	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 )
 
 // newTestAdminService builds an AdminService and a TaskService over one

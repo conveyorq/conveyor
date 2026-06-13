@@ -8,7 +8,7 @@ import (
 	goakt "github.com/tochemey/goakt/v4/actor"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	conveyorv1 "github.com/tochemey/conveyor/internal/proto/conveyor/v1"
+	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 )
 
 // queueGrainPrefix prefixes the grain identity name of every queue grain.

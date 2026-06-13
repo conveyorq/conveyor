@@ -10,11 +10,11 @@ import (
 	"github.com/reugn/go-quartz/quartz"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/tochemey/conveyor/internal/actors"
-	"github.com/tochemey/conveyor/internal/broker"
-	"github.com/tochemey/conveyor/internal/clock"
-	conveyorv1 "github.com/tochemey/conveyor/internal/proto/conveyor/v1"
-	"github.com/tochemey/conveyor/internal/proto/conveyor/v1/conveyorv1connect"
+	"github.com/conveyorq/conveyor/internal/actors"
+	"github.com/conveyorq/conveyor/internal/broker"
+	"github.com/conveyorq/conveyor/internal/clock"
+	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
+	"github.com/conveyorq/conveyor/internal/proto/conveyor/v1/conveyorv1connect"
 )
 
 // peersLookupTimeout bounds the best-effort cluster membership lookup in

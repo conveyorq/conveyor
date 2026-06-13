@@ -9,7 +9,7 @@ import (
 	"errors"
 	"time"
 
-	conveyorv1 "github.com/tochemey/conveyor/internal/proto/conveyor/v1"
+	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 )
 
 // Sentinel errors returned by Broker implementations. Match with errors.Is.

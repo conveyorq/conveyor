@@ -7,7 +7,7 @@ managed:
   enabled: true
   override:
     - file_option: go_package_prefix
-      value: github.com/tochemey/conveyor/internal/proto
+      value: github.com/conveyorq/conveyor/internal/proto
 plugins:
   - local: protoc-gen-go
     out: gen

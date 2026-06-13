@@ -11,8 +11,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/tochemey/conveyor/internal/dynaport"
-	"github.com/tochemey/conveyor/server"
+	"github.com/conveyorq/conveyor/internal/dynaport"
+	"github.com/conveyorq/conveyor/server"
 )
 
 // testLoopback is the host every test server binds to.

@@ -7,7 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/tochemey/conveyor/server"
+	"github.com/conveyorq/conveyor/server"
 )
 
 func TestLoadConfigDevPreset(t *testing.T) {

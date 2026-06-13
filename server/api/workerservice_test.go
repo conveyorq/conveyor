@@ -11,8 +11,8 @@ import (
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
 
-	conveyorv1 "github.com/tochemey/conveyor/internal/proto/conveyor/v1"
-	"github.com/tochemey/conveyor/internal/proto/conveyor/v1/conveyorv1connect"
+	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
+	"github.com/conveyorq/conveyor/internal/proto/conveyor/v1/conveyorv1connect"
 )
 
 // openSession dials a session stream against a fresh engine + API server

@@ -14,10 +14,10 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/tochemey/conveyor/internal/broker"
-	"github.com/tochemey/conveyor/internal/broker/memory"
-	"github.com/tochemey/conveyor/internal/clock"
-	conveyorv1 "github.com/tochemey/conveyor/internal/proto/conveyor/v1"
+	"github.com/conveyorq/conveyor/internal/broker"
+	"github.com/conveyorq/conveyor/internal/broker/memory"
+	"github.com/conveyorq/conveyor/internal/clock"
+	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 )
 
 // frameRecorder is a FrameSender capturing every frame; dispatches are also

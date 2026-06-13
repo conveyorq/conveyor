@@ -12,8 +12,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/tochemey/conveyor/embedded"
-	conveyor "github.com/tochemey/conveyor/sdk"
+	"github.com/conveyorq/conveyor/embedded"
+	conveyor "github.com/conveyorq/conveyor/sdk"
 )
 
 // portingTestTimeout bounds the whole round trip.

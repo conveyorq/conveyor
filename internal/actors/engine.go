@@ -11,9 +11,9 @@ import (
 	"github.com/tochemey/goakt/v4/remote"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/tochemey/conveyor/internal/broker"
-	"github.com/tochemey/conveyor/internal/clock"
-	conveyorv1 "github.com/tochemey/conveyor/internal/proto/conveyor/v1"
+	"github.com/conveyorq/conveyor/internal/broker"
+	"github.com/conveyorq/conveyor/internal/clock"
+	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 )
 
 // Name prefixes of the per-node maintenance actors. Actor names are

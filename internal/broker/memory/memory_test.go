@@ -3,9 +3,9 @@ package memory
 import (
 	"testing"
 
-	"github.com/tochemey/conveyor/internal/broker"
-	"github.com/tochemey/conveyor/internal/broker/brokertest"
-	"github.com/tochemey/conveyor/internal/clock"
+	"github.com/conveyorq/conveyor/internal/broker"
+	"github.com/conveyorq/conveyor/internal/broker/brokertest"
+	"github.com/conveyorq/conveyor/internal/clock"
 )
 
 func TestConformance(t *testing.T) {

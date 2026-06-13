@@ -8,34 +8,59 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
 
-	"github.com/tochemey/conveyor/server"
+	"github.com/spf13/cobra"
+
+	"github.com/conveyorq/conveyor/server"
 )
 
 func main() {
-	if err := run(); err != nil {
-		fmt.Fprintln(os.Stderr, "conveyord:", err)
+	if err := newRootCommand().Execute(); err != nil {
+		_, _ = fmt.Fprintln(os.Stderr, "conveyord:", err)
 		os.Exit(1)
 	}
 }
 
-// run parses flags, loads configuration, and supervises the server until a
-// termination signal arrives.
-func run() error {
+// newRootCommand assembles the conveyord command tree: a single root
+// command that loads configuration and supervises the server node.
+func newRootCommand() *cobra.Command {
 	var (
-		configPath = flag.String("config", "", "path to conveyor.yaml")
-		mode       = flag.String("mode", "", "deployment mode: standalone | cluster | kubernetes (overrides config)")
-		dev        = flag.Bool("dev", false, "development mode: standalone, in-memory broker, auth disabled, debug logs")
+		configPath string
+		mode       string
+		dev        bool
 	)
 
-	flag.Parse()
+	root := &cobra.Command{
+		Use:   "conveyord",
+		Short: "Run a Conveyor server node",
+		Long: `conveyord — run a Conveyor server node
 
-	config, err := loadConfig(*configPath, *mode, *dev)
+The node is configured from --config (a conveyor.yaml file) with --mode
+overriding the deployment mode. --dev selects the development preset:
+standalone, in-memory broker, auth disabled, and debug logs.`,
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			return runNode(configPath, mode, dev)
+		},
+	}
+
+	flags := root.Flags()
+	flags.StringVar(&configPath, "config", "", "path to conveyor.yaml")
+	flags.StringVar(&mode, "mode", "", "deployment mode: standalone | cluster | kubernetes (overrides config)")
+	flags.BoolVar(&dev, "dev", false, "development mode: standalone, in-memory broker, auth disabled, debug logs")
+
+	return root
+}
+
+// runNode loads configuration and supervises the server until a
+// termination signal arrives.
+func runNode(configPath, mode string, dev bool) error {
+	config, err := loadConfig(configPath, mode, dev)
 	if err != nil {
 		return err
 	}

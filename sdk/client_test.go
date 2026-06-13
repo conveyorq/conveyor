@@ -9,8 +9,8 @@ import (
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
 
-	"github.com/tochemey/conveyor/internal/clock"
-	conveyorv1 "github.com/tochemey/conveyor/internal/proto/conveyor/v1"
+	"github.com/conveyorq/conveyor/internal/clock"
+	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 )
 
 func TestNewClientRequiresBaseURL(t *testing.T) {

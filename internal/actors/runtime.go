@@ -15,8 +15,8 @@ import (
 	"github.com/oklog/ulid/v2"
 	"github.com/tochemey/goakt/v4/extension"
 
-	"github.com/tochemey/conveyor/internal/broker"
-	"github.com/tochemey/conveyor/internal/clock"
+	"github.com/conveyorq/conveyor/internal/broker"
+	"github.com/conveyorq/conveyor/internal/clock"
 )
 
 // BrokerExtensionID names the actor-system extension carrying the broker and its

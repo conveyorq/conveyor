@@ -10,9 +10,9 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/tochemey/conveyor/internal/dynaport"
-	conveyor "github.com/tochemey/conveyor/sdk"
-	"github.com/tochemey/conveyor/server"
+	"github.com/conveyorq/conveyor/internal/dynaport"
+	conveyor "github.com/conveyorq/conveyor/sdk"
+	"github.com/conveyorq/conveyor/server"
 )
 
 // loopbackAnyPort binds a loopback listener on an OS-assigned free port,

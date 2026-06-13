@@ -7,7 +7,7 @@ import (
 
 	"golang.org/x/mod/semver"
 
-	conveyorv1 "github.com/tochemey/conveyor/internal/proto/conveyor/v1"
+	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 )
 
 // queueNamePattern restricts queue names to what grain identity names

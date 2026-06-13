@@ -8,8 +8,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	conveyor "github.com/tochemey/conveyor/sdk"
-	"github.com/tochemey/conveyor/server"
+	conveyor "github.com/conveyorq/conveyor/sdk"
+	"github.com/conveyorq/conveyor/server"
 )
 
 // startTimeout bounds the boot of one embedded system in tests.

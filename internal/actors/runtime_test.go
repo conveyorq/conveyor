@@ -7,8 +7,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/tochemey/conveyor/internal/broker/memory"
-	"github.com/tochemey/conveyor/internal/clock"
+	"github.com/conveyorq/conveyor/internal/broker/memory"
+	"github.com/conveyorq/conveyor/internal/clock"
 )
 
 // newTestRuntime assembles a runtime over a fresh memory broker.

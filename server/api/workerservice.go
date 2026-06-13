@@ -13,9 +13,9 @@ import (
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/durationpb"
 
-	"github.com/tochemey/conveyor/internal/actors"
-	conveyorv1 "github.com/tochemey/conveyor/internal/proto/conveyor/v1"
-	"github.com/tochemey/conveyor/internal/proto/conveyor/v1/conveyorv1connect"
+	"github.com/conveyorq/conveyor/internal/actors"
+	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
+	"github.com/conveyorq/conveyor/internal/proto/conveyor/v1/conveyorv1connect"
 )
 
 // heartbeatDivisor derives the worker heartbeat interval from the lease

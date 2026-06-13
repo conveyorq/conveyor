@@ -2843,8 +2843,8 @@ const file_conveyor_v1_service_proto_rawDesc = "" +
 	"ResumeCron\x12\x1e.conveyor.v1.ResumeCronRequest\x1a\x1f.conveyor.v1.ResumeCronResponse\"\x00\x12O\n" +
 	"\n" +
 	"DeleteCron\x12\x1e.conveyor.v1.DeleteCronRequest\x1a\x1f.conveyor.v1.DeleteCronResponse\"\x00\x12R\n" +
-	"\vClusterInfo\x12\x1f.conveyor.v1.ClusterInfoRequest\x1a .conveyor.v1.ClusterInfoResponse\"\x00B\xb0\x01\n" +
-	"\x0fcom.conveyor.v1B\fServiceProtoP\x01ZBgithub.com/tochemey/conveyor/internal/proto/conveyor/v1;conveyorv1\xa2\x02\x03CXX\xaa\x02\vConveyor.V1\xca\x02\vConveyor\\V1\xe2\x02\x17Conveyor\\V1\\GPBMetadata\xea\x02\fConveyor::V1b\x06proto3"
+	"\vClusterInfo\x12\x1f.conveyor.v1.ClusterInfoRequest\x1a .conveyor.v1.ClusterInfoResponse\"\x00B\xb1\x01\n" +
+	"\x0fcom.conveyor.v1B\fServiceProtoP\x01ZCgithub.com/conveyorq/conveyor/internal/proto/conveyor/v1;conveyorv1\xa2\x02\x03CXX\xaa\x02\vConveyor.V1\xca\x02\vConveyor\\V1\xe2\x02\x17Conveyor\\V1\\GPBMetadata\xea\x02\fConveyor::V1b\x06proto3"
 
 var (
 	file_conveyor_v1_service_proto_rawDescOnce sync.Once

@@ -11,8 +11,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/tochemey/conveyor/internal/dynaport"
-	conveyor "github.com/tochemey/conveyor/sdk"
+	"github.com/conveyorq/conveyor/internal/dynaport"
+	conveyor "github.com/conveyorq/conveyor/sdk"
 )
 
 // e2eTaskCount is the workload size of the worker-kill end-to-end test.
@@ -60,7 +60,7 @@ func buildExampleWorker(t *testing.T) string {
 
 	binary := filepath.Join(t.TempDir(), "example-worker")
 
-	build := exec.Command("go", "build", "-o", binary, "github.com/tochemey/conveyor/examples/standalone/worker")
+	build := exec.Command("go", "build", "-o", binary, "github.com/conveyorq/conveyor/examples/standalone/worker")
 	build.Dir = ".."
 
 	output, err := build.CombinedOutput()

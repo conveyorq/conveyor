@@ -8,3 +8,13 @@ coverage.out
 .gomodcache/
 gen/
 .claude/
+
+# go test compiled binaries left by `go test -c` / `-cpuprofile`
+*.test
+*.prof
+.local/
+
+
+*coverage.*
+vendor
+gen.env

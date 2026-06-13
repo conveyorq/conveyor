@@ -11,9 +11,9 @@ import (
 	"github.com/tochemey/goakt/v4/breaker"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/tochemey/conveyor/internal/backoff"
-	"github.com/tochemey/conveyor/internal/broker"
-	conveyorv1 "github.com/tochemey/conveyor/internal/proto/conveyor/v1"
+	"github.com/conveyorq/conveyor/internal/backoff"
+	"github.com/conveyorq/conveyor/internal/broker"
+	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 )
 
 // gatewayNamePrefix prefixes the actor name of every worker gateway.

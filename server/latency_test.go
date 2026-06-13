@@ -9,8 +9,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/tochemey/conveyor/internal/clock"
-	conveyor "github.com/tochemey/conveyor/sdk"
+	"github.com/conveyorq/conveyor/internal/clock"
+	conveyor "github.com/conveyorq/conveyor/sdk"
 )
 
 // Latency gate parameters: p99 enqueue-to-handler-start under 50ms at

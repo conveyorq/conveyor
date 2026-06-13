@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 
-	conveyorv1 "github.com/tochemey/conveyor/internal/proto/conveyor/v1"
+	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 )
 
 func TestJSONPayloadEncodes(t *testing.T) {

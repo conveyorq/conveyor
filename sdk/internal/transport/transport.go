@@ -8,9 +8,9 @@ import (
 
 	"connectrpc.com/connect"
 
-	conveyorv1 "github.com/tochemey/conveyor/internal/proto/conveyor/v1"
-	"github.com/tochemey/conveyor/internal/proto/conveyor/v1/conveyorv1connect"
-	"github.com/tochemey/conveyor/internal/wire"
+	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
+	"github.com/conveyorq/conveyor/internal/proto/conveyor/v1/conveyorv1connect"
+	"github.com/conveyorq/conveyor/internal/wire"
 )
 
 // Client is the SDK's wire client: task RPCs and worker sessions over one

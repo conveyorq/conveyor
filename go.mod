@@ -1,4 +1,4 @@
-module github.com/tochemey/conveyor
+module github.com/conveyorq/conveyor
 
 go 1.26.4
 

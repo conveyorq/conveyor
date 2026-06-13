@@ -6,7 +6,7 @@ import (
 
 	goakt "github.com/tochemey/goakt/v4/actor"
 
-	conveyorv1 "github.com/tochemey/conveyor/internal/proto/conveyor/v1"
+	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 )
 
 // queueGrainFactory creates an empty QueueGrain shell; all state is

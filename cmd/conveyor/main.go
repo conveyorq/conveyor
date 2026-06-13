@@ -33,7 +33,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	conveyor "github.com/tochemey/conveyor/sdk"
+	conveyor "github.com/conveyorq/conveyor/sdk"
 )
 
 // defaultAddr is the server base URL used when neither --addr nor
@@ -50,7 +50,7 @@ const (
 
 func main() {
 	if err := run(os.Args[1:], os.Stdout); err != nil {
-		fmt.Fprintln(os.Stderr, "conveyor:", err)
+		_, _ = fmt.Fprintln(os.Stderr, "conveyor:", err)
 		os.Exit(1)
 	}
 }
@@ -240,15 +240,15 @@ func newTasksGetCommand(conn *connection) *cobra.Command {
 			}
 
 			stdout := cmd.OutOrStdout()
-			fmt.Fprintf(stdout, "id:          %s\n", info.ID)
-			fmt.Fprintf(stdout, "queue:       %s\n", info.Queue)
-			fmt.Fprintf(stdout, "type:        %s\n", info.Type)
-			fmt.Fprintf(stdout, "state:       %s\n", info.State)
-			fmt.Fprintf(stdout, "priority:    %d\n", info.Priority)
-			fmt.Fprintf(stdout, "retried:     %d/%d\n", info.Retried, info.MaxRetry)
-			fmt.Fprintf(stdout, "last_error:  %s\n", orDash(info.LastError))
-			fmt.Fprintf(stdout, "enqueued_at: %s\n", formatTime(info.EnqueuedAt))
-			fmt.Fprintf(stdout, "process_at:  %s\n", formatTime(info.ProcessAt))
+			_, _ = fmt.Fprintf(stdout, "id:          %s\n", info.ID)
+			_, _ = fmt.Fprintf(stdout, "queue:       %s\n", info.Queue)
+			_, _ = fmt.Fprintf(stdout, "type:        %s\n", info.Type)
+			_, _ = fmt.Fprintf(stdout, "state:       %s\n", info.State)
+			_, _ = fmt.Fprintf(stdout, "priority:    %d\n", info.Priority)
+			_, _ = fmt.Fprintf(stdout, "retried:     %d/%d\n", info.Retried, info.MaxRetry)
+			_, _ = fmt.Fprintf(stdout, "last_error:  %s\n", orDash(info.LastError))
+			_, _ = fmt.Fprintf(stdout, "enqueued_at: %s\n", formatTime(info.EnqueuedAt))
+			_, _ = fmt.Fprintf(stdout, "process_at:  %s\n", formatTime(info.ProcessAt))
 
 			return nil
 		},
