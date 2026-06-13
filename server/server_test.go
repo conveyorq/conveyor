@@ -2,12 +2,24 @@ package server
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/conveyorq/conveyor/internal/clock"
 )
 
 // startTestServer boots a dev-config server on an ephemeral port and
@@ -203,5 +215,158 @@ func TestNewLoggerCoversAllLevelsAndFormats(t *testing.T) {
 				t.Fatalf("NewLogger(%s, %s) returned nil", level, format)
 			}
 		}
+	}
+}
+
+// writeTestKeyPair generates a self-signed certificate and writes the
+// certificate and private key as PEM files in dir, returning their paths.
+func writeTestKeyPair(t *testing.T, dir string) (certFile, keyFile string) {
+	t.Helper()
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "conveyor-test"},
+		NotBefore:    clock.System().Now().Add(-time.Hour),
+		NotAfter:     clock.System().Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		IsCA:         true,
+	}
+
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	certFile = filepath.Join(dir, "cert.pem")
+	keyFile = filepath.Join(dir, "key.pem")
+
+	writePEM(t, certFile, "CERTIFICATE", der)
+	writePEM(t, keyFile, "PRIVATE KEY", keyDER)
+
+	return certFile, keyFile
+}
+
+// writePEM encodes block as a PEM file of the given type at path.
+func writePEM(t *testing.T, path, blockType string, der []byte) {
+	t.Helper()
+
+	encoded := pem.EncodeToMemory(&pem.Block{Type: blockType, Bytes: der})
+	if err := os.WriteFile(path, encoded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBuildClusterTLSDisabledWhenNoCert(t *testing.T) {
+	node := &Server{config: DevConfig()}
+
+	info, err := node.buildClusterTLS()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if info != nil {
+		t.Fatalf("expected nil TLS info when no certificate is configured, got %v", info)
+	}
+}
+
+func TestBuildClusterTLSServerOnly(t *testing.T) {
+	dir := t.TempDir()
+	certFile, keyFile := writeTestKeyPair(t, dir)
+
+	config := DevConfig()
+	config.Cluster.TLS = TLSConfig{CertFile: certFile, KeyFile: keyFile}
+	node := &Server{config: config}
+
+	info, err := node.buildClusterTLS()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if info == nil || info.ServerConfig == nil || info.ClientConfig == nil {
+		t.Fatal("expected both server and client TLS configs to be set")
+	}
+
+	if info.ServerConfig.ClientAuth != tls.NoClientCert {
+		t.Errorf("client auth = %v, must not require client certs without a CA", info.ServerConfig.ClientAuth)
+	}
+}
+
+func TestBuildClusterTLSMutualWithCA(t *testing.T) {
+	dir := t.TempDir()
+	certFile, keyFile := writeTestKeyPair(t, dir)
+
+	config := DevConfig()
+	config.Cluster.TLS = TLSConfig{CertFile: certFile, KeyFile: keyFile, CAFile: certFile}
+	node := &Server{config: config}
+
+	info, err := node.buildClusterTLS()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if info.ServerConfig.ClientAuth != tls.RequireAndVerifyClientCert {
+		t.Errorf("client auth = %v, want RequireAndVerifyClientCert with a CA", info.ServerConfig.ClientAuth)
+	}
+
+	if info.ServerConfig.ClientCAs == nil || info.ClientConfig.RootCAs == nil {
+		t.Fatal("expected the CA pool wired into both server ClientCAs and client RootCAs")
+	}
+}
+
+func TestBuildClusterTLSRejectsMissingFiles(t *testing.T) {
+	config := DevConfig()
+	config.Cluster.TLS = TLSConfig{
+		CertFile: filepath.Join(t.TempDir(), "absent-cert.pem"),
+		KeyFile:  filepath.Join(t.TempDir(), "absent-key.pem"),
+	}
+	node := &Server{config: config}
+
+	if _, err := node.buildClusterTLS(); err == nil {
+		t.Fatal("expected an error for a missing key pair")
+	}
+}
+
+func TestBuildClusterTLSRejectsMissingCA(t *testing.T) {
+	dir := t.TempDir()
+	certFile, keyFile := writeTestKeyPair(t, dir)
+
+	config := DevConfig()
+	config.Cluster.TLS = TLSConfig{
+		CertFile: certFile,
+		KeyFile:  keyFile,
+		CAFile:   filepath.Join(dir, "absent-ca.pem"),
+	}
+	node := &Server{config: config}
+
+	if _, err := node.buildClusterTLS(); err == nil {
+		t.Fatal("expected an error for an unreadable CA file")
+	}
+}
+
+func TestBuildClusterTLSRejectsEmptyCA(t *testing.T) {
+	dir := t.TempDir()
+	certFile, keyFile := writeTestKeyPair(t, dir)
+
+	caFile := filepath.Join(dir, "empty-ca.pem")
+	if err := os.WriteFile(caFile, []byte("not a certificate"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	config := DevConfig()
+	config.Cluster.TLS = TLSConfig{CertFile: certFile, KeyFile: keyFile, CAFile: caFile}
+	node := &Server{config: config}
+
+	if _, err := node.buildClusterTLS(); err == nil {
+		t.Fatal("expected an error for a CA file with no certificates")
 	}
 }

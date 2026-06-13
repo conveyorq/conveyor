@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	goakt "github.com/tochemey/goakt/v4/actor"
+	"github.com/tochemey/goakt/v4/discovery/static"
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	"github.com/conveyorq/conveyor/internal/broker"
@@ -156,17 +157,21 @@ func TestEngineRespectsPriorities(t *testing.T) {
 // broker. The grain is a per-queue serialization point; this proves it is
 // not the bottleneck before the wire protocol calcifies around it.
 func TestQueueGrainDispatchThroughput(t *testing.T) {
-	if testing.Short() {
-		t.Skip("throughput gate skipped in -short mode")
-	}
-
-	// GoAkt v4.2.8 routes every cluster-mode TellGrain through a cluster
-	// registry lookup and a loopback remoting round trip even when the
-	// grain is active on the sending node, capping grain messaging at
-	// roughly 500 msgs/s. Unskip once a local-activation fast path ships in
-	// a tagged GoAkt release. Note when unskipping: the gate needs an
-	// uninstrumented build (-race slows sync paths ~10x).
-	t.Skip("blocked on GoAkt TellGrain local fast path")
+	// GoAkt v4.2.9 added a node-local grain fast path: a Tell to a grain
+	// active on the sending node skips the cluster registry lookup and the
+	// loopback remoting round trip, delivering in-process. Before it, every
+	// cluster-mode TellGrain paid that cost and capped grain messaging at
+	// roughly 500 msgs/s; with it this gate sustains ~10k tasks/s (validated
+	// 2026-06-13, M1, uninstrumented).
+	//
+	// It stays skipped in the suite because the only CI test pass runs under
+	// -race, where instrumentation slows the sync paths ~10x: the rate cannot
+	// reach the 5k gate no matter the deadline. The repo deliberately carries
+	// no build-tag race flag to special-case it. To re-measure, comment out
+	// the t.Skip below and run on an uninstrumented build:
+	//
+	//	go test ./internal/actors -run TestQueueGrainDispatchThroughput -v
+	t.Skip("throughput gate: comment out to run uninstrumented (no -race); the CI -race pass cannot meet the 5k rate")
 
 	const (
 		totalTasks        = 20_000
@@ -370,6 +375,44 @@ func TestEngineAccessorsAndStartValidation(t *testing.T) {
 
 	bare := NewEngine(taskLog, clock.System(), quietLogger(), Config{Name: "no-provider"})
 	require.ErrorContains(t, bare.Start(context.Background()), "discovery provider is required")
+}
+
+// TestEngineStartsWithMutualTLS boots a single node with cluster remoting
+// secured by mutual TLS and drives tasks through it, proving the TLS info
+// is wired into the actor system and a secured node still dispatches.
+func TestEngineStartsWithMutualTLS(t *testing.T) {
+	const taskCount = 5
+
+	taskLog := memory.New(clock.System())
+	ports := freePorts(t, 3)
+
+	engine := NewEngine(taskLog, clock.System(), quietLogger(), Config{
+		Name:          "conveyor-tls-test",
+		BindAddr:      testBindAddr,
+		RemotingPort:  ports[0],
+		DiscoveryPort: ports[1],
+		PeersPort:     ports[2],
+		Provider:      static.NewDiscovery(&static.Config{Hosts: []string{fmt.Sprintf("%s:%d", testBindAddr, ports[1])}}),
+		TLS:           newLoopbackTLS(t),
+		Settings:      testSettings,
+	})
+
+	require.NoError(t, engine.Start(context.Background()))
+
+	t.Cleanup(func() {
+		stopCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = engine.Stop(stopCtx)
+	})
+
+	enqueueTasks(t, engine, "default", taskCount)
+	spawnGateway(t, engine, &mockGateway{queue: "default", capacity: 2})
+
+	counters := engine.Counters()
+
+	require.Eventually(t, func() bool {
+		return counters.Completed.Load() == taskCount
+	}, time.Minute, 20*time.Millisecond, "tasks should complete under mutual TLS")
 }
 
 // TestEngineEnqueueSurfacesBrokerErrors covers the enqueue error path: a

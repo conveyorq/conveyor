@@ -12,6 +12,7 @@ import (
 	gerrors "github.com/tochemey/goakt/v4/errors"
 	goaktlog "github.com/tochemey/goakt/v4/log"
 	"github.com/tochemey/goakt/v4/remote"
+	gtls "github.com/tochemey/goakt/v4/tls"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/conveyorq/conveyor/internal/broker"
@@ -47,6 +48,10 @@ type Config struct {
 	// from configuration (static, NATS, Consul, etcd, mDNS, DNS-SD, or
 	// Kubernetes); the engine never chooses one itself.
 	Provider discovery.Provider
+	// TLS optionally secures cluster remoting with mutual TLS. The caller
+	// builds it from configuration; the engine passes it through to GoAkt
+	// unchanged. A nil value leaves remoting in cleartext.
+	TLS *gtls.Info
 	// Settings tunes the engine actors.
 	Settings Settings
 }
@@ -93,7 +98,7 @@ func (e *Engine) Start(ctx context.Context) error {
 		return fmt.Errorf("engine config: discovery provider is required")
 	}
 
-	system, err := goakt.NewActorSystem(e.config.Name,
+	options := []goakt.Option{
 		goakt.WithLogger(goaktlog.NewSlogFrom(e.runtime.Logger(), goaktlog.InfoLevel)),
 		goakt.WithExtensions(e.runtime),
 		goakt.WithRemote(remote.NewConfig(e.config.BindAddr, e.config.RemotingPort)),
@@ -105,7 +110,13 @@ func (e *Engine) Start(ctx context.Context) error {
 			WithReplicaCount(1).
 			WithKinds(NewScheduler(), NewReaper()).
 			WithGrains(new(QueueGrain))),
-	)
+	}
+
+	if e.config.TLS != nil {
+		options = append(options, goakt.WithTLS(e.config.TLS))
+	}
+
+	system, err := goakt.NewActorSystem(e.config.Name, options...)
 	if err != nil {
 		return fmt.Errorf("building actor system: %w", err)
 	}

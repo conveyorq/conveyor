@@ -2,8 +2,16 @@ package actors
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"fmt"
 	"log/slog"
+	"math/big"
+	"net"
 	"sync"
 	"testing"
 	"time"
@@ -11,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 	goakt "github.com/tochemey/goakt/v4/actor"
 	"github.com/tochemey/goakt/v4/discovery/static"
+	gtls "github.com/tochemey/goakt/v4/tls"
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	"github.com/conveyorq/conveyor/internal/broker"
@@ -87,6 +96,54 @@ func newNode(taskLog broker.Broker, settings Settings, ports []int, peers []stri
 		Provider:      static.NewDiscovery(&static.Config{Hosts: peers}),
 		Settings:      settings,
 	})
+}
+
+// newLoopbackTLS builds a mutual-TLS info for cluster remoting on the
+// loopback host. It mints one self-signed CA certificate valid for both
+// server and client authentication and trusts it on both sides, mirroring
+// a real deployment where every node shares a certificate authority: a
+// node presents the certificate and verifies its peers against the same CA.
+func newLoopbackTLS(t *testing.T) *gtls.Info {
+	t.Helper()
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "conveyor-test"},
+		NotBefore:    clock.System().Now().Add(-time.Hour),
+		NotAfter:     clock.System().Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		IPAddresses:  []net.IP{net.ParseIP(testBindAddr)},
+		IsCA:         true,
+	}
+
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	require.NoError(t, err)
+
+	parsed, err := x509.ParseCertificate(der)
+	require.NoError(t, err)
+
+	pool := x509.NewCertPool()
+	pool.AddCert(parsed)
+
+	certificate := tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}
+
+	return &gtls.Info{
+		ServerConfig: &tls.Config{
+			Certificates: []tls.Certificate{certificate},
+			ClientCAs:    pool,
+			ClientAuth:   tls.RequireAndVerifyClientCert,
+			MinVersion:   tls.VersionTLS13,
+		},
+		ClientConfig: &tls.Config{
+			Certificates: []tls.Certificate{certificate},
+			RootCAs:      pool,
+			MinVersion:   tls.VersionTLS13,
+		},
+	}
 }
 
 // startEngine boots a single-node engine on free ports and stops it with

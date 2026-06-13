@@ -127,6 +127,12 @@ type TLSConfig struct {
 	CertFile string `koanf:"cert_file"`
 	// KeyFile is the path to the PEM-encoded private key.
 	KeyFile string `koanf:"key_file"`
+	// CAFile is the path to the PEM-encoded certificate authority bundle that
+	// signs peer certificates. When set on cluster remoting it turns on mutual
+	// TLS: each node verifies its peers against this CA. When empty, peer
+	// certificates are verified against the host's system roots and client
+	// certificates are not required.
+	CAFile string `koanf:"ca_file"`
 }
 
 // APIConfig configures the public API listener.

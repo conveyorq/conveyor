@@ -16,7 +16,7 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.42.0
-	github.com/tochemey/goakt/v4 v4.2.9-0.20260613184736-a8408e5fee11
+	github.com/tochemey/goakt/v4 v4.2.9
 	golang.org/x/mod v0.37.0
 	google.golang.org/protobuf v1.36.12-0.20260120151049-f2248ac996af
 )
@@ -166,4 +166,13 @@ require (
 	sigs.k8s.io/randfill v1.0.0 // indirect
 	sigs.k8s.io/structured-merge-diff/v6 v6.4.0 // indirect
 	sigs.k8s.io/yaml v1.6.0 // indirect
+)
+
+exclude (
+	github.com/armon/go-metrics v0.4.2
+	github.com/armon/go-metrics v0.5.0
+	github.com/armon/go-metrics v0.5.1
+	github.com/armon/go-metrics v0.5.2
+	github.com/armon/go-metrics v0.5.3
+	github.com/armon/go-metrics v0.5.4
 )

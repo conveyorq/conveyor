@@ -63,7 +63,7 @@ type QueueGrain struct {
 var _ goakt.Grain = (*QueueGrain)(nil)
 
 // OnActivate rebuilds the grain's disposable state from the broker.
-func (g *QueueGrain) OnActivate(ctx context.Context, props *goakt.GrainProps) error {
+func (x *QueueGrain) OnActivate(ctx context.Context, props *goakt.GrainProps) error {
 	runtime, ok := props.ActorSystem().Extension(BrokerExtensionID).(*Runtime)
 	if !ok {
 		return fmt.Errorf("queue grain %s: extension %q is not registered", props.Identity().Name(), BrokerExtensionID)
@@ -74,62 +74,69 @@ func (g *QueueGrain) OnActivate(ctx context.Context, props *goakt.GrainProps) er
 		return fmt.Errorf("queue grain %s: loading pause flag: %w", props.Identity().Name(), err)
 	}
 
-	g.runtime = runtime
-	g.queue = queueFromGrainName(props.Identity().Name())
-	g.paused = paused
-	g.leasing = false
-	g.gateways = nil
-	g.nextGateway = 0
+	x.runtime = runtime
+	x.queue = queueFromGrainName(props.Identity().Name())
+	x.paused = paused
+	x.leasing = false
+	x.gateways = nil
+	x.nextGateway = 0
 
-	runtime.Logger().Debug("queue grain activated", "queue", g.queue, "paused", paused)
+	runtime.Logger().Debug("queue grain activated", "queue", x.queue, "paused", paused)
 
 	return nil
 }
 
 // OnReceive dispatches on the wake-up hints and control messages of §8.1.
-func (g *QueueGrain) OnReceive(ctx *goakt.GrainContext) {
+func (x *QueueGrain) OnReceive(ctx *goakt.GrainContext) {
 	// Every handled branch must complete the message with NoErr or Err;
 	// a turn that returns without signaling stalls the sender's tell.
 	switch message := ctx.Message().(type) {
 	case *conveyorv1.TaskEnqueued, *conveyorv1.TasksAvailable:
-		g.maybeLease(ctx)
+		x.maybeLease(ctx)
 		ctx.NoErr()
 
 	case *conveyorv1.TaskCompleted:
-		g.recordCompletion(message)
-		g.maybeLease(ctx)
+		x.recordCompletion(message)
+		x.maybeLease(ctx)
 		ctx.NoErr()
 
 	case *conveyorv1.RegisterGateway:
-		g.registerGateway(message)
-		g.maybeLease(ctx)
+		x.registerGateway(message)
+		x.maybeLease(ctx)
 		ctx.NoErr()
 
 	case *conveyorv1.GatewayCredit:
-		g.addCredits(message)
-		g.maybeLease(ctx)
+		x.addCredits(message)
+		x.maybeLease(ctx)
 		ctx.NoErr()
 
 	case *conveyorv1.LeaseCycleCompleted:
-		g.finishLeaseCycle(ctx, message)
+		x.finishLeaseCycle(ctx, message)
+		ctx.NoErr()
+
+	case *conveyorv1.LeasedTasksReleased:
+		if message.GetFailed() > 0 {
+			x.runtime.Logger().Warn("releasing leased tasks partly failed; remainder awaits lease expiry", "queue", x.queue, "released", message.GetReleased(), "failed", message.GetFailed())
+		}
+
 		ctx.NoErr()
 
 	case *conveyorv1.CancelActive:
-		g.broadcastCancel(ctx, message)
+		x.broadcastCancel(ctx, message)
 		ctx.NoErr()
 
 	case *conveyorv1.DrainQueue:
-		g.setPaused(ctx, true)
+		x.setPaused(ctx, true)
 
 	case *conveyorv1.ResumeQueue:
-		g.setPaused(ctx, false)
-		g.maybeLease(ctx)
+		x.setPaused(ctx, false)
+		x.maybeLease(ctx)
 
 	case *goakt.StatusFailure:
 		// A piped lease cycle failed outside the task function (timeout,
 		// breaker). Clear the guard; the next wake-up retries.
-		g.leasing = false
-		g.runtime.Logger().Warn("queue grain pipe failure", "queue", g.queue, "error", message.Error())
+		x.leasing = false
+		x.runtime.Logger().Warn("queue grain pipe failure", "queue", x.queue, "error", message.Error())
 		ctx.NoErr()
 
 	default:
@@ -138,14 +145,14 @@ func (g *QueueGrain) OnReceive(ctx *goakt.GrainContext) {
 }
 
 // OnDeactivate releases nothing: the grain holds no durable state.
-func (g *QueueGrain) OnDeactivate(_ context.Context, _ *goakt.GrainProps) error {
+func (x *QueueGrain) OnDeactivate(_ context.Context, _ *goakt.GrainProps) error {
 	return nil
 }
 
 // recordCompletion updates the core counters from a completion report and
 // refills the reporting gateway's credit.
-func (g *QueueGrain) recordCompletion(message *conveyorv1.TaskCompleted) {
-	counters := g.runtime.Counters()
+func (x *QueueGrain) recordCompletion(message *conveyorv1.TaskCompleted) {
+	counters := x.runtime.Counters()
 	counters.Active.Add(-1)
 
 	if message.GetSuccess() {
@@ -154,7 +161,7 @@ func (g *QueueGrain) recordCompletion(message *conveyorv1.TaskCompleted) {
 		counters.Failed.Add(1)
 	}
 
-	for _, gateway := range g.gateways {
+	for _, gateway := range x.gateways {
 		if gateway.name == message.GetGatewayName() {
 			gateway.credits = min(gateway.credits+1, gateway.capacity)
 
@@ -162,14 +169,14 @@ func (g *QueueGrain) recordCompletion(message *conveyorv1.TaskCompleted) {
 		}
 	}
 
-	g.runtime.Logger().Debug("task completed", "queue", g.queue, "task_id", message.GetTaskId(), "success", message.GetSuccess())
+	x.runtime.Logger().Debug("task completed", "queue", x.queue, "task_id", message.GetTaskId(), "success", message.GetSuccess())
 }
 
 // registerGateway upserts a gateway. A new gateway is granted credits
 // equal to its capacity; a re-registration (heartbeat, relocation healing)
 // only refreshes the capacity so credits are never double-granted.
-func (g *QueueGrain) registerGateway(message *conveyorv1.RegisterGateway) {
-	for _, gateway := range g.gateways {
+func (x *QueueGrain) registerGateway(message *conveyorv1.RegisterGateway) {
+	for _, gateway := range x.gateways {
 		if gateway.name == message.GetGatewayName() {
 			gateway.capacity = message.GetCapacity()
 
@@ -177,20 +184,20 @@ func (g *QueueGrain) registerGateway(message *conveyorv1.RegisterGateway) {
 		}
 	}
 
-	g.gateways = append(g.gateways, &gatewayCredits{
+	x.gateways = append(x.gateways, &gatewayCredits{
 		name:     message.GetGatewayName(),
 		capacity: message.GetCapacity(),
 		credits:  message.GetCapacity(),
 	})
 
-	g.runtime.Logger().Debug("gateway registered", "queue", g.queue, "gateway", message.GetGatewayName(), "capacity", message.GetCapacity())
+	x.runtime.Logger().Debug("gateway registered", "queue", x.queue, "gateway", message.GetGatewayName(), "capacity", message.GetCapacity())
 }
 
 // addCredits grants returned dispatch credits to a registered gateway,
 // capped at its declared capacity so duplicate or hostile credit grants
 // can never inflate dispatch beyond what the worker announced.
-func (g *QueueGrain) addCredits(message *conveyorv1.GatewayCredit) {
-	for _, gateway := range g.gateways {
+func (x *QueueGrain) addCredits(message *conveyorv1.GatewayCredit) {
+	for _, gateway := range x.gateways {
 		if gateway.name == message.GetGatewayName() {
 			gateway.credits = min(gateway.credits+message.GetCredits(), gateway.capacity)
 
@@ -200,9 +207,9 @@ func (g *QueueGrain) addCredits(message *conveyorv1.GatewayCredit) {
 }
 
 // totalCredits sums the credits across registered gateways.
-func (g *QueueGrain) totalCredits() int {
+func (x *QueueGrain) totalCredits() int {
 	total := 0
-	for _, gateway := range g.gateways {
+	for _, gateway := range x.gateways {
 		total += int(gateway.credits)
 	}
 
@@ -213,24 +220,24 @@ func (g *QueueGrain) totalCredits() int {
 // unpaused, idle, and has credits. Broker I/O never blocks the grain's
 // turn: the cycle runs through PipeToSelf and reports back as a
 // LeaseCycleCompleted message.
-func (g *QueueGrain) maybeLease(ctx *goakt.GrainContext) {
-	if g.paused || g.leasing {
+func (x *QueueGrain) maybeLease(ctx *goakt.GrainContext) {
+	if x.paused || x.leasing {
 		return
 	}
 
-	credits := g.totalCredits()
+	credits := x.totalCredits()
 	if credits == 0 {
 		return
 	}
 
-	settings := g.runtime.Settings()
+	settings := x.runtime.Settings()
 	limit := min(credits, settings.LeaseBatchMax)
-	leaseID := g.runtime.NewID()
-	expiresAt := g.runtime.Clock().Now().Add(settings.LeaseTTL)
-	taskLog := g.runtime.Broker()
-	queue := g.queue
+	leaseID := x.runtime.NewID()
+	expiresAt := x.runtime.Clock().Now().Add(settings.LeaseTTL)
+	taskLog := x.runtime.Broker()
+	queue := x.queue
 
-	g.leasing = true
+	x.leasing = true
 
 	err := ctx.PipeToSelf(func() (any, error) {
 		// Always return a proto result: in cluster mode every grain
@@ -251,18 +258,18 @@ func (g *QueueGrain) maybeLease(ctx *goakt.GrainContext) {
 		return result, nil
 	})
 	if err != nil {
-		g.leasing = false
-		g.runtime.Logger().Warn("queue grain lease cycle not started", "queue", g.queue, "error", err)
+		x.leasing = false
+		x.runtime.Logger().Warn("queue grain lease cycle not started", "queue", x.queue, "error", err)
 	}
 }
 
 // finishLeaseCycle distributes a completed lease cycle round-robin to
 // gateways with credits, then starts another cycle while work may remain.
-func (g *QueueGrain) finishLeaseCycle(ctx *goakt.GrainContext, message *conveyorv1.LeaseCycleCompleted) {
-	g.leasing = false
+func (x *QueueGrain) finishLeaseCycle(ctx *goakt.GrainContext, message *conveyorv1.LeaseCycleCompleted) {
+	x.leasing = false
 
 	if message.GetError() != "" {
-		g.runtime.Logger().Warn("lease cycle failed", "queue", g.queue, "error", message.GetError())
+		x.runtime.Logger().Warn("lease cycle failed", "queue", x.queue, "error", message.GetError())
 
 		return
 	}
@@ -272,16 +279,30 @@ func (g *QueueGrain) finishLeaseCycle(ctx *goakt.GrainContext, message *conveyor
 		return
 	}
 
-	counters := g.runtime.Counters()
+	// A pause may have landed while this cycle was in flight: the lease
+	// goroutine claimed work after DrainQueue set the flag. A paused queue
+	// must not dispatch, so release the whole batch back to pending; it
+	// redelivers when the queue resumes.
+	if x.paused {
+		x.releaseLeased(ctx, message.GetLeaseId(), tasks)
+
+		return
+	}
+
+	counters := x.runtime.Counters()
+
+	// undeliverable collects tasks this cycle leased but could not hand to a
+	// gateway: a dispatch failure removes the gateway, which is the only way
+	// credits run out mid-batch, so both branches share one root cause and
+	// one remedy — release them so they redeliver instead of idling until
+	// the lease expires.
+	var undeliverable []*conveyorv1.TaskEnvelope
 
 	for _, task := range tasks {
-		gateway := g.pickGateway()
+		gateway := x.pickGateway()
 
 		if gateway == nil {
-			// Credits vanished mid-cycle (gateway removal). The leased
-			// tasks stay in the broker and redeliver on lease expiry,
-			// exactly like a gateway crash.
-			g.runtime.Logger().Warn("leased tasks without credits; awaiting lease expiry", "queue", g.queue, "task_id", task.GetId())
+			undeliverable = append(undeliverable, task)
 
 			continue
 		}
@@ -293,8 +314,9 @@ func (g *QueueGrain) finishLeaseCycle(ctx *goakt.GrainContext, message *conveyor
 		}
 
 		if err := ctx.TellActor(gateway.name, execute); err != nil {
-			g.removeGateway(gateway.name)
-			g.runtime.Logger().Warn("gateway unreachable; dropped from queue", "queue", g.queue, "gateway", gateway.name, "error", err)
+			x.removeGateway(gateway.name)
+			x.runtime.Logger().Warn("gateway unreachable; dropped from queue", "queue", x.queue, "gateway", gateway.name, "error", err)
+			undeliverable = append(undeliverable, task)
 
 			continue
 		}
@@ -303,20 +325,56 @@ func (g *QueueGrain) finishLeaseCycle(ctx *goakt.GrainContext, message *conveyor
 		counters.Dispatched.Add(1)
 		counters.Active.Add(1)
 
-		g.runtime.Logger().Debug("task dispatched", "queue", g.queue, "task_id", task.GetId(), "gateway", gateway.name)
+		x.runtime.Logger().Debug("task dispatched", "queue", x.queue, "task_id", task.GetId(), "gateway", gateway.name)
+	}
+
+	if len(undeliverable) > 0 {
+		x.releaseLeased(ctx, message.GetLeaseId(), undeliverable)
 	}
 
 	// A non-empty batch may mean more work is due; run another cycle.
 	// maybeLease itself guards pause state and remaining credits.
-	g.maybeLease(ctx)
+	x.maybeLease(ctx)
+}
+
+// releaseLeased returns an undispatched leased batch to pending off the
+// grain turn, mirroring the lease cycle: the broker round trips run through
+// PipeToSelf so they never block the grain's single goroutine, and the
+// outcome comes back as a LeasedTasksReleased message. Broker errors ride
+// inside that result rather than failing the pipe — a pipe failure routes
+// to the StatusFailure handler, which clears the lease guard and would
+// corrupt a later cycle. The tasks redeliver when the queue resumes or, for
+// any that fail to release, on lease expiry via the reaper.
+func (x *QueueGrain) releaseLeased(ctx *goakt.GrainContext, leaseID string, tasks []*conveyorv1.TaskEnvelope) {
+	taskLog := x.runtime.Broker()
+	queue := x.queue
+
+	err := ctx.PipeToSelf(func() (any, error) {
+		result := &conveyorv1.LeasedTasksReleased{}
+
+		for _, task := range tasks {
+			if releaseErr := taskLog.Release(context.Background(), task.GetId(), leaseID); releaseErr != nil {
+				result.Failed++
+
+				continue
+			}
+
+			result.Released++
+		}
+
+		return result, nil
+	})
+	if err != nil {
+		x.runtime.Logger().Warn("queue grain release not started; awaiting lease expiry", "queue", queue, "count", len(tasks), "error", err)
+	}
 }
 
 // pickGateway returns the next gateway with credits in round-robin order,
 // or nil when none has capacity left.
-func (g *QueueGrain) pickGateway() *gatewayCredits {
-	for range g.gateways {
-		gateway := g.gateways[g.nextGateway%len(g.gateways)]
-		g.nextGateway++
+func (x *QueueGrain) pickGateway() *gatewayCredits {
+	for range x.gateways {
+		gateway := x.gateways[x.nextGateway%len(x.gateways)]
+		x.nextGateway++
 
 		if gateway.credits > 0 {
 			return gateway
@@ -331,19 +389,19 @@ func (g *QueueGrain) pickGateway() *gatewayCredits {
 // with a worker Cancel frame; the others drop the unknown id. The
 // forwarding is best-effort, matching the documented cancel contract for
 // active tasks.
-func (g *QueueGrain) broadcastCancel(ctx *goakt.GrainContext, message *conveyorv1.CancelActive) {
-	for _, gateway := range g.gateways {
+func (x *QueueGrain) broadcastCancel(ctx *goakt.GrainContext, message *conveyorv1.CancelActive) {
+	for _, gateway := range x.gateways {
 		if err := ctx.TellActor(gateway.name, message); err != nil {
-			g.runtime.Logger().Warn("cancel broadcast failed", "queue", g.queue, "gateway", gateway.name, "task_id", message.GetTaskId(), "error", err)
+			x.runtime.Logger().Warn("cancel broadcast failed", "queue", x.queue, "gateway", gateway.name, "task_id", message.GetTaskId(), "error", err)
 		}
 	}
 }
 
 // removeGateway forgets a gateway and its credits.
-func (g *QueueGrain) removeGateway(name string) {
-	for index, gateway := range g.gateways {
+func (x *QueueGrain) removeGateway(name string) {
+	for index, gateway := range x.gateways {
 		if gateway.name == name {
-			g.gateways = append(g.gateways[:index], g.gateways[index+1:]...)
+			x.gateways = append(x.gateways[:index], x.gateways[index+1:]...)
 
 			return
 		}
@@ -353,15 +411,15 @@ func (g *QueueGrain) removeGateway(name string) {
 // setPaused persists and applies the queue pause flag. The persistence
 // write is synchronous: pause and resume are rare admin operations and the
 // flag must be durable before the grain acts on it.
-func (g *QueueGrain) setPaused(ctx *goakt.GrainContext, paused bool) {
-	if err := g.runtime.Broker().SetQueuePaused(ctx.Context(), g.queue, paused); err != nil {
-		g.runtime.Logger().Error("persisting queue pause flag failed", "queue", g.queue, "paused", paused, "error", err)
+func (x *QueueGrain) setPaused(ctx *goakt.GrainContext, paused bool) {
+	if err := x.runtime.Broker().SetQueuePaused(ctx.Context(), x.queue, paused); err != nil {
+		x.runtime.Logger().Error("persisting queue pause flag failed", "queue", x.queue, "paused", paused, "error", err)
 		ctx.Err(err)
 
 		return
 	}
 
-	g.paused = paused
-	g.runtime.Logger().Info("queue pause flag changed", "queue", g.queue, "paused", paused)
+	x.paused = paused
+	x.runtime.Logger().Info("queue pause flag changed", "queue", x.queue, "paused", paused)
 	ctx.NoErr()
 }

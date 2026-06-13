@@ -164,3 +164,42 @@ func TestQueueGrainDrainAndResume(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, paused)
 }
+
+// TestQueueGrainReleasesUndispatchableTasks drives the dispatch-failure
+// path: a gateway registered with credits but no live actor makes the
+// grain's TellActor dispatch fail. The grain must drop the gateway and
+// release the leased task back to pending so it redelivers, rather than
+// stranding it as leased until the lease expires.
+func TestQueueGrainReleasesUndispatchableTasks(t *testing.T) {
+	const queue = "default"
+
+	ctx := context.Background()
+	taskLog := memory.New(clock.System())
+	engine := startEngine(t, taskLog)
+
+	// A phantom gateway: credits without an actor. Registering it directly
+	// grants the grain dispatch credits, but no actor answers TellActor.
+	require.NoError(t, engine.TellQueue(ctx, queue, &conveyorv1.RegisterGateway{
+		Queue:       queue,
+		GatewayName: "ghost-gateway",
+		Capacity:    1,
+	}))
+
+	require.NoError(t, engine.Enqueue(ctx, newTask("task-ghost", queue, "test:ok", 4)))
+
+	// Only the phantom gateway exists, so the grain leases the task, fails to
+	// dispatch it, drops the gateway, and releases the task. Settle, then
+	// assert it landed back in pending rather than stranded as leased — which
+	// would block redelivery for a full lease TTL.
+	time.Sleep(500 * time.Millisecond)
+
+	_, state, err := taskLog.GetTask(ctx, "task-ghost")
+	require.NoError(t, err)
+	require.Equal(t, conveyorv1.TaskState_TASK_STATE_PENDING, state, "an undispatchable task must be released back to pending")
+
+	// A real gateway now drains it promptly, proving the task was available
+	// in the broker rather than held under a dead lease.
+	spawnGateway(t, engine, &mockGateway{queue: queue, capacity: 1})
+
+	requireTaskState(t, engine, "task-ghost", conveyorv1.TaskState_TASK_STATE_COMPLETED)
+}

@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -14,6 +16,7 @@ import (
 	"github.com/tochemey/goakt/v4/discovery"
 	"github.com/tochemey/goakt/v4/discovery/kubernetes"
 	"github.com/tochemey/goakt/v4/discovery/static"
+	gtls "github.com/tochemey/goakt/v4/tls"
 
 	"github.com/conveyorq/conveyor/internal/actors"
 	"github.com/conveyorq/conveyor/internal/broker"
@@ -93,6 +96,11 @@ func (s *Server) Start(ctx context.Context) error {
 		return err
 	}
 
+	clusterTLS, err := s.buildClusterTLS()
+	if err != nil {
+		return err
+	}
+
 	engine := actors.NewEngine(taskLog, clock.System(), s.logger, actors.Config{
 		Name:          systemName,
 		BindAddr:      s.config.Cluster.BindAddr,
@@ -100,6 +108,7 @@ func (s *Server) Start(ctx context.Context) error {
 		DiscoveryPort: s.config.Cluster.DiscoveryPort,
 		PeersPort:     s.config.Cluster.PeersPort,
 		Provider:      provider,
+		TLS:           clusterTLS,
 		Settings: actors.Settings{
 			LeaseTTL:        s.config.Engine.LeaseTTL,
 			LeaseBatchMax:   s.config.Engine.LeaseBatchMax,
@@ -202,6 +211,50 @@ func (s *Server) buildDiscovery() (discovery.Provider, error) {
 	default:
 		return nil, fmt.Errorf("cluster.discovery: provider %q is not wired yet; use %q or %q", s.config.Cluster.Discovery, DiscoveryStatic, DiscoveryKubernetes)
 	}
+}
+
+// buildClusterTLS assembles the mutual-TLS configuration for cluster
+// remoting, or returns nil when no certificate is configured. GoAkt
+// requires both the server and client sides, so each is built from the
+// same key pair: a node presents its certificate to peers and, when a CA
+// is configured, verifies theirs against it and demands one in return.
+func (s *Server) buildClusterTLS() (*gtls.Info, error) {
+	clusterTLS := s.config.Cluster.TLS
+	if clusterTLS.CertFile == "" {
+		return nil, nil
+	}
+
+	certificate, err := tls.LoadX509KeyPair(clusterTLS.CertFile, clusterTLS.KeyFile)
+	if err != nil {
+		return nil, fmt.Errorf("cluster.tls: loading key pair: %w", err)
+	}
+
+	serverConfig := &tls.Config{
+		Certificates: []tls.Certificate{certificate},
+		MinVersion:   tls.VersionTLS13,
+	}
+	clientConfig := &tls.Config{
+		Certificates: []tls.Certificate{certificate},
+		MinVersion:   tls.VersionTLS13,
+	}
+
+	if clusterTLS.CAFile != "" {
+		pemBundle, err := os.ReadFile(clusterTLS.CAFile)
+		if err != nil {
+			return nil, fmt.Errorf("cluster.tls: reading ca_file: %w", err)
+		}
+
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(pemBundle) {
+			return nil, fmt.Errorf("cluster.tls: ca_file %q contains no certificates", clusterTLS.CAFile)
+		}
+
+		serverConfig.ClientCAs = pool
+		serverConfig.ClientAuth = tls.RequireAndVerifyClientCert
+		clientConfig.RootCAs = pool
+	}
+
+	return &gtls.Info{ServerConfig: serverConfig, ClientConfig: clientConfig}, nil
 }
 
 // buildMux assembles the API mux: health endpoints and the ConnectRPC

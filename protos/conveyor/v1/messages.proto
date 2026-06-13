@@ -94,6 +94,20 @@ message LeaseCycleCompleted {
   string error = 4;
 }
 
+// LeasedTasksReleased delivers the outcome of an asynchronous release back
+// to the queue grain that initiated it. The grain releases a leased batch
+// back to pending when it cannot dispatch it — the queue paused mid-cycle,
+// or the only gateways with credits went away — so the work redelivers
+// instead of waiting out the lease. The grain only logs this result; the
+// counts are informational.
+message LeasedTasksReleased {
+  // released is the number of tasks returned to pending.
+  int32 released = 1;
+  // failed is the number whose release failed; those redeliver on lease
+  // expiry via the reaper.
+  int32 failed = 2;
+}
+
 // PromoteTick triggers one scheduled-task promotion pass on the scheduler.
 message PromoteTick {}
 
