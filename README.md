@@ -140,4 +140,17 @@ make help        # all targets
 make test        # race-enabled tests (Postgres tests need Docker)
 make lint        # golangci-lint via the pinned tools image
 make quickstart  # the scripted README quickstart
+make chaos       # 3-node kill test, repeated for the zero-loss gate (CHAOS_COUNT=20)
+make e2e         # kind-based end-to-end deployment test
 ```
+
+### End-to-end deployment test
+
+`make e2e` runs `hack/e2e-kind.sh`, which stands up a throwaway [kind](https://kind.sigs.k8s.io)
+cluster close to a production setup: a Postgres broker, three server replicas in
+kubernetes mode discovering each other through the Kubernetes API, the database
+DSN and API tokens delivered as Secrets, and metrics on their own port. It
+builds the image, loads it into kind, installs the Helm chart, and asserts the
+rollout completes, the three nodes form one cluster, and the metrics endpoint
+serves — then deletes the cluster. It needs `docker`, `kind`, `kubectl`, and
+`helm`, and runs the same way locally and in CI.

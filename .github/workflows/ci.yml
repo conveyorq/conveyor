@@ -16,6 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       build: ${{ steps.filter.outputs.build }}
+      deploy: ${{ steps.filter.outputs.deploy }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -23,7 +24,8 @@ jobs:
       - uses: dorny/paths-filter@v4
         id: filter
         with:
-          # "build" is true if any code, dependency, proto, or CI definition changed
+          # "build" is true if any code, dependency, proto, or CI definition changed.
+          # "deploy" is true if anything that affects the deployed artifact changed.
           filters: |
             build:
               - '**/*.go'
@@ -34,6 +36,14 @@ jobs:
               - 'buf.gen.yaml'
               - 'Makefile'
               - '.golangci.yml'
+              - '.github/workflows/ci.yml'
+            deploy:
+              - '**/*.go'
+              - 'go.mod'
+              - 'go.sum'
+              - 'deploy/**'
+              - 'hack/e2e-kind.sh'
+              - 'Makefile'
               - '.github/workflows/ci.yml'
 
   # Single heavy job: builds, regenerates and verifies protos, lints, runs the
@@ -112,3 +122,34 @@ jobs:
       # the quickstart workflow, not the compiler's cold start.
       - name: Quickstart (60s budget)
         run: timeout 60 make quickstart
+
+  # Packaging gate: build the image, install the Helm chart on a throwaway kind
+  # cluster, and assert the StatefulSet rolls out, the nodes form a cluster
+  # through the Kubernetes discovery RBAC, and the metrics endpoint serves.
+  # Runs when code or any deployment artifact changed.
+  e2e:
+    name: Kind e2e
+    needs: changes
+    if: (needs.changes.outputs.build == 'true' || needs.changes.outputs.deploy == 'true') && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        name: Checkout
+      - uses: actions/setup-go@v6
+        name: Setup Go
+        with:
+          go-version-file: go.mod
+          check-latest: false
+          cache-dependency-path: "**/*.sum"
+      - name: Vendoring
+        run: go mod tidy && go mod vendor
+      - name: Install kind
+        run: |
+          curl -sSLo ./kind https://kind.sigs.k8s.io/dl/v0.24.0/kind-linux-amd64
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+      - uses: azure/setup-helm@v4
+        name: Setup Helm
+      - name: Kind e2e
+        run: make e2e

@@ -25,7 +25,7 @@ DOCKER_RUN := docker run --rm \
 	-w $(WORKDIR) \
 	$(IMAGE)
 
-.PHONY: help all image build test lint proto proto-format proto-lint proto-breaking quickstart chaos helm-lint release clean
+.PHONY: help all image build test lint proto proto-format proto-lint proto-breaking quickstart chaos e2e helm-lint release clean
 
 help: ## Show available targets
 	@awk 'BEGIN{FS=":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -70,9 +70,17 @@ proto-lint: image ## Lint proto files with buf
 proto-breaking: image ## Check wire-contract compatibility against main
 	$(DOCKER_RUN) buf breaking --against '.git#branch=main'
 
-# Stub: the 3-node kill/partition chaos suite is not implemented yet.
-chaos:
-	@echo "chaos: not implemented yet" && exit 1
+# 3-node kill chaos: pin the queue grain to one node and a worker gateway to
+# another, kill both mid-load, and require zero task loss. CHAOS_COUNT sets the
+# consecutive-green gate (DESIGN Phase 5 accepts at 20).
+CHAOS_COUNT ?= 20
+chaos: ## Run the 3-node chaos suite CHAOS_COUNT times (default 20) under -race
+	$(GO) test -race -run TestThreeNodeChaosLosesNothing -count=$(CHAOS_COUNT) ./internal/actors
+
+# kind-based end-to-end packaging test: build the image, install the chart on a
+# throwaway kind cluster, and assert rollout + cluster formation + metrics.
+e2e: ## Run the kind-based end-to-end deployment test (needs docker, kind, kubectl, helm)
+	./hack/e2e-kind.sh
 
 # Lint the chart and prove it renders with both standalone and clustered
 # value sets. Runs on the host helm (not the tools image).

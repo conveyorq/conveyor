@@ -265,7 +265,9 @@ func (s *Server) buildDiscovery() (discovery.Provider, error) {
 		}), nil
 
 	default:
-		return nil, fmt.Errorf("cluster.discovery: provider %q is not wired yet; use %q or %q", s.config.Cluster.Discovery, DiscoveryStatic, DiscoveryKubernetes)
+		// Custom providers registered via RegisterDiscovery are selectable by
+		// the same key; the remaining built-in names are not wired yet.
+		return s.buildCustomDiscovery(s.config.Cluster.Discovery)
 	}
 }
 

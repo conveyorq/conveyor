@@ -209,6 +209,9 @@ type ClusterConfig struct {
 	// Kubernetes configures the kubernetes discovery provider; required when
 	// discovery is "kubernetes".
 	Kubernetes KubernetesConfig `koanf:"kubernetes"`
+	// Options carries free-form settings for a custom discovery provider
+	// registered through RegisterDiscovery; the provider reads its own keys.
+	Options map[string]string `koanf:"options"`
 }
 
 // KubernetesConfig configures GoAkt's Kubernetes discovery provider, which
@@ -414,7 +417,9 @@ func (c *Config) Validate() error {
 	}
 
 	if !slices.Contains(providers, c.Cluster.Discovery) {
-		return fmt.Errorf("cluster.discovery: %q is not one of %v", c.Cluster.Discovery, providers)
+		if _, ok := lookupDiscovery(c.Cluster.Discovery); !ok {
+			return fmt.Errorf("cluster.discovery: %q is not a built-in provider %v and no custom provider is registered under that name", c.Cluster.Discovery, providers)
+		}
 	}
 
 	if c.Cluster.BindAddr == "" {
