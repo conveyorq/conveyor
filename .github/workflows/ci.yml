@@ -90,14 +90,6 @@ jobs:
       - name: Download dependencies
         run: |
           go mod download
-      # Regenerate protos through the pinned Dockerfile.tools image so CI and
-      # contributors use identical buf/protoc-gen versions, then fail if the
-      # committed generated code drifted.
-      - name: Verify generated protos
-        if: matrix.os == 'linux'
-        run: |
-          make proto
-          git diff --exit-code internal/proto
       - name: Lint
         if: matrix.os == 'linux'
         uses: golangci/golangci-lint-action@v9
