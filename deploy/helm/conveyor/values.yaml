@@ -1,0 +1,177 @@
+# Default values for the conveyor chart.
+#
+# conveyord is stateless: durable state lives in the broker (Postgres), and
+# peers discover one another through the Kubernetes API, so the workload is a
+# plain Deployment that scales horizontally.
+
+# replicaCount is the number of conveyord nodes (cluster members).
+replicaCount: 3
+
+image:
+  # Published to the GitHub Container Registry.
+  repository: ghcr.io/conveyorq/conveyor
+  # tag defaults to the chart's appVersion when left empty.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+# imagePullSecrets references registry credentials for a private image.
+imagePullSecrets: []
+
+# nameOverride / fullnameOverride adjust the generated resource names.
+nameOverride: ""
+fullnameOverride: ""
+
+# mode is the conveyord deployment mode. "kubernetes" turns on pod-label
+# discovery via the API server, which is what this chart is built for.
+mode: kubernetes
+
+broker:
+  # driver is the broker implementation: postgres or memory. Production runs
+  # postgres; memory is single-node only and loses tasks on restart.
+  driver: postgres
+  # dsn is the Postgres connection string. Prefer dsnSecret over an inline
+  # value so the DSN never lands in the release manifest.
+  dsn: ""
+  # dsnSecret pulls the DSN from an existing Secret instead of broker.dsn.
+  # When name is set, this takes precedence over the inline dsn.
+  dsnSecret:
+    name: ""
+    key: dsn
+
+auth:
+  # tokens are accepted API bearer tokens. An empty list disables
+  # authentication, which conveyord logs loudly and is for development only.
+  tokens: []
+  # tokensSecret pulls a comma-separated token list from an existing Secret
+  # (mapped to CONVEYOR_API__AUTH_TOKENS). Takes precedence over auth.tokens.
+  tokensSecret:
+    name: ""
+    key: auth-tokens
+
+api:
+  # tls optionally serves the API over TLS. certSecret must contain tls.crt
+  # and tls.key (and ca.crt when verifying client certificates).
+  tls:
+    enabled: false
+    certSecret: ""
+
+cluster:
+  discovery:
+    # podLabels select the peer pods. They default to this release's own
+    # selector labels, so a node discovers its siblings out of the box.
+    # Override only to discover a different label set.
+    podLabels: {}
+  # tls enables mutual TLS on cluster remoting. certSecret must contain
+  # tls.crt, tls.key, and (for mTLS peer verification) ca.crt.
+  tls:
+    enabled: false
+    certSecret: ""
+
+# engine exposes every dispatch and maintenance knob so the ConfigMap is the
+# single, complete source of truth — no value is left to a hidden binary
+# default. Values mirror conveyord's own defaults.
+engine:
+  # leaseTTL bounds how long a task lease lives before the reaper reclaims it;
+  # workers extend leases via heartbeats.
+  leaseTTL: 60s
+  # leaseBatchMax caps how many tasks one lease cycle may claim.
+  leaseBatchMax: 100
+  # reapInterval is the reaper tick cadence; recovery time is ~2x this.
+  reapInterval: 15s
+  # promoteInterval is the cadence of scheduled-task promotion.
+  promoteInterval: 1s
+  # passivateAfter is the idle time before a queue grain deactivates.
+  passivateAfter: 5m
+  # defaultMaxRetry applies to tasks that do not set their own max_retry.
+  defaultMaxRetry: 25
+  # shutdownTimeout bounds graceful drain of the whole node on SIGTERM.
+  shutdownTimeout: 30s
+
+log:
+  # level is one of debug, info, warn, error.
+  level: info
+  # format is json or text.
+  format: json
+
+otel:
+  # endpoint is the OTLP collector endpoint; empty disables export.
+  endpoint: ""
+  serviceName: conveyord
+
+# Named container ports. The names must match the discovery port names below;
+# the Kubernetes discovery provider resolves peers by these names.
+ports:
+  api: 8080
+  remoting: 9000
+  gossip: 9001
+  cluster: 9002
+
+service:
+  # The API service clients send tasks to. Cluster ports stay pod-local and
+  # are not exposed here.
+  type: ClusterIP
+  port: 8080
+
+serviceAccount:
+  # create a dedicated ServiceAccount bound to the pod-discovery Role.
+  create: true
+  name: ""
+  annotations: {}
+
+# rbac grants the ServiceAccount permission to list pods for discovery.
+rbac:
+  create: true
+
+# podDisruptionBudget keeps a quorum available during voluntary disruptions.
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2
+
+# serviceMonitor for the Prometheus Operator. conveyord does not yet expose a
+# Prometheus scrape endpoint (metrics push via OTLP), so this stays disabled
+# until the /metrics endpoint ships.
+serviceMonitor:
+  enabled: false
+  interval: 30s
+  path: /metrics
+
+# networkPolicy is an opt-in example that restricts cluster ports to peer
+# pods while leaving the API port open. Review before enabling in production.
+networkPolicy:
+  enabled: false
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 128Mi
+  limits:
+    memory: 512Mi
+
+# terminationGracePeriodSeconds MUST exceed engine.shutdownTimeout so the
+# node can drain in-flight worker sessions before the kubelet sends SIGKILL.
+# Losing the drain means in-flight tasks are dropped instead of redelivered.
+terminationGracePeriodSeconds: 45
+
+# Probe paths are fixed by conveyord; only timing is tunable here. The startup
+# probe covers cluster bootstrap (~10s) so a slow join never trips liveness.
+probes:
+  startup:
+    periodSeconds: 5
+    failureThreshold: 12
+  liveness:
+    initialDelaySeconds: 5
+    periodSeconds: 10
+  readiness:
+    initialDelaySeconds: 5
+    periodSeconds: 10
+
+# Spread peers across nodes by default (soft) so a single node loss never
+# takes the whole cluster down — the scenario the chart exists to survive.
+# Set affinity to override this default entirely.
+podAntiAffinity: soft
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}
+podLabels: {}

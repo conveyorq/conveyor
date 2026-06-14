@@ -1,0 +1,23 @@
+Conveyor is installed as release {{ .Release.Name }} in namespace {{ .Release.Namespace }}.
+
+{{ .Values.replicaCount }} conveyord node(s) form a cluster via Kubernetes pod discovery.
+
+API endpoint (in-cluster):
+  http://{{ include "conveyor.fullname" . }}.{{ .Release.Namespace }}.svc:{{ .Values.service.port }}
+
+Check rollout:
+  kubectl -n {{ .Release.Namespace }} rollout status statefulset/{{ include "conveyor.fullname" . }}
+
+Port-forward the API for a local client:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "conveyor.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }}
+
+{{- if eq .Values.broker.driver "memory" }}
+
+WARNING: broker.driver is "memory" — tasks are NOT durable and do not survive
+a restart. Set broker.driver=postgres with a DSN for any real deployment.
+{{- end }}
+{{- if and (not .Values.auth.tokens) (not .Values.auth.tokensSecret.name) }}
+
+WARNING: no API auth tokens configured — the API accepts unauthenticated
+requests. Set auth.tokens or auth.tokensSecret before exposing it.
+{{- end }}

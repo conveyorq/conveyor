@@ -1,0 +1,86 @@
+# conveyord configuration — rendered into the ConfigMap by
+# templates/configmap.yaml with Helm's tpl, so the templating directives
+# below are evaluated against the release values.
+#
+# This is the COMPLETE node configuration: every tunable is listed
+# explicitly, so the ConfigMap is the single source of truth and nothing is
+# left to a hidden binary default. Three values are injected at runtime as
+# CONVEYOR_* environment variables and are therefore intentionally absent
+# here (a ConfigMap is the wrong place for them):
+#   - cluster.bind_addr  -> the pod IP, via the downward API
+#   - broker.dsn         -> from a Secret
+#   - api.auth_tokens    -> from a Secret
+
+# Deployment mode: standalone | cluster | kubernetes.
+mode: {{ .Values.mode }}
+
+broker:
+  # Broker driver: postgres or memory. The DSN arrives via CONVEYOR_BROKER__DSN.
+  driver: {{ .Values.broker.driver }}
+
+api:
+  # Public ConnectRPC + health listener.
+  listen: ":{{ .Values.ports.api }}"
+  {{- if .Values.api.tls.enabled }}
+  # Serve the API over TLS. conveyord uses only the certificate and key for
+  # the listener (it does not verify client certificates on the API port).
+  tls:
+    cert_file: /etc/conveyor/api-tls/tls.crt
+    key_file: /etc/conveyor/api-tls/tls.key
+  {{- end }}
+
+cluster:
+  # Peers are discovered by listing pods through the Kubernetes API.
+  discovery: kubernetes
+  remoting_port: {{ .Values.ports.remoting }}
+  discovery_port: {{ .Values.ports.gossip }}
+  peers_port: {{ .Values.ports.cluster }}
+  kubernetes:
+    namespace: {{ .Release.Namespace }}
+    # The label selector that finds peer pods; must match the pod labels.
+    pod_labels:
+      {{- if .Values.cluster.discovery.podLabels }}
+      {{- toYaml .Values.cluster.discovery.podLabels | nindent 6 }}
+      {{- else }}
+      {{- include "conveyor.selectorLabels" . | nindent 6 }}
+      {{- end }}
+    # Named container ports the provider reads off discovered pods.
+    remoting_port_name: remoting
+    discovery_port_name: gossip
+    peers_port_name: cluster
+  {{- if .Values.cluster.tls.enabled }}
+  # Mutual TLS between cluster peers. The cert Secret must carry tls.crt,
+  # tls.key, and ca.crt (the CA each node verifies its peers against).
+  tls:
+    cert_file: /etc/conveyor/tls/tls.crt
+    key_file: /etc/conveyor/tls/tls.key
+    ca_file: /etc/conveyor/tls/ca.crt
+  {{- end }}
+
+engine:
+  # How long a task lease lives before the reaper may reclaim it.
+  lease_ttl: {{ .Values.engine.leaseTTL }}
+  # Cap on tasks claimed in one lease cycle.
+  lease_batch_max: {{ .Values.engine.leaseBatchMax }}
+  # Reaper tick cadence; recovery time is ~2x this.
+  reap_interval: {{ .Values.engine.reapInterval }}
+  # Scheduled-task promotion cadence.
+  promote_interval: {{ .Values.engine.promoteInterval }}
+  # Idle time before a queue grain deactivates.
+  passivate_after: {{ .Values.engine.passivateAfter }}
+  # Retry budget for tasks that do not set their own max_retry.
+  default_max_retry: {{ .Values.engine.defaultMaxRetry }}
+  # Bound on graceful drain of the whole node on SIGTERM. The pod's
+  # terminationGracePeriodSeconds must exceed this.
+  shutdown_timeout: {{ .Values.engine.shutdownTimeout }}
+
+log:
+  # One of debug, info, warn, error.
+  level: {{ .Values.log.level }}
+  # json or text.
+  format: {{ .Values.log.format }}
+
+otel:
+  # OTLP endpoint; empty disables export.
+  endpoint: {{ .Values.otel.endpoint | quote }}
+  service_name: {{ .Values.otel.serviceName }}

@@ -1,0 +1,12 @@
+# Keep the build context small and the image reproducible. vendor/ is NOT
+# ignored: the image build relies on the vendored module tree.
+.git
+.github
+.cache
+.gocache
+.gomodcache
+bin
+deploy/grafana
+web
+*.md
+Dockerfile.tools

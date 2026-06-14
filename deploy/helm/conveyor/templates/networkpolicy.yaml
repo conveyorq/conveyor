@@ -1,0 +1,31 @@
+{{- if .Values.networkPolicy.enabled -}}
+# Example policy: restrict the cluster ports (remoting, gossip, peers) to
+# other conveyor pods, while leaving the API port reachable from any client
+# in the namespace. Tighten the API ingress to your own clients before
+# relying on this in production.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "conveyor.fullname" . }}
+  labels:
+    {{- include "conveyor.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "conveyor.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    # Peer-to-peer cluster traffic, conveyor pods only.
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "conveyor.selectorLabels" . | nindent 14 }}
+      ports:
+        - port: remoting
+        - port: gossip
+        - port: cluster
+    # API traffic from clients.
+    - ports:
+        - port: api
+{{- end }}

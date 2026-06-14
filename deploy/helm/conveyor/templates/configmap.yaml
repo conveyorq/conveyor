@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "conveyor.fullname" . }}
+  labels:
+    {{- include "conveyor.labels" . | nindent 4 }}
+data:
+  # The complete node configuration lives in files/conveyor.yaml and is
+  # rendered here through `tpl` so its {{ "{{ }}" }} directives resolve
+  # against the release values. Runtime-only values (bind_addr, broker DSN,
+  # API auth tokens) are injected as CONVEYOR_* env vars in the StatefulSet.
+  conveyor.yaml: |
+{{ tpl (.Files.Get "files/conveyor.yaml") . | indent 4 }}

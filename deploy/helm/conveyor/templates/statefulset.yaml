@@ -1,0 +1,189 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "conveyor.fullname" . }}
+  labels:
+    {{- include "conveyor.labels" . | nindent 4 }}
+spec:
+  # conveyord keeps no durable disk state (tasks live in the broker, cluster
+  # membership rebuilds from gossip), so there are no volumeClaimTemplates.
+  # The StatefulSet is chosen for stable identity and one-at-a-time rollouts:
+  # the cluster is membership-sensitive (grain placement, singletons, leases
+  # rebalance on every change), so churning several pods at once is costly.
+  serviceName: {{ include "conveyor.fullname" . }}-headless
+  replicas: {{ .Values.replicaCount }}
+  podManagementPolicy: OrderedReady
+  updateStrategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      {{- include "conveyor.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "conveyor.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        # Roll the pods when the rendered config changes.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "conveyor.serviceAccountName" . }}
+      # Long enough for the node to drain in-flight sessions on SIGTERM
+      # before the kubelet escalates to SIGKILL; must exceed shutdown_timeout.
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: conveyord
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - --config=/etc/conveyor/conveyor.yaml
+          ports:
+            - name: api
+              containerPort: {{ .Values.ports.api }}
+            - name: remoting
+              containerPort: {{ .Values.ports.remoting }}
+            - name: gossip
+              containerPort: {{ .Values.ports.gossip }}
+            - name: cluster
+              containerPort: {{ .Values.ports.cluster }}
+          env:
+            # The node binds and advertises its own pod IP for remoting,
+            # gossip, and the peers protocol.
+            - name: CONVEYOR_CLUSTER__BIND_ADDR
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            # The clustering layer writes a per-process scratch file under
+            # $HOME; point it at the writable state volume so the root
+            # filesystem can stay read-only.
+            - name: HOME
+              value: /home/nonroot
+            {{- if .Values.broker.dsnSecret.name }}
+            - name: CONVEYOR_BROKER__DSN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.broker.dsnSecret.name }}
+                  key: {{ .Values.broker.dsnSecret.key }}
+            {{- else if .Values.broker.dsn }}
+            - name: CONVEYOR_BROKER__DSN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "conveyor.fullname" . }}
+                  key: dsn
+            {{- end }}
+            {{- if .Values.auth.tokensSecret.name }}
+            - name: CONVEYOR_API__AUTH_TOKENS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.tokensSecret.name }}
+                  key: {{ .Values.auth.tokensSecret.key }}
+            {{- else if .Values.auth.tokens }}
+            - name: CONVEYOR_API__AUTH_TOKENS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "conveyor.fullname" . }}
+                  key: auth-tokens
+            {{- end }}
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: api
+            periodSeconds: {{ .Values.probes.startup.periodSeconds }}
+            failureThreshold: {{ .Values.probes.startup.failureThreshold }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: api
+            initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: api
+            initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/conveyor
+              readOnly: true
+            - name: state
+              mountPath: /home/nonroot
+            {{- if .Values.cluster.tls.enabled }}
+            - name: tls
+              mountPath: /etc/conveyor/tls
+              readOnly: true
+            {{- end }}
+            {{- if .Values.api.tls.enabled }}
+            - name: api-tls
+              mountPath: /etc/conveyor/api-tls
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "conveyor.fullname" . }}
+        # Ephemeral scratch for the clustering layer's per-process state file.
+        - name: state
+          emptyDir: {}
+        {{- if .Values.cluster.tls.enabled }}
+        - name: tls
+          secret:
+            secretName: {{ .Values.cluster.tls.certSecret }}
+        {{- end }}
+        {{- if .Values.api.tls.enabled }}
+        - name: api-tls
+          secret:
+            secretName: {{ .Values.api.tls.certSecret }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.affinity }}
+      affinity:
+        {{- toYaml .Values.affinity | nindent 8 }}
+      {{- else if eq .Values.podAntiAffinity "soft" }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    {{- include "conveyor.selectorLabels" . | nindent 20 }}
+      {{- else if eq .Values.podAntiAffinity "hard" }}
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  {{- include "conveyor.selectorLabels" . | nindent 18 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

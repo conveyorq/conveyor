@@ -1,0 +1,18 @@
+apiVersion: v2
+name: conveyor
+description: Conveyor distributed task queue server (conveyord)
+type: application
+# version is the chart version; appVersion tracks the conveyord release the
+# default image points at. Both are bumped at release time.
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/conveyorq/conveyor
+sources:
+  - https://github.com/conveyorq/conveyor
+keywords:
+  - task-queue
+  - jobs
+  - workers
+  - distributed
+maintainers:
+  - name: ConveyorQ

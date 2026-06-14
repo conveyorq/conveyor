@@ -1,0 +1,18 @@
+{{- if .Values.serviceMonitor.enabled -}}
+# Requires the Prometheus Operator CRDs. conveyord exposes metrics over OTLP
+# today; this becomes useful once a Prometheus /metrics endpoint ships.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "conveyor.fullname" . }}
+  labels:
+    {{- include "conveyor.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "conveyor.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: api
+      path: {{ .Values.serviceMonitor.path }}
+      interval: {{ .Values.serviceMonitor.interval }}
+{{- end }}

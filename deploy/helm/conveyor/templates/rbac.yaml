@@ -1,0 +1,30 @@
+{{- if .Values.rbac.create -}}
+# The Kubernetes discovery provider finds peers by listing pods in this
+# namespace. A namespaced Role is enough — conveyor never reads across
+# namespaces.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "conveyor.fullname" . }}
+  labels:
+    {{- include "conveyor.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "conveyor.fullname" . }}
+  labels:
+    {{- include "conveyor.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "conveyor.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "conveyor.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

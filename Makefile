@@ -74,9 +74,15 @@ proto-breaking: image ## Check wire-contract compatibility against main
 chaos:
 	@echo "chaos: not implemented yet" && exit 1
 
-# Stub: helm chart lint, pending the helm chart.
-helm-lint:
-	@echo "helm-lint: not implemented yet" && exit 1
+# Lint the chart and prove it renders with both standalone and clustered
+# value sets. Runs on the host helm (not the tools image).
+helm-lint: ## Lint and template-render the Helm chart
+	helm lint deploy/helm/conveyor
+	helm template conveyor deploy/helm/conveyor >/dev/null
+	helm template conveyor deploy/helm/conveyor \
+		--set broker.dsn=postgres://u:p@db:5432/conveyor \
+		--set serviceMonitor.enabled=true \
+		--set networkPolicy.enabled=true >/dev/null
 
 # Stub until launch: goreleaser packaging.
 release:

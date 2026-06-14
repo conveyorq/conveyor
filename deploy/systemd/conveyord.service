@@ -1,0 +1,52 @@
+# conveyord systemd unit for standalone / cluster (non-Kubernetes) hosts.
+#
+# Install:
+#   install -m 0755 conveyord /usr/local/bin/conveyord
+#   useradd --system --no-create-home --shell /usr/sbin/nologin conveyor
+#   install -d -o conveyor -g conveyor /etc/conveyor
+#   install -m 0640 -o conveyor -g conveyor conveyor.yaml /etc/conveyor/conveyor.yaml
+#   # Secrets (broker DSN, auth tokens) go in an env file, not the unit:
+#   install -m 0640 -o conveyor -g conveyor conveyor.env /etc/conveyor/conveyor.env
+#   systemctl daemon-reload && systemctl enable --now conveyord
+#
+# /etc/conveyor/conveyor.env holds CONVEYOR_* overrides, e.g.
+#   CONVEYOR_BROKER__DSN=postgres://user:pass@host:5432/conveyor
+#   CONVEYOR_API__AUTH_TOKENS=token-a,token-b
+
+[Unit]
+Description=Conveyor server node (conveyord)
+Documentation=https://github.com/conveyorq/conveyor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=conveyor
+Group=conveyor
+ExecStart=/usr/local/bin/conveyord --config=/etc/conveyor/conveyor.yaml
+EnvironmentFile=-/etc/conveyor/conveyor.env
+Restart=on-failure
+RestartSec=5s
+# conveyord stops on SIGTERM and drains within engine.shutdown_timeout.
+TimeoutStopSec=40s
+
+# Sandboxing: the node needs no write access to the host and no privileges.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target
