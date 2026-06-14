@@ -87,6 +87,14 @@ func NewWorkerService(engine *actors.Engine, logger *slog.Logger) *WorkerService
 	}
 }
 
+// ActiveSessions returns the number of live worker sessions.
+func (s *WorkerService) ActiveSessions() int64 {
+	s.sessionMutex.Lock()
+	defer s.sessionMutex.Unlock()
+
+	return int64(len(s.sessions))
+}
+
 // DrainSessions ends every live worker session and rejects new ones, then
 // waits until each closed session has stopped its gateway — releasing all
 // in-flight tasks for immediate redelivery — or the context lapses. The

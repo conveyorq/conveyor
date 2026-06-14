@@ -1,0 +1,36 @@
+# A one-command Conveyor stack for trying it out: the published server image
+# wired to a Postgres broker.
+#
+#   docker compose -f deploy/compose/quickstart.yaml up
+#
+# The API and health endpoints are then on http://localhost:8080 and metrics
+# on http://localhost:9464/metrics. Authentication is off (no tokens) — this
+# stack is for local evaluation only.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: conveyor
+      POSTGRES_PASSWORD: conveyor
+      POSTGRES_DB: conveyor
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U conveyor -d conveyor"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+  conveyord:
+    image: ghcr.io/conveyorq/conveyor:edge
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # conveyord reads its configuration from defaults plus CONVEYOR_* env: the
+    # default mode is standalone with the postgres broker, so only the DSN is
+    # required here.
+    environment:
+      CONVEYOR_BROKER__DRIVER: postgres
+      CONVEYOR_BROKER__DSN: postgres://conveyor:conveyor@postgres:5432/conveyor?sslmode=disable
+      CONVEYOR_LOG__FORMAT: text
+    ports:
+      - "8080:8080" # API + health (/healthz, /readyz)
+      - "9464:9464" # Prometheus metrics

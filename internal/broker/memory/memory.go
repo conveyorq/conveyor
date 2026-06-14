@@ -698,6 +698,31 @@ func (b *Broker) ListCronEntries(_ context.Context) ([]*broker.CronEntry, error)
 	return entries, nil
 }
 
+// ListDueCronEntries returns the non-paused entries due to fire; see
+// broker.Broker.
+func (b *Broker) ListDueCronEntries(_ context.Context, now time.Time) ([]*broker.CronEntry, error) {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	var entries []*broker.CronEntry
+
+	for _, entry := range b.cronEntries {
+		if entry.Paused {
+			continue
+		}
+
+		if entry.NextRunAt.IsZero() || !entry.NextRunAt.After(now) {
+			entries = append(entries, cloneCronEntry(entry))
+		}
+	}
+
+	slices.SortFunc(entries, func(a, other *broker.CronEntry) int {
+		return strings.Compare(a.ID, other.ID)
+	})
+
+	return entries, nil
+}
+
 // SetCronPaused persists the entry pause flag; see broker.Broker.
 func (b *Broker) SetCronPaused(_ context.Context, id string, paused bool) error {
 	b.mutex.Lock()
@@ -709,6 +734,22 @@ func (b *Broker) SetCronPaused(_ context.Context, id string, paused bool) error 
 	}
 
 	entry.Paused = paused
+
+	return nil
+}
+
+// UpdateCronNextRun compare-and-sets one entry's next fire time; see
+// broker.Broker.
+func (b *Broker) UpdateCronNextRun(_ context.Context, id string, expected, next time.Time) error {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	entry, exists := b.cronEntries[id]
+	if !exists || !entry.NextRunAt.Equal(expected) {
+		return nil
+	}
+
+	entry.NextRunAt = next
 
 	return nil
 }

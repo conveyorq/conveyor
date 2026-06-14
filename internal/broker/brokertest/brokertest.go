@@ -796,6 +796,71 @@ func testCronEntries(t *testing.T, b broker.Broker, _ *clock.Fake) {
 		t.Fatalf("pause absent entry: err = %v, want ErrTaskNotFound", err)
 	}
 
+	// The next-run cursor is a compare-and-set: it advances only from the
+	// expected prior value, so a stale writer never moves it backward. cron-b
+	// starts unarmed (zero cursor).
+	nextRun := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
+	if err := b.UpdateCronNextRun(context.Background(), "cron-b", time.Time{}, nextRun); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, _ = b.ListCronEntries(context.Background())
+	if !entries[1].NextRunAt.Equal(nextRun) {
+		t.Fatalf("next run = %v, want %v", entries[1].NextRunAt, nextRun)
+	}
+
+	// A mismatched expected is a no-op: the cursor is nextRun, not zero.
+	if err := b.UpdateCronNextRun(context.Background(), "cron-b", time.Time{}, nextRun.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, _ = b.ListCronEntries(context.Background())
+	if !entries[1].NextRunAt.Equal(nextRun) {
+		t.Fatalf("mismatched compare-and-set must not move the cursor, got %v", entries[1].NextRunAt)
+	}
+
+	// A matching expected advances the cursor.
+	later := nextRun.Add(time.Minute)
+	if err := b.UpdateCronNextRun(context.Background(), "cron-b", nextRun, later); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, _ = b.ListCronEntries(context.Background())
+	if !entries[1].NextRunAt.Equal(later) {
+		t.Fatalf("matched compare-and-set must advance, got %v", entries[1].NextRunAt)
+	}
+
+	// Re-upserting clears the cursor so the scheduler re-arms from the spec.
+	if err := b.UpsertCronEntry(context.Background(), entry); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, _ = b.ListCronEntries(context.Background())
+	if !entries[1].NextRunAt.IsZero() {
+		t.Fatalf("re-upsert must clear next run, got %v", entries[1].NextRunAt)
+	}
+
+	// Both entries are now unarmed (zero cursor) and unpaused, so both are due.
+	now := time.Date(2026, 6, 14, 13, 0, 0, 0, time.UTC)
+	if due, err := b.ListDueCronEntries(context.Background(), now); err != nil {
+		t.Fatal(err)
+	} else if len(due) != 2 {
+		t.Fatalf("unarmed entries are due: got %d, want 2", len(due))
+	}
+
+	// A paused entry and a future-dated entry are not due.
+	if err := b.SetCronPaused(context.Background(), "cron-a", true); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := b.UpdateCronNextRun(context.Background(), "cron-b", time.Time{}, now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	if due, _ := b.ListDueCronEntries(context.Background(), now); len(due) != 0 {
+		t.Fatalf("paused and future entries are not due, got %d", len(due))
+	}
+
 	if err := b.DeleteCronEntry(context.Background(), "cron-a"); err != nil {
 		t.Fatal(err)
 	}

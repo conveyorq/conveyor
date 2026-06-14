@@ -24,10 +24,14 @@ package actors
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"time"
 
 	goakt "github.com/tochemey/goakt/v4/actor"
 
+	"github.com/conveyorq/conveyor/internal/broker"
+	"github.com/conveyorq/conveyor/internal/cron"
 	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 )
 
@@ -122,18 +126,98 @@ func (s *Scheduler) PostStop(_ *goakt.Context) error {
 	return nil
 }
 
-// promote runs one promotion pass and wakes the queues that gained work.
+// promote runs one promotion pass and one cron materialization pass, waking
+// the queues that gained work.
 func (s *Scheduler) promote(ctx *goakt.ReceiveContext) {
 	background := context.Background()
 
 	queues, err := s.runtime.Broker().PromoteScheduled(background, s.runtime.Settings().LeaseBatchMax)
 	if err != nil {
 		s.runtime.Logger().Warn("promoting scheduled tasks failed", "error", err)
+	} else {
+		for _, queue := range queues {
+			wakeQueue(background, ctx.ActorSystem(), s.runtime, queue, 0)
+		}
+	}
+
+	s.materializeCron(ctx)
+}
+
+// materializeCron fires every cron entry that is due, enqueuing a task for the
+// slot and advancing the entry's cursor; a freshly upserted entry (zero next
+// run) is armed from its spec without firing. Only the due entries are read.
+// Duplicate fires are guarded two ways: the per-slot unique key dedups two
+// schedulers racing the same slot during a relocation, and the compare-and-set
+// cursor advance keeps a stale scheduler from moving the cursor backward and
+// re-firing. A surviving duplicate stays within the at-least-once contract.
+func (s *Scheduler) materializeCron(ctx *goakt.ReceiveContext) {
+	background := context.Background()
+	now := s.runtime.Clock().Now()
+
+	entries, err := s.runtime.Broker().ListDueCronEntries(background, now)
+	if err != nil {
+		s.runtime.Logger().Warn("listing due cron entries failed", "error", err)
 
 		return
 	}
 
-	for _, queue := range queues {
-		wakeQueue(background, ctx.ActorSystem(), s.runtime, queue, 0)
+	for _, entry := range entries {
+		if entry.NextRunAt.IsZero() {
+			s.armCron(background, entry, now)
+
+			continue
+		}
+
+		s.fireCron(background, ctx, entry, now)
+	}
+}
+
+// armCron computes a new entry's first fire time and persists it without
+// firing, so a just-created entry waits for its first real slot.
+func (s *Scheduler) armCron(ctx context.Context, entry *broker.CronEntry, now time.Time) {
+	next, err := cron.NextFire(entry.Spec, now)
+	if err != nil {
+		s.runtime.Logger().Warn("arming cron entry failed", "id", entry.ID, "error", err)
+
+		return
+	}
+
+	// Expected is the zero time: arm only while the entry is still unarmed.
+	if err := s.runtime.Broker().UpdateCronNextRun(ctx, entry.ID, time.Time{}, next); err != nil {
+		s.runtime.Logger().Warn("persisting cron next run failed", "id", entry.ID, "error", err)
+	}
+}
+
+// fireCron materializes the due slot and advances the cursor past now. A
+// duplicate-task outcome is success: another scheduler already fired the slot.
+// A real enqueue error leaves the cursor unchanged so the next tick retries.
+func (s *Scheduler) fireCron(background context.Context, ctx *goakt.ReceiveContext, entry *broker.CronEntry, now time.Time) {
+	task := cron.MaterializeTask(entry, entry.NextRunAt, s.runtime.NewID())
+
+	switch err := s.runtime.Broker().Enqueue(background, task); {
+	case err == nil:
+		s.runtime.Counters().Enqueued.Add(1)
+		wakeQueue(background, ctx.ActorSystem(), s.runtime, entry.Queue, 0)
+
+	case errors.Is(err, broker.ErrDuplicateTask):
+		// Slot already materialized (failover/double-tick); advancing is safe.
+
+	default:
+		s.runtime.Logger().Warn("materializing cron task failed", "id", entry.ID, "error", err)
+
+		return
+	}
+
+	next, err := cron.NextFire(entry.Spec, now)
+	if err != nil {
+		s.runtime.Logger().Warn("advancing cron entry failed", "id", entry.ID, "error", err)
+
+		return
+	}
+
+	// Compare-and-set on the slot we just fired: if another scheduler already
+	// advanced, this is a no-op and the cursor never moves backward.
+	if err := s.runtime.Broker().UpdateCronNextRun(background, entry.ID, entry.NextRunAt, next); err != nil {
+		s.runtime.Logger().Warn("persisting cron next run failed", "id", entry.ID, "error", err)
 	}
 }

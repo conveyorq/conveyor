@@ -1,9 +1,29 @@
 # Conveyor
 
+[![CI](https://img.shields.io/github/actions/workflow/status/conveyorq/conveyor/ci.yml?branch=main&label=build)](https://github.com/conveyorq/conveyor/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/conveyorq/conveyor.svg)](https://pkg.go.dev/github.com/conveyorq/conveyor)
+
 Conveyor is a distributed task processing system for Go: a persistent task
 queue with push-based dispatch, at-least-once execution, retries with
 backoff, scheduling, and priorities — backed by Postgres or an in-memory
 broker, with no Redis and no polling.
+
+## Features
+
+- **Push-based dispatch** — the server streams work to connected workers the
+  instant it exists, with credit-based flow control. No polling.
+- **At-least-once with crash safety** — tasks are persisted before dispatch and
+  survive server and worker crashes; a dead worker's task is redelivered.
+- **Retries** with exponential backoff, **delayed** and **scheduled** tasks,
+  per-task **priorities** and weighted queues.
+- **Unique tasks**, **dead-letter/archive**, **retention**, per-queue
+  **pause/resume**, and a per-task-type **circuit breaker**.
+- **Cron** — server-persisted schedules that survive restarts and failover.
+- **Built-in clustering / HA** — multi-node by default; a lost node's work
+  re-activates elsewhere with zero task loss.
+- **Four ways to run it** — standalone, cluster, Kubernetes, or
+  [embedded](#embedded-mode) in a Go process.
+- **Prometheus metrics** and **OpenTelemetry traces** out of the box.
 
 ## Quickstart
 
@@ -28,6 +48,27 @@ go run ./examples/standalone/client
 The worker prints one line per processed task. The whole flow is scripted
 in [`hack/quickstart.sh`](hack/quickstart.sh) (`make quickstart`), which CI
 runs on every change under a 60-second budget.
+
+### Try it with Docker
+
+Prebuilt multi-arch images are published to the GitHub Container Registry on
+every push to `main` (`:edge`) and every release (`:vX.Y.Z`, `:latest`).
+
+Run a throwaway server (in-memory broker, auth off) in one line:
+
+```sh
+docker run --rm -p 8080:8080 ghcr.io/conveyorq/conveyor:edge --dev
+```
+
+Or bring up a realistic stack (server + Postgres) with Compose:
+
+```sh
+docker compose -f deploy/compose/quickstart.yaml up
+```
+
+Either way the API is on `http://localhost:8080` (with `/healthz` and
+`/readyz`); the Compose stack also serves metrics on
+`http://localhost:9464/metrics`.
 
 ## Writing a worker
 
@@ -132,6 +173,18 @@ The server coordinates all of this across a cluster of `conveyord` nodes:
 queues, scheduling, and lease recovery rebalance automatically when a node is
 lost, and no task is dropped. Scale by adding nodes; the broker is the only
 stateful dependency.
+
+## Documentation
+
+- [Operations guide](docs/operations.md) — deployment modes, configuration,
+  scaling, broker sizing, security, observability, and upgrades.
+- [Migrating from asynq](docs/migrate-from-asynq.md) — side-by-side API mapping.
+- [Migrating from River](docs/migrate-from-river.md) — side-by-side API mapping,
+  and the one trade-off to decide first (transactional enqueue).
+- [Benchmark harness](benchmark/README.md) — reproducible throughput/latency
+  harness (`make benchmark`) and its honesty notes.
+- Deployment artifacts live under [`deploy/`](deploy): Docker, Helm, systemd,
+  Compose, and Grafana.
 
 ## Development
 

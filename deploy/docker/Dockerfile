@@ -7,7 +7,9 @@
 # Build from the repository root so the vendor tree is in context:
 #   docker build -f deploy/docker/Dockerfile -t ghcr.io/conveyorq/conveyor:dev .
 
-FROM golang:1.26.4-alpine AS build
+# The build stage runs on the native build platform and cross-compiles to the
+# target, so multi-arch images build without emulating the Go toolchain.
+FROM --platform=$BUILDPLATFORM golang:1.26.4-alpine AS build
 
 WORKDIR /src
 
@@ -15,14 +17,17 @@ WORKDIR /src
 # never reaches the network for modules.
 COPY . .
 
-# Static, stripped binaries: CGO off so the result runs on distroless
-# static, -mod=vendor so dependencies come from the vendored tree.
+# Static, stripped binaries: CGO off so the result runs on distroless static,
+# -mod=vendor so dependencies come from the vendored tree, GOOS/GOARCH from the
+# target platform so one builder produces every arch.
 ARG VERSION=dev
+ARG TARGETOS
+ARG TARGETARCH
 RUN --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 go build -mod=vendor -trimpath \
+    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -mod=vendor -trimpath \
         -ldflags="-s -w" \
         -o /out/conveyord ./cmd/conveyord \
- && CGO_ENABLED=0 go build -mod=vendor -trimpath \
+ && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -mod=vendor -trimpath \
         -ldflags="-s -w" \
         -o /out/conveyor ./cmd/conveyor
 

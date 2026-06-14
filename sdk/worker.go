@@ -359,7 +359,9 @@ func (s *workerSession) execute(ctx context.Context, cancel context.CancelFunc, 
 		return
 	}
 
-	s.finish(task.id, invoke(withTaskValues(ctx, task), handler, task))
+	s.finish(task.id, traced(withTaskValues(ctx, task), task, func(spanCtx context.Context) error {
+		return invoke(spanCtx, handler, task)
+	}))
 }
 
 // invoke runs one handler, converting a panic into a retryable error

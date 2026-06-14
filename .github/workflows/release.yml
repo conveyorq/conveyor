@@ -1,0 +1,95 @@
+name: release
+
+# Publishes the conveyor container image to the GitHub Container Registry:
+#   - every push to main  -> ghcr.io/conveyorq/conveyor:edge (+ :sha-<short>)
+#   - every v* tag         -> :vX.Y.Z, :X.Y, :latest (+ :sha-<short>)
+# Images are multi-arch (amd64 + arm64), signed with cosign (keyless), and
+# carry SBOM + provenance attestations.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write # cosign keyless signing
+
+env:
+  IMAGE: ghcr.io/conveyorq/conveyor
+
+# Coalesce rapid pushes to the same ref (e.g. main → :edge); each tag is its
+# own ref, so tag publishes never cancel one another.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    name: Build & publish image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        name: Checkout
+
+      - uses: actions/setup-go@v6
+        name: Setup Go
+        with:
+          go-version-file: go.mod
+          check-latest: false
+
+      # vendor/ is gitignored, and the image build is hermetic (-mod=vendor), so
+      # regenerate the vendor tree into the build context. Use `go mod vendor`
+      # alone (not `go mod tidy`) so the published image is built from the exact
+      # committed go.mod/go.sum, never a re-resolved dependency set.
+      - name: Vendor dependencies
+        run: go mod vendor
+
+      - uses: docker/setup-qemu-action@v3
+        name: Set up QEMU
+      - uses: docker/setup-buildx-action@v3
+        name: Set up Buildx
+
+      - uses: docker/login-action@v3
+        name: Log in to GHCR
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        name: Derive image tags
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          # :latest is applied only to semver tags, never to branch pushes.
+          flavor: latest=auto
+          tags: |
+            type=edge,branch=main
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=short
+
+      - id: build
+        name: Build & push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+          provenance: mode=max
+          sbom: true
+
+      - uses: sigstore/cosign-installer@v3
+        name: Install cosign
+      - name: Sign the published image
+        # --recursive signs the index and every per-arch manifest, so a consumer
+        # that pulls a single architecture can still verify the signature.
+        run: cosign sign --yes --recursive "${IMAGE}@${{ steps.build.outputs.digest }}"

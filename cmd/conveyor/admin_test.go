@@ -162,14 +162,23 @@ func TestTaskLifecycleAgainstEmbeddedServer(t *testing.T) {
 func TestCronAndClusterAgainstEmbeddedServer(t *testing.T) {
 	addr := startEmbeddedNode(t)
 
-	// The CLI cannot create cron entries yet (Phase 6); list must succeed
-	// and render only the header on an empty system.
+	// Create a cron entry, then confirm it round-trips through list.
+	var addOut bytes.Buffer
+
+	require.NoError(t, run([]string{"--addr", addr, "cron", "add", "nightly", "0 0 2 * * *", "report:daily", "--queue", "reports"}, &addOut))
+	require.Contains(t, addOut.String(), "nightly saved")
+
 	var cronOut bytes.Buffer
 
 	require.NoError(t, run([]string{"--addr", addr, "cron", "list"}, &cronOut))
-	require.Contains(t, cronOut.String(), "ID")
+	require.Contains(t, cronOut.String(), "nightly")
+	require.Contains(t, cronOut.String(), "report:daily")
 
-	err := run([]string{"--addr", addr, "cron", "pause", "missing"}, &bytes.Buffer{})
+	// A malformed spec is rejected by the server's validation.
+	err := run([]string{"--addr", addr, "cron", "add", "bad", "not a spec", "report:daily"}, &bytes.Buffer{})
+	require.Error(t, err)
+
+	err = run([]string{"--addr", addr, "cron", "pause", "missing"}, &bytes.Buffer{})
 	require.ErrorContains(t, err, "does not exist")
 
 	var clusterOut bytes.Buffer

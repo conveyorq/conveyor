@@ -139,7 +139,7 @@ func (s *Server) Start(ctx context.Context) error {
 	// would miss its metrics. An empty metrics listen address disables the
 	// pipeline (embedded mode), leaving the host's global provider untouched.
 	if s.config.Metrics.Listen != "" {
-		metrics, err := newTelemetry(s.config.Otel.ServiceName)
+		metrics, err := newTelemetry(ctx, s.config.Otel)
 		if err != nil {
 			return fmt.Errorf("initializing telemetry: %w", err)
 		}
@@ -171,7 +171,17 @@ func (s *Server) Start(ctx context.Context) error {
 	s.engine = engine
 
 	if s.telemetry != nil {
-		if err := s.telemetry.registerEngineMetrics(engine, taskLog, clock.System()); err != nil {
+		// The worker service is built later in buildMux; read its session
+		// count lazily so the gauge is correct once it exists.
+		activeSessions := func() int64 {
+			if s.workerService == nil {
+				return 0
+			}
+
+			return s.workerService.ActiveSessions()
+		}
+
+		if err := s.telemetry.registerEngineMetrics(engine, taskLog, clock.System(), activeSessions); err != nil {
 			return fmt.Errorf("registering engine metrics: %w", err)
 		}
 

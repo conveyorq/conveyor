@@ -42,6 +42,10 @@ import (
 // output, mapping TASK_STATE_PENDING to "pending".
 const taskStatePrefix = "TASK_STATE_"
 
+// jsonContentType is the content type stamped on a cron entry carrying a
+// JSON payload from the CLI.
+const jsonContentType = "application/json"
+
 // admin builds the CLI's direct line to the AdminService. Admin
 // operations are intentionally not part of the public SDK surface, so the
 // CLI speaks the wire protocol itself.
@@ -259,9 +263,11 @@ func newCronCommand(conn *connection) *cobra.Command {
 				return fmt.Errorf("cron: unknown subcommand %q", args[0])
 			}
 
-			return errors.New("cron: usage: conveyor cron list | pause <id> | resume <id>")
+			return errors.New("cron: usage: conveyor cron add <id> <spec> <type> | list | pause <id> | resume <id> | delete <id>")
 		},
 	}
+
+	command.AddCommand(newCronAddCommand(conn))
 
 	list := &cobra.Command{
 		Use:   "list",
@@ -305,6 +311,60 @@ func newCronCommand(conn *connection) *cobra.Command {
 	}
 
 	command.AddCommand(list, pause, resume)
+
+	return command
+}
+
+// newCronAddCommand builds the cron entry create/replace command.
+func newCronAddCommand(conn *connection) *cobra.Command {
+	var (
+		queue    string
+		payload  string
+		priority int
+		maxRetry int
+	)
+
+	command := &cobra.Command{
+		Use:     "add <id> <spec> <type>",
+		Short:   "Create or replace a cron entry",
+		Example: `  conveyor cron add nightly-report "0 0 2 * * *" report:daily --queue reports`,
+		Args: func(_ *cobra.Command, args []string) error {
+			if len(args) != 3 {
+				return errors.New("cron add: usage: conveyor cron add <id> <spec> <type>")
+			}
+
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			entry := &conveyorv1.CronEntry{
+				Id:       args[0],
+				Spec:     args[1],
+				TaskType: args[2],
+				Queue:    queue,
+				Options:  &conveyorv1.TaskOptions{MaxRetry: int32(maxRetry), Priority: int32(priority)},
+			}
+
+			if payload != "" {
+				entry.Payload = []byte(payload)
+				entry.ContentType = jsonContentType
+			}
+
+			_, err := conn.admin().UpsertCron(context.Background(), connect.NewRequest(&conveyorv1.UpsertCronRequest{Entry: entry}))
+			if err != nil {
+				return err
+			}
+
+			fmt.Fprintf(cmd.OutOrStdout(), "cron entry %s saved\n", args[0])
+
+			return nil
+		},
+	}
+
+	flags := command.Flags()
+	flags.StringVar(&queue, "queue", "", "target queue (server default when empty)")
+	flags.StringVar(&payload, "json", "", "JSON payload for materialized tasks")
+	flags.IntVar(&priority, "priority", 0, "dispatch priority 1..9 (server default when 0)")
+	flags.IntVar(&maxRetry, "max-retry", 0, "retry budget (server default when 0)")
 
 	return command
 }

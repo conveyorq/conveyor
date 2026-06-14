@@ -326,6 +326,7 @@ func (g *Gateway) dispatch(message *conveyorv1.ExecuteTask) {
 		}
 
 		g.runtime.Counters().Active.Add(-1)
+		g.runtime.Counters().Released.Add(1)
 		g.runtime.Logger().Warn("dispatch send failed; task released", "task_id", task.GetId(), "error", err)
 	}
 }
@@ -371,6 +372,8 @@ func (g *Gateway) result(ctx *goakt.ReceiveContext, message *conveyorv1.Result) 
 
 	var err error
 
+	counters := g.runtime.Counters()
+
 	switch message.GetOutcome() {
 	case conveyorv1.TaskOutcome_TASK_OUTCOME_SUCCESS:
 		err = taskLog.Ack(goCtx, taskID, entry.leaseID, message.GetResult())
@@ -381,26 +384,32 @@ func (g *Gateway) result(ctx *goakt.ReceiveContext, message *conveyorv1.Result) 
 			// The admin canceled this delivery; the handler aborted and
 			// must not earn a retry.
 			err = taskLog.Archive(goCtx, taskID, entry.leaseID, canceledByAdminMessage+message.GetErrorMsg())
+			counters.Archived.Add(1)
 
 		case entry.retried >= entry.maxRetry:
 			err = taskLog.Archive(goCtx, taskID, entry.leaseID, retriesExhaustedMessage+message.GetErrorMsg())
+			counters.Archived.Add(1)
 
 		default:
 			processAt := g.runtime.Clock().Now().Add(g.strategy.Delay(entry.retried))
 			err = taskLog.Fail(goCtx, taskID, entry.leaseID, message.GetErrorMsg(), processAt)
+			counters.Retried.Add(1)
 		}
 
 	case conveyorv1.TaskOutcome_TASK_OUTCOME_SKIP_RETRY:
 		err = taskLog.Archive(goCtx, taskID, entry.leaseID, message.GetErrorMsg())
+		counters.Archived.Add(1)
 
 	case conveyorv1.TaskOutcome_TASK_OUTCOME_RELEASED:
 		err = taskLog.Release(goCtx, taskID, entry.leaseID)
+		counters.Released.Add(1)
 
 	default:
 		// The session handler validates outcomes before forwarding; an
 		// unknown value here means a version skew. Release: redelivery is
 		// always safe under the at-least-once contract.
 		err = taskLog.Release(goCtx, taskID, entry.leaseID)
+		counters.Released.Add(1)
 	}
 
 	if err != nil {

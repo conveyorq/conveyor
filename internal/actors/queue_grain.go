@@ -137,6 +137,8 @@ func (x *QueueGrain) OnReceive(ctx *goakt.GrainContext) {
 		ctx.NoErr()
 
 	case *conveyorv1.LeasedTasksReleased:
+		x.runtime.Counters().Released.Add(int64(message.GetReleased()))
+
 		if message.GetFailed() > 0 {
 			x.runtime.Logger().Warn("releasing leased tasks partly failed; remainder awaits lease expiry", "queue", x.queue, "released", message.GetReleased(), "failed", message.GetFailed())
 		}

@@ -100,6 +100,11 @@ type CronEntry struct {
 	Options *conveyorv1.TaskOptions
 	// Paused suspends materialization without deleting the entry.
 	Paused bool
+	// NextRunAt is the next time the entry is due to fire. The scheduler owns
+	// it: it is zero on a freshly upserted entry (the scheduler computes the
+	// first fire time from the spec), then advances after each materialization.
+	// Persisting it keeps cron firing correct across singleton failover.
+	NextRunAt time.Time
 }
 
 // QueueStat reports one queue's persisted pause flag and its task counts
@@ -256,9 +261,21 @@ type Broker interface {
 	// ListCronEntries returns all cron entries ordered by id.
 	ListCronEntries(ctx context.Context) ([]*CronEntry, error)
 
+	// ListDueCronEntries returns the non-paused entries due to fire — those
+	// with no next run yet (awaiting their first arming) or a next run at or
+	// before now — ordered by id. The scheduler reads only these each tick.
+	ListDueCronEntries(ctx context.Context, now time.Time) ([]*CronEntry, error)
+
 	// SetCronPaused persists the paused flag of one entry, or returns
 	// ErrTaskNotFound when the entry does not exist.
 	SetCronPaused(ctx context.Context, id string, paused bool) error
+
+	// UpdateCronNextRun advances one entry's next fire time, but only when its
+	// stored next run still equals expected (a compare-and-set). This keeps a
+	// slow or relocating scheduler from moving the cursor backward and
+	// re-firing a slot. A mismatch — another scheduler already advanced, or the
+	// entry is gone — is a no-op, not an error.
+	UpdateCronNextRun(ctx context.Context, id string, expected, next time.Time) error
 
 	// DeleteCronEntry removes an entry; deleting an absent id is a no-op.
 	DeleteCronEntry(ctx context.Context, id string) error

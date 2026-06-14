@@ -28,6 +28,9 @@ import (
 	"fmt"
 
 	"connectrpc.com/connect"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/conveyorq/conveyor/internal/actors"
@@ -81,14 +84,31 @@ func NewTaskService(engine *actors.Engine, taskLog broker.Broker, timeSource clo
 
 // Enqueue durably commits one task and reports its initial state.
 func (s *TaskService) Enqueue(ctx context.Context, request *connect.Request[conveyorv1.EnqueueRequest]) (*connect.Response[conveyorv1.EnqueueResponse], error) {
+	ctx, span := otel.Tracer(tracerName).Start(ctx, "conveyor.enqueue", trace.WithSpanKind(trace.SpanKindProducer))
+	defer span.End()
+
 	envelope, err := s.envelopeFromRequest(request.Msg)
 	if err != nil {
+		span.RecordError(err)
+
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 
+	// Stamp the enqueue trace into the envelope before it is persisted so the
+	// worker's execution span links back to this span.
+	injectTaskTrace(ctx, envelope)
+
 	if err := s.engine.Enqueue(ctx, envelope); err != nil {
+		span.RecordError(err)
+
 		return nil, enqueueError(err)
 	}
+
+	span.SetAttributes(
+		attribute.String("conveyor.task.id", envelope.GetId()),
+		attribute.String("conveyor.task.type", envelope.GetType()),
+		attribute.String("conveyor.queue", envelope.GetQueue()),
+	)
 
 	return connect.NewResponse(&conveyorv1.EnqueueResponse{
 		Task: taskInfo(envelope, s.initialState(envelope)),

@@ -25,7 +25,7 @@ DOCKER_RUN := docker run --rm \
 	-w $(WORKDIR) \
 	$(IMAGE)
 
-.PHONY: help all image build test lint proto proto-format proto-lint proto-breaking quickstart chaos e2e helm-lint release clean
+.PHONY: help all image build test lint proto proto-format proto-lint proto-breaking quickstart chaos e2e benchmark helm-lint release clean
 
 help: ## Show available targets
 	@awk 'BEGIN{FS=":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -81,6 +81,12 @@ chaos: ## Run the 3-node chaos suite CHAOS_COUNT times (default 20) under -race
 # throwaway kind cluster, and assert rollout + cluster formation + metrics.
 e2e: ## Run the kind-based end-to-end deployment test (needs docker, kind, kubectl, helm)
 	./hack/e2e-kind.sh
+
+# Throughput/latency harness on the in-memory broker (no infra). See
+# benchmark/README.md for the Postgres invocation and the honesty notes.
+BENCH_TASKS ?= 20000
+benchmark: ## Run the throughput/latency benchmark (in-memory broker)
+	$(GO) run ./benchmark --tasks=$(BENCH_TASKS)
 
 # Lint the chart and prove it renders with both standalone and clustered
 # value sets. Runs on the host helm (not the tools image).

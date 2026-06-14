@@ -781,17 +781,20 @@ func (b *Broker) UpsertCronEntry(ctx context.Context, entry *broker.CronEntry) e
 		payload = []byte{}
 	}
 
+	// next_run_at resets to NULL on every upsert: the scheduler re-arms the
+	// entry from its (possibly changed) spec on the next tick.
 	const upsertEntry = `INSERT INTO conveyor_cron_entries
-		(id, spec, task_type, queue, payload, content_type, options, paused, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		(id, spec, task_type, queue, payload, content_type, options, paused, next_run_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		ON CONFLICT (id) DO UPDATE SET
 			spec = EXCLUDED.spec, task_type = EXCLUDED.task_type, queue = EXCLUDED.queue,
 			payload = EXCLUDED.payload, content_type = EXCLUDED.content_type,
-			options = EXCLUDED.options, paused = EXCLUDED.paused, updated_at = EXCLUDED.updated_at`
+			options = EXCLUDED.options, paused = EXCLUDED.paused,
+			next_run_at = EXCLUDED.next_run_at, updated_at = EXCLUDED.updated_at`
 
 	_, err = b.pool.Exec(ctx, upsertEntry,
 		entry.ID, entry.Spec, entry.TaskType, entry.Queue, payload,
-		entry.ContentType, options, entry.Paused, b.clock.Now(),
+		entry.ContentType, options, entry.Paused, nullableTime(entry.NextRunAt), b.clock.Now(),
 	)
 	if err != nil {
 		return fmt.Errorf("postgres: upsert cron entry: %w", err)
@@ -800,29 +803,77 @@ func (b *Broker) UpsertCronEntry(ctx context.Context, entry *broker.CronEntry) e
 	return nil
 }
 
+// UpdateCronNextRun compare-and-sets one entry's next fire time; see
+// broker.Broker. IS NOT DISTINCT FROM matches a NULL cursor against the zero
+// expected time, so arming a freshly upserted entry works the same way.
+func (b *Broker) UpdateCronNextRun(ctx context.Context, id string, expected, next time.Time) error {
+	const update = `UPDATE conveyor_cron_entries SET next_run_at = $3
+		WHERE id = $1 AND next_run_at IS NOT DISTINCT FROM $2`
+
+	if _, err := b.pool.Exec(ctx, update, id, nullableTime(expected), next); err != nil {
+		return fmt.Errorf("postgres: update cron next run: %w", err)
+	}
+
+	return nil
+}
+
+// nullableTime maps the zero time to a NULL database value.
+func nullableTime(t time.Time) *time.Time {
+	if t.IsZero() {
+		return nil
+	}
+
+	return &t
+}
+
+// cronColumns is the cron-entry projection shared by the list queries.
+const cronColumns = "id, spec, task_type, queue, payload, content_type, options, paused, next_run_at"
+
 // ListCronEntries returns all cron entries ordered by id; see broker.Broker.
 func (b *Broker) ListCronEntries(ctx context.Context) ([]*broker.CronEntry, error) {
-	const listEntries = `SELECT id, spec, task_type, queue, payload, content_type, options, paused
-		FROM conveyor_cron_entries ORDER BY id`
-
-	rows, err := b.pool.Query(ctx, listEntries)
+	rows, err := b.pool.Query(ctx, "SELECT "+cronColumns+" FROM conveyor_cron_entries ORDER BY id")
 	if err != nil {
 		return nil, fmt.Errorf("postgres: list cron entries: %w", err)
 	}
 	defer rows.Close()
 
+	return scanCronEntries(rows)
+}
+
+// ListDueCronEntries returns the non-paused entries due to fire; see
+// broker.Broker.
+func (b *Broker) ListDueCronEntries(ctx context.Context, now time.Time) ([]*broker.CronEntry, error) {
+	const query = "SELECT " + cronColumns + ` FROM conveyor_cron_entries
+		WHERE NOT paused AND (next_run_at IS NULL OR next_run_at <= $1) ORDER BY id`
+
+	rows, err := b.pool.Query(ctx, query, now)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: list due cron entries: %w", err)
+	}
+	defer rows.Close()
+
+	return scanCronEntries(rows)
+}
+
+// scanCronEntries materializes cron rows in the cronColumns projection.
+func scanCronEntries(rows pgx.Rows) ([]*broker.CronEntry, error) {
 	var entries []*broker.CronEntry
 
 	for rows.Next() {
 		var (
 			entry       broker.CronEntry
 			optionBytes []byte
+			nextRunAt   *time.Time
 		)
 
-		err = rows.Scan(&entry.ID, &entry.Spec, &entry.TaskType, &entry.Queue,
-			&entry.Payload, &entry.ContentType, &optionBytes, &entry.Paused)
+		err := rows.Scan(&entry.ID, &entry.Spec, &entry.TaskType, &entry.Queue,
+			&entry.Payload, &entry.ContentType, &optionBytes, &entry.Paused, &nextRunAt)
 		if err != nil {
 			return nil, fmt.Errorf("postgres: scan cron entry: %w", err)
+		}
+
+		if nextRunAt != nil {
+			entry.NextRunAt = *nextRunAt
 		}
 
 		if len(optionBytes) > 0 {
@@ -837,7 +888,7 @@ func (b *Broker) ListCronEntries(ctx context.Context) ([]*broker.CronEntry, erro
 		entries = append(entries, &entry)
 	}
 
-	if err = rows.Err(); err != nil {
+	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("postgres: list cron entries: %w", err)
 	}
 

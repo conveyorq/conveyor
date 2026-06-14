@@ -76,6 +76,15 @@ func TestMetricsEndpointServesEngineCounters(t *testing.T) {
 	require.Regexp(t, regexp.MustCompile(`conveyor_enqueued_total\{[^}]*\} 1`), body)
 	require.Contains(t, body, "conveyor_active")
 	require.Contains(t, body, "conveyor_pending")
+
+	// The full §13 counter set and the session gauge are registered and
+	// exported even at zero.
+	for _, series := range []string{
+		"conveyor_retried_total", "conveyor_archived_total", "conveyor_released_total",
+		"conveyor_sessions_active",
+	} {
+		require.Contains(t, body, series)
+	}
 }
 
 // TestMetricsEndpointExposesActorMetrics verifies that GoAkt's own metrics,

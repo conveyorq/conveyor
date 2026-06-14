@@ -75,6 +75,14 @@ type Counters struct {
 	Failed atomic.Int64
 	// Active is the number of executions currently in flight.
 	Active atomic.Int64
+	// Retried counts executions returned for a later retry.
+	Retried atomic.Int64
+	// Archived counts executions dead-lettered (retries exhausted, skip-retry,
+	// or admin cancel).
+	Archived atomic.Int64
+	// Released counts deliveries returned to the queue for redelivery without
+	// a retry penalty.
+	Released atomic.Int64
 }
 
 // Runtime is the actor-system extension giving every actor and grain
