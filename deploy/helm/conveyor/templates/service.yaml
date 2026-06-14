@@ -9,11 +9,15 @@ spec:
   selector:
     {{- include "conveyor.selectorLabels" . | nindent 4 }}
   ports:
-    # Only the API port is exposed; cluster ports stay pod-to-pod and are
-    # discovered directly by pod IP, not through this Service.
+    # The API port and the metrics port are exposed; cluster ports stay
+    # pod-to-pod and are discovered directly by pod IP, not through this
+    # Service. The metrics port backs the ServiceMonitor.
     - name: api
       port: {{ .Values.service.port }}
       targetPort: api
+    - name: metrics
+      port: {{ .Values.ports.metrics }}
+      targetPort: metrics
 ---
 # Headless governing service for the StatefulSet: gives each pod a stable
 # DNS name and publishes pod endpoints before they are Ready, which the

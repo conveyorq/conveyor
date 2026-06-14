@@ -25,7 +25,8 @@ spec:
         - port: remoting
         - port: gossip
         - port: cluster
-    # API traffic from clients.
+    # API traffic from clients, and metrics scraping from Prometheus.
     - ports:
         - port: api
+        - port: metrics
 {{- end }}

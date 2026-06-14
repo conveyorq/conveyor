@@ -29,6 +29,10 @@ api:
     key_file: /etc/conveyor/api-tls/tls.key
   {{- end }}
 
+metrics:
+  # Prometheus /metrics listener, kept off the public API port.
+  listen: ":{{ .Values.ports.metrics }}"
+
 cluster:
   # Peers are discovered by listing pods through the Kubernetes API.
   discovery: kubernetes

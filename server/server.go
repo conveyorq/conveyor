@@ -56,6 +56,9 @@ const (
 	readyzPath  = "/readyz"
 )
 
+// metricsPath serves the Prometheus exposition of conveyord and GoAkt metrics.
+const metricsPath = "/metrics"
+
 // healthzBody is the response body of a passing liveness probe.
 const healthzBody = "ok"
 
@@ -87,6 +90,14 @@ type Server struct {
 	// workerService holds the live worker sessions; nil until Start
 	// succeeds. The engine drains it during coordinated shutdown.
 	workerService *api.WorkerService
+	// telemetry owns the metrics pipeline serving /metrics; nil until Start
+	// succeeds.
+	telemetry *telemetry
+	// metricsServer serves /metrics on its own listener, off the public API
+	// port; nil until Start succeeds.
+	metricsServer *http.Server
+	// metricsListener is the bound metrics listener; nil until Start succeeds.
+	metricsListener net.Listener
 }
 
 // New assembles a Server from a validated configuration. All components
@@ -123,6 +134,19 @@ func (s *Server) Start(ctx context.Context) error {
 		return err
 	}
 
+	// Install the meter provider before the engine starts: GoAkt reads the
+	// global provider when it builds the actor system, so a later install
+	// would miss its metrics. An empty metrics listen address disables the
+	// pipeline (embedded mode), leaving the host's global provider untouched.
+	if s.config.Metrics.Listen != "" {
+		metrics, err := newTelemetry(s.config.Otel.ServiceName)
+		if err != nil {
+			return fmt.Errorf("initializing telemetry: %w", err)
+		}
+
+		s.telemetry = metrics
+	}
+
 	engine := actors.NewEngine(taskLog, clock.System(), s.logger, actors.Config{
 		Name:          systemName,
 		BindAddr:      s.config.Cluster.BindAddr,
@@ -145,6 +169,16 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	s.engine = engine
+
+	if s.telemetry != nil {
+		if err := s.telemetry.registerEngineMetrics(engine, taskLog, clock.System()); err != nil {
+			return fmt.Errorf("registering engine metrics: %w", err)
+		}
+
+		if err := s.startMetricsServer(); err != nil {
+			return err
+		}
+	}
 
 	listener, err := net.Listen("tcp", s.config.API.Listen)
 	if err != nil {
@@ -329,6 +363,33 @@ func (s *Server) readyz(w http.ResponseWriter, request *http.Request) {
 	_, _ = w.Write([]byte(healthzBody))
 }
 
+// startMetricsServer binds the metrics listener and serves /metrics on it,
+// off the public API port so the exposition (peer addresses, queue names) is
+// not reachable wherever the client-facing API is exposed.
+func (s *Server) startMetricsServer() error {
+	listener, err := net.Listen("tcp", s.config.Metrics.Listen)
+	if err != nil {
+		return fmt.Errorf("binding metrics listener on %s: %w", s.config.Metrics.Listen, err)
+	}
+
+	s.metricsListener = listener
+
+	mux := http.NewServeMux()
+	mux.Handle(metricsPath, s.telemetry.handler())
+
+	s.metricsServer = &http.Server{Handler: mux, ReadHeaderTimeout: readHeaderTimeout}
+
+	go func() {
+		if err := s.metricsServer.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			s.logger.Error("metrics server terminated unexpectedly", "error", err)
+		}
+	}()
+
+	s.logger.Info("metrics endpoint serving", "listen", listener.Addr().String(), "path", metricsPath)
+
+	return nil
+}
+
 // Addr returns the bound API address; empty before Start.
 func (s *Server) Addr() string {
 	if s.listener == nil {
@@ -336,6 +397,15 @@ func (s *Server) Addr() string {
 	}
 
 	return s.listener.Addr().String()
+}
+
+// MetricsAddr returns the bound metrics address; empty before Start.
+func (s *Server) MetricsAddr() string {
+	if s.metricsListener == nil {
+		return ""
+	}
+
+	return s.metricsListener.Addr().String()
 }
 
 // Stop gracefully shuts the server down, honoring the context deadline:
@@ -381,6 +451,25 @@ func (s *Server) Stop(ctx context.Context) error {
 			errs = append(errs, fmt.Errorf("closing broker: %w", err))
 		} else {
 			s.taskLog = nil
+		}
+	}
+
+	// Stop serving /metrics before shutting the provider down.
+	if s.metricsServer != nil {
+		if err := s.metricsServer.Shutdown(ctx); err != nil {
+			errs = append(errs, fmt.Errorf("stopping metrics server: %w", err))
+		} else {
+			s.metricsServer = nil
+		}
+	}
+
+	// Telemetry stops last: its collection callback reads the engine and
+	// broker, so it must outlive both.
+	if s.telemetry != nil {
+		if err := s.telemetry.shutdown(ctx); err != nil {
+			errs = append(errs, fmt.Errorf("stopping telemetry: %w", err))
+		} else {
+			s.telemetry = nil
 		}
 	}
 

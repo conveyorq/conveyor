@@ -1,0 +1,63 @@
+# Example Prometheus scrape configuration for conveyord.
+#
+# conveyord exposes Prometheus metrics at /metrics on a dedicated metrics port
+# (9464 by default), kept off the client-facing API port. The series include
+# conveyor's own counters/gauges (conveyor_enqueued_total, conveyor_active,
+# conveyor_pending, ...) and GoAkt's actor/cluster metrics (actor_*).
+#
+# The metric_relabel_configs below drop GoAkt's per-worker-session actor series
+# (actor_name=~"gateway-.*"): their ULID names would otherwise grow cardinality
+# without bound as workers reconnect.
+#
+# Two ways to scrape, pick the one that matches your setup:
+#
+# 1. Prometheus Operator: prefer the chart's ServiceMonitor
+#    (serviceMonitor.enabled=true) instead of this file.
+# 2. Plain Prometheus on Kubernetes: the pod-annotation job below honors the
+#    prometheus.io/scrape annotations the chart sets on each pod.
+# 3. VMs / bare metal (systemd): use the static_configs job.
+
+scrape_configs:
+  # --- Kubernetes: discover conveyord pods by annotation ---
+  - job_name: conveyor-pods
+    kubernetes_sd_configs:
+      - role: pod
+    relabel_configs:
+      # Keep only pods opted in via prometheus.io/scrape: "true".
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+        action: keep
+        regex: "true"
+      # Use the prometheus.io/path annotation, defaulting to /metrics.
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+        action: replace
+        target_label: __metrics_path__
+        regex: (.+)
+      # Route the scrape to the prometheus.io/port annotation.
+      - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+        action: replace
+        target_label: __address__
+        regex: ([^:]+)(?::\d+)?;(\d+)
+        replacement: $1:$2
+      # Carry namespace and pod name through as labels.
+      - source_labels: [__meta_kubernetes_namespace]
+        target_label: namespace
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: pod
+    metric_relabel_configs:
+      # Drop the unbounded per-worker-session gateway actor series.
+      - source_labels: [actor_name]
+        regex: gateway-.*
+        action: drop
+
+  # --- VMs / systemd: list each node's metrics address explicitly ---
+  - job_name: conveyor-static
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - conveyord-1.internal:9464
+          - conveyord-2.internal:9464
+          - conveyord-3.internal:9464
+    metric_relabel_configs:
+      - source_labels: [actor_name]
+        regex: gateway-.*
+        action: drop

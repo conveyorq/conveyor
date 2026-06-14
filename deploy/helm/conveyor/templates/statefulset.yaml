@@ -28,6 +28,11 @@ spec:
       annotations:
         # Roll the pods when the rendered config changes.
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- if .Values.metrics.scrapeAnnotations }}
+        prometheus.io/scrape: "true"
+        prometheus.io/port: {{ .Values.ports.metrics | quote }}
+        prometheus.io/path: {{ .Values.serviceMonitor.path | quote }}
+        {{- end }}
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -54,6 +59,8 @@ spec:
           ports:
             - name: api
               containerPort: {{ .Values.ports.api }}
+            - name: metrics
+              containerPort: {{ .Values.ports.metrics }}
             - name: remoting
               containerPort: {{ .Values.ports.remoting }}
             - name: gossip

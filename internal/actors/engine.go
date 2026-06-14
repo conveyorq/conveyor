@@ -123,6 +123,10 @@ func (e *Engine) Start(ctx context.Context) error {
 	options := []goakt.Option{
 		goakt.WithLogger(goaktlog.NewSlogFrom(e.runtime.Logger(), goaktlog.InfoLevel)),
 		goakt.WithExtensions(e.runtime),
+		// Record actor and cluster runtime metrics into the process-global
+		// meter provider; the server installs a Prometheus-backed provider,
+		// and without one this is a no-op.
+		goakt.WithMetrics(),
 		goakt.WithRemote(remote.NewConfig(e.config.BindAddr, e.config.RemotingPort)),
 		goakt.WithCluster(goakt.NewClusterConfig().
 			WithDiscovery(e.config.Provider).

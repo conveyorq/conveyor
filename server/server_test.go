@@ -53,6 +53,7 @@ func startTestServer(t *testing.T) *Server {
 
 	config := DevConfig()
 	config.API.Listen = "127.0.0.1:0"
+	config.Metrics.Listen = "127.0.0.1:0"
 	config.Cluster.RemotingPort = ports[0]
 	config.Cluster.DiscoveryPort = ports[1]
 	config.Cluster.PeersPort = ports[2]
@@ -143,6 +144,7 @@ func TestReadyzReportsReadiness(t *testing.T) {
 func TestReadyzBeforeStartIsUnavailable(t *testing.T) {
 	config := DevConfig()
 	config.API.Listen = "127.0.0.1:0"
+	config.Metrics.Listen = "127.0.0.1:0"
 
 	node, err := New(config, NewLogger(config.Log))
 	if err != nil {

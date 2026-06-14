@@ -98,10 +98,12 @@ otel:
   endpoint: ""
   serviceName: conveyord
 
-# Named container ports. The names must match the discovery port names below;
-# the Kubernetes discovery provider resolves peers by these names.
+# Named container ports. The cluster port names must match the discovery port
+# names below; the Kubernetes discovery provider resolves peers by these names.
+# Metrics bind their own port, kept off the client-facing API.
 ports:
   api: 8080
+  metrics: 9464
   remoting: 9000
   gossip: 9001
   cluster: 9002
@@ -127,9 +129,22 @@ podDisruptionBudget:
   enabled: true
   minAvailable: 2
 
-# serviceMonitor for the Prometheus Operator. conveyord does not yet expose a
-# Prometheus scrape endpoint (metrics push via OTLP), so this stays disabled
-# until the /metrics endpoint ships.
+# metrics controls how Prometheus finds conveyord's /metrics endpoint, served
+# on its own port (ports.metrics) rather than the client-facing API. Pod
+# annotations work with any annotation-based Prometheus and are on by default;
+# Operator users instead enable the ServiceMonitor.
+metrics:
+  # scrapeAnnotations stamps prometheus.io/{scrape,port,path} on each pod.
+  scrapeAnnotations: true
+  # dropGatewaySeries drops GoAkt's per-worker-session actor series
+  # (actor_name=~"gateway-.*"), whose ULID names would otherwise grow Prometheus
+  # cardinality without bound as workers reconnect. Disable only if you scrape
+  # into a backend that tolerates churning labels.
+  dropGatewaySeries: true
+
+# serviceMonitor for the Prometheus Operator. The /metrics endpoint is live,
+# so this is functional — it stays opt-in because it needs the Operator's CRD
+# installed (enabling it without the CRD fails the install).
 serviceMonitor:
   enabled: false
   interval: 30s

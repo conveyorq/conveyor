@@ -1,6 +1,6 @@
 {{- if .Values.serviceMonitor.enabled -}}
-# Requires the Prometheus Operator CRDs. conveyord exposes metrics over OTLP
-# today; this becomes useful once a Prometheus /metrics endpoint ships.
+# Requires the Prometheus Operator CRDs. conveyord serves Prometheus metrics
+# at {{ .Values.serviceMonitor.path }} on the dedicated metrics port.
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
@@ -12,7 +12,15 @@ spec:
     matchLabels:
       {{- include "conveyor.selectorLabels" . | nindent 6 }}
   endpoints:
-    - port: api
+    - port: metrics
       path: {{ .Values.serviceMonitor.path }}
       interval: {{ .Values.serviceMonitor.interval }}
+      {{- if .Values.metrics.dropGatewaySeries }}
+      # Drop GoAkt's per-worker-session actor series; their ULID names grow
+      # unbounded as workers reconnect.
+      metricRelabelings:
+        - sourceLabels: [actor_name]
+          regex: gateway-.*
+          action: drop
+      {{- end }}
 {{- end }}

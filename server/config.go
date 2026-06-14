@@ -114,6 +114,9 @@ const (
 	defaultMaxRetry          = 25
 	defaultShutdownTimeout   = 30 * time.Second
 	defaultOtelServiceName   = "conveyord"
+	// defaultMetricsListen is the OpenTelemetry Prometheus exporter's
+	// conventional port; metrics bind here, kept off the public API listener.
+	defaultMetricsListen = ":9464"
 )
 
 // Config is the full conveyord configuration.
@@ -133,6 +136,20 @@ type Config struct {
 	Log LogConfig `koanf:"log"`
 	// Otel configures OpenTelemetry export.
 	Otel OtelConfig `koanf:"otel"`
+	// Metrics configures the Prometheus metrics listener.
+	Metrics MetricsConfig `koanf:"metrics"`
+}
+
+// MetricsConfig configures the Prometheus metrics endpoint. Metrics are
+// served on their own listener — never the public API listener — because the
+// exposition includes internal topology (peer addresses, queue names) that
+// should not ride on a client-facing, possibly internet-exposed port.
+type MetricsConfig struct {
+	// Listen is the address the /metrics endpoint binds, e.g. ":9464". An
+	// empty value disables the endpoint and the meter provider entirely,
+	// which embedded mode uses so it neither binds a port nor replaces the
+	// host application's global OpenTelemetry provider.
+	Listen string `koanf:"listen"`
 }
 
 // BrokerConfig selects and configures the broker driver.
@@ -273,17 +290,21 @@ func DefaultConfig() *Config {
 			DefaultMaxRetry: defaultMaxRetry,
 			ShutdownTimeout: defaultShutdownTimeout,
 		},
-		Log:  LogConfig{Level: LogLevelInfo, Format: LogFormatJSON},
-		Otel: OtelConfig{ServiceName: defaultOtelServiceName},
+		Log:     LogConfig{Level: LogLevelInfo, Format: LogFormatJSON},
+		Otel:    OtelConfig{ServiceName: defaultOtelServiceName},
+		Metrics: MetricsConfig{Listen: defaultMetricsListen},
 	}
 }
 
 // DevConfig returns the `conveyord --dev` configuration: standalone mode,
-// in-memory broker, authentication disabled, debug logging.
+// in-memory broker, authentication disabled, debug logging. Metrics bind an
+// ephemeral port so repeated in-process starts (tests) never collide on the
+// fixed default.
 func DevConfig() *Config {
 	config := DefaultConfig()
 	config.Broker = BrokerConfig{Driver: BrokerMemory}
 	config.Log = LogConfig{Level: LogLevelDebug, Format: LogFormatText}
+	config.Metrics = MetricsConfig{Listen: "127.0.0.1:0"}
 
 	return config
 }

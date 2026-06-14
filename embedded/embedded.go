@@ -164,6 +164,9 @@ func buildServerConfig(config Config) (*server.Config, error) {
 	serverConfig.Cluster.DiscoveryPort = ports[1]
 	serverConfig.Cluster.PeersPort = ports[2]
 	serverConfig.Log = server.LogConfig{Level: server.LogLevelWarn, Format: server.LogFormatText}
+	// Embedded runs inside the host process: do not bind a metrics port or
+	// replace the host's global OpenTelemetry meter provider.
+	serverConfig.Metrics = server.MetricsConfig{Listen: ""}
 
 	return serverConfig, nil
 }

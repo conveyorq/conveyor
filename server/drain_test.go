@@ -52,6 +52,7 @@ func TestStopDrainsLiveWorkerSessions(t *testing.T) {
 
 	config := DevConfig()
 	config.API.Listen = "127.0.0.1:0"
+	config.Metrics.Listen = "127.0.0.1:0"
 	config.Cluster.RemotingPort = ports[0]
 	config.Cluster.DiscoveryPort = ports[1]
 	config.Cluster.PeersPort = ports[2]
