@@ -2,11 +2,12 @@ import { useEffect, useState } from "react";
 import { useApi, type Api } from "../api/context.tsx";
 import { useAction, type ActionState } from "../api/useAction.ts";
 import { useRefreshTick } from "../api/refresh.ts";
+import { useReadOnly } from "../api/readonly.tsx";
 import { ConfirmButton } from "../components/ConfirmButton.tsx";
 import { Panel } from "../components/Panel.tsx";
 import { Badge } from "../components/Badge.tsx";
 import { errorMessage } from "../lib/errors.ts";
-import { formatTime, orDash, taskStateLabel, taskStateTone } from "../lib/format.ts";
+import { decodePayload, formatDuration, formatTime, orDash, taskStateLabel, taskStateTone } from "../lib/format.ts";
 import { TaskState } from "../gen/conveyor/v1/task_pb.ts";
 import type { TaskInfo } from "../gen/conveyor/v1/service_pb.ts";
 
@@ -42,11 +43,45 @@ export function Tasks() {
   const [error, setError] = useState<string | undefined>(undefined);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<TaskInfo | undefined>(undefined);
+  const [checked, setChecked] = useState<Set<string>>(new Set());
   const [refresh, setRefresh] = useState(0);
   const action = useAction(() => setRefresh((n) => n + 1));
   const tick = useRefreshTick();
+  const readOnly = useReadOnly();
 
   const pageToken = pageStack[pageStack.length - 1];
+
+  // toggleChecked adds or removes one task id from the batch selection.
+  function toggleChecked(id: string) {
+    setChecked((current) => {
+      const next = new Set(current);
+      next.has(id) ? next.delete(id) : next.add(id);
+
+      return next;
+    });
+  }
+
+  // toggleAll selects or clears every task on the current page.
+  function toggleAll() {
+    setChecked((current) => (current.size === tasks.length ? new Set() : new Set(tasks.map((task) => task.id))));
+  }
+
+  // runBatch applies a batch RPC to the selection, surfacing partial failures,
+  // then clears the selection.
+  function runBatch(call: (ids: string[]) => Promise<{ results: { id: string; error: string }[] }>) {
+    const ids = Array.from(checked);
+
+    return action
+      .run(async () => {
+        const { results } = await call(ids);
+        const failed = results.filter((result) => result.error !== "");
+
+        if (failed.length > 0) {
+          throw new Error(`${failed.length} of ${results.length} failed: ${failed[0].error}`);
+        }
+      })
+      .then(() => setChecked(new Set()));
+  }
 
   useEffect(() => {
     let active = true;
@@ -80,6 +115,7 @@ export function Tasks() {
     change();
     setPageStack([""]);
     setSelected(undefined);
+    setChecked(new Set());
   }
 
   const filters = (
@@ -117,6 +153,23 @@ export function Tasks() {
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
         <div className="min-w-0 flex-1">
           <Panel title="Tasks" actions={filters}>
+            {!readOnly && checked.size > 0 && (
+              <div className="flex flex-wrap items-center gap-2 border-b border-[var(--border)] bg-[var(--row-hover)] px-5 py-2.5 text-sm">
+                <span className="text-[var(--text-soft)]">{checked.size} selected</span>
+                <span className="flex-1" />
+                <ConfirmButton label="Run" onConfirm={() => runBatch((ids) => api.admin.batchRunTasks({ ids }))} />
+                <ConfirmButton label="Archive" confirm onConfirm={() => runBatch((ids) => api.admin.batchArchiveTasks({ ids }))} />
+                <ConfirmButton label="Cancel" confirm onConfirm={() => runBatch((ids) => api.admin.batchCancelTasks({ ids }))} />
+                <ConfirmButton label="Delete" confirm danger onConfirm={() => runBatch((ids) => api.admin.batchDeleteTasks({ ids }))} />
+                <button
+                  type="button"
+                  onClick={() => setChecked(new Set())}
+                  className="rounded-md px-2 py-1 text-xs text-[var(--muted)] hover:text-[var(--text-soft)]"
+                >
+                  Clear
+                </button>
+              </div>
+            )}
             {loading ? (
               <div className="flex items-center gap-2 px-5 py-8 text-sm text-[var(--muted)]">
                 <span className="size-4 animate-spin rounded-full border-2 border-[var(--border)] border-t-[var(--muted)]" />
@@ -132,6 +185,16 @@ export function Tasks() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-left text-xs font-medium uppercase tracking-wider text-[var(--muted)]">
+                    {!readOnly && (
+                      <th className="w-10 px-5 py-2.5">
+                        <input
+                          type="checkbox"
+                          aria-label="Select all tasks on this page"
+                          checked={tasks.length > 0 && checked.size === tasks.length}
+                          onChange={toggleAll}
+                        />
+                      </th>
+                    )}
                     <th className="px-5 py-2.5">ID</th>
                     <th className="px-5 py-2.5">Type</th>
                     <th className="px-5 py-2.5">Queue</th>
@@ -148,6 +211,16 @@ export function Tasks() {
                         (selected?.id === task.id ? "bg-indigo-50 dark:bg-indigo-500/10" : "")
                       }
                     >
+                      {!readOnly && (
+                        <td className="px-5 py-3" onClick={(event) => event.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            aria-label={`Select task ${task.id}`}
+                            checked={checked.has(task.id)}
+                            onChange={() => toggleChecked(task.id)}
+                          />
+                        </td>
+                      )}
                       <td className="px-5 py-3 font-mono text-[var(--text-soft)]">{task.id}</td>
                       <td className="px-5 py-3 text-[var(--text-soft)]">{task.type}</td>
                       <td className="px-5 py-3 text-[var(--text-soft)]">{task.queue}</td>
@@ -170,6 +243,7 @@ export function Tasks() {
                     onClick={() => {
                       setPageStack((stack) => stack.slice(0, -1));
                       setSelected(undefined);
+                      setChecked(new Set());
                     }}
                     className="rounded-md bg-[var(--btn-bg)] px-3 py-1 text-[var(--text-soft)] hover:bg-[var(--btn-hover)] disabled:opacity-40"
                   >
@@ -181,6 +255,7 @@ export function Tasks() {
                     onClick={() => {
                       setPageStack((stack) => [...stack, nextToken]);
                       setSelected(undefined);
+                      setChecked(new Set());
                     }}
                     className="rounded-md bg-[var(--btn-bg)] px-3 py-1 text-[var(--text-soft)] hover:bg-[var(--btn-hover)] disabled:opacity-40"
                   >
@@ -195,7 +270,7 @@ export function Tasks() {
         {selected !== undefined && (
           <aside className="lg:w-80">
             <Panel title="Task detail">
-              <TaskDetail task={selected} api={api} action={action} onActed={() => setSelected(undefined)} />
+              <TaskDetail task={selected} api={api} action={action} readOnly={readOnly} onActed={() => setSelected(undefined)} />
             </Panel>
           </aside>
         )}
@@ -210,25 +285,31 @@ function TaskDetail({
   task,
   api,
   action,
+  readOnly,
   onActed,
 }: {
   task: TaskInfo;
   api: Api;
   action: ActionState;
+  readOnly: boolean;
   onActed: () => void;
 }) {
   const act = (fn: () => Promise<unknown>) => action.run(fn).then(onActed);
 
   // Only offer actions the task's state allows, matching the broker's rules,
   // so the dashboard never sends an operation that fails as invalid-state.
+  // Read-only mode hides every action.
   const state = task.state;
-  const canRun = state === TaskState.SCHEDULED || state === TaskState.RETRY;
+  const canRun = !readOnly && (state === TaskState.SCHEDULED || state === TaskState.RETRY || state === TaskState.ARCHIVED);
+  const canArchive =
+    !readOnly && (state === TaskState.SCHEDULED || state === TaskState.PENDING || state === TaskState.RETRY);
   const canCancel =
-    state === TaskState.SCHEDULED ||
-    state === TaskState.PENDING ||
-    state === TaskState.RETRY ||
-    state === TaskState.ACTIVE;
-  const canDelete = state !== TaskState.ACTIVE;
+    !readOnly &&
+    (state === TaskState.SCHEDULED ||
+      state === TaskState.PENDING ||
+      state === TaskState.RETRY ||
+      state === TaskState.ACTIVE);
+  const canDelete = !readOnly && state !== TaskState.ACTIVE;
 
   const rows: [string, string][] = [
     ["ID", task.id],
@@ -239,8 +320,12 @@ function TaskDetail({
     ["Last error", orDash(task.lastError)],
     ["Enqueued", formatTime(task.enqueuedAt)],
     ["Process at", formatTime(task.processAt)],
+    ["Started", formatTime(task.startedAt)],
     ["Completed", formatTime(task.completedAt)],
+    ["Duration", formatDuration(task.startedAt, task.completedAt)],
   ];
+
+  const payload = decodePayload(task.payload, task.contentType);
 
   return (
     <div aria-label="Task detail" className="px-5 py-4 text-sm">
@@ -257,9 +342,23 @@ function TaskDetail({
         ))}
       </dl>
 
+      <div className="mt-4">
+        <div className="mb-1 flex items-center justify-between">
+          <span className="text-[var(--muted)]">
+            Payload{task.contentType !== "" ? ` (${task.contentType})` : ""}
+          </span>
+        </div>
+        <pre className="max-h-64 overflow-auto rounded-md border border-[var(--border)] bg-[var(--bg)] p-3 font-mono text-xs text-[var(--text-soft)]">
+          {payload}
+        </pre>
+      </div>
+
       <div className="mt-4 flex flex-wrap gap-2">
         {canRun && (
           <ConfirmButton label="Run now" onConfirm={() => act(() => api.admin.runTask({ id: task.id }))} />
+        )}
+        {canArchive && (
+          <ConfirmButton label="Archive" confirm onConfirm={() => act(() => api.admin.archiveTask({ id: task.id }))} />
         )}
         {canCancel && (
           <ConfirmButton label="Cancel" confirm onConfirm={() => act(() => api.admin.cancelTask({ id: task.id }))} />
@@ -267,7 +366,9 @@ function TaskDetail({
         {canDelete && (
           <ConfirmButton label="Delete" confirm danger onConfirm={() => act(() => api.admin.deleteTask({ id: task.id }))} />
         )}
-        {!canRun && !canCancel && !canDelete && <span className="text-xs text-[var(--muted)]">No actions available.</span>}
+        {!canRun && !canArchive && !canCancel && !canDelete && (
+          <span className="text-xs text-[var(--muted)]">No actions available.</span>
+        )}
       </div>
     </div>
   );

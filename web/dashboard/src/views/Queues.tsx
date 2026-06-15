@@ -1,6 +1,7 @@
 import { useApi } from "../api/context.tsx";
 import { useQuery } from "../api/useQuery.ts";
 import { useAction } from "../api/useAction.ts";
+import { useReadOnly } from "../api/readonly.tsx";
 import { QueryView } from "../components/QueryView.tsx";
 import { ConfirmButton } from "../components/ConfirmButton.tsx";
 import { Panel } from "../components/Panel.tsx";
@@ -22,6 +23,7 @@ export function Queues() {
   const api = useApi();
   const query = useQuery(() => api.admin.listQueues({}), []);
   const action = useAction(query.reload);
+  const readOnly = useReadOnly();
 
   return (
     <div className="space-y-4">
@@ -47,7 +49,7 @@ export function Queues() {
                         {c.label}
                       </th>
                     ))}
-                    <th className="px-5 py-2.5 text-right">Actions</th>
+                    {!readOnly && <th className="px-5 py-2.5 text-right">Actions</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -62,19 +64,21 @@ export function Queues() {
                           {formatNumber(q[c.key])}
                         </td>
                       ))}
-                      <td className="px-5 py-3 text-right">
-                        {q.paused ? (
-                          <ConfirmButton
-                            label="Resume"
-                            onConfirm={() => action.run(() => api.admin.resumeQueue({ queue: q.name }))}
-                          />
-                        ) : (
-                          <ConfirmButton
-                            label="Pause"
-                            onConfirm={() => action.run(() => api.admin.pauseQueue({ queue: q.name }))}
-                          />
-                        )}
-                      </td>
+                      {!readOnly && (
+                        <td className="px-5 py-3 text-right">
+                          {q.paused ? (
+                            <ConfirmButton
+                              label="Resume"
+                              onConfirm={() => action.run(() => api.admin.resumeQueue({ queue: q.name }))}
+                            />
+                          ) : (
+                            <ConfirmButton
+                              label="Pause"
+                              onConfirm={() => action.run(() => api.admin.pauseQueue({ queue: q.name }))}
+                            />
+                          )}
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>

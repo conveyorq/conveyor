@@ -30,11 +30,13 @@ import (
 	"context"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/conveyorq/conveyor/internal/broker"
 	"github.com/conveyorq/conveyor/internal/clock"
@@ -60,6 +62,9 @@ type taskRow struct {
 	leaseID string
 	// leaseExpiresAt is when the active lease lapses.
 	leaseExpiresAt time.Time
+	// startedAt is when the most recent execution attempt was leased. It is
+	// reset on each re-lease so it reflects the current attempt.
+	startedAt time.Time
 	// completedAt is when the task reached a terminal state.
 	completedAt time.Time
 	// result is the worker-reported result stored at Ack.
@@ -219,6 +224,7 @@ func (b *Broker) Lease(_ context.Context, queue string, limit int, ttl time.Dura
 		row.state = conveyorv1.TaskState_TASK_STATE_ACTIVE
 		row.leaseID = leaseID
 		row.leaseExpiresAt = now.Add(ttl)
+		row.startedAt = now
 		leased = append(leased, overlay(row))
 	}
 
@@ -237,6 +243,14 @@ func overlay(row *taskRow) *conveyorv1.TaskEnvelope {
 	envelope := proto.Clone(row.envelope).(*conveyorv1.TaskEnvelope)
 	envelope.Retried = row.retried
 	envelope.LastError = row.lastError
+
+	if !row.startedAt.IsZero() {
+		envelope.StartedAt = timestamppb.New(row.startedAt)
+	}
+
+	if !row.completedAt.IsZero() {
+		envelope.CompletedAt = timestamppb.New(row.completedAt)
+	}
 
 	return envelope
 }
@@ -552,6 +566,21 @@ func (b *Broker) QueuePaused(_ context.Context, queue string) (bool, error) {
 	return b.pausedQueues[queue], nil
 }
 
+// Info reports the in-memory engine's driver and row counts; see broker.Broker.
+func (b *Broker) Info(_ context.Context) (broker.Info, error) {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	return broker.Info{
+		Driver: "memory",
+		Metrics: map[string]string{
+			"tasks":         strconv.Itoa(len(b.tasks)),
+			"cron_entries":  strconv.Itoa(len(b.cronEntries)),
+			"paused_queues": strconv.Itoa(len(b.pausedQueues)),
+		},
+	}, nil
+}
+
 // GetTask returns one task and its state; see broker.Broker.
 func (b *Broker) GetTask(_ context.Context, id string) (*conveyorv1.TaskEnvelope, conveyorv1.TaskState, error) {
 	b.mutex.Lock()
@@ -661,9 +690,34 @@ func (b *Broker) RunTaskNow(_ context.Context, id string) error {
 	switch row.state {
 	case conveyorv1.TaskState_TASK_STATE_SCHEDULED,
 		conveyorv1.TaskState_TASK_STATE_PENDING,
-		conveyorv1.TaskState_TASK_STATE_RETRY:
+		conveyorv1.TaskState_TASK_STATE_RETRY,
+		conveyorv1.TaskState_TASK_STATE_ARCHIVED:
 		row.state = conveyorv1.TaskState_TASK_STATE_PENDING
 		row.processAt = b.clock.Now()
+		row.completedAt = time.Time{}
+
+		return nil
+	default:
+		return broker.ErrInvalidState
+	}
+}
+
+// ArchiveTask dead-letters a waiting task; see broker.Broker.
+func (b *Broker) ArchiveTask(_ context.Context, id string) error {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	row, exists := b.tasks[id]
+	if !exists {
+		return broker.ErrTaskNotFound
+	}
+
+	switch row.state {
+	case conveyorv1.TaskState_TASK_STATE_SCHEDULED,
+		conveyorv1.TaskState_TASK_STATE_PENDING,
+		conveyorv1.TaskState_TASK_STATE_RETRY:
+		row.state = conveyorv1.TaskState_TASK_STATE_ARCHIVED
+		row.completedAt = b.clock.Now()
 
 		return nil
 	default:

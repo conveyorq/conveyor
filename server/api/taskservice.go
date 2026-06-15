@@ -253,21 +253,25 @@ func (s *TaskService) initialState(envelope *conveyorv1.TaskEnvelope) conveyorv1
 	return conveyorv1.TaskState_TASK_STATE_PENDING
 }
 
-// taskInfo maps a task envelope and state to the external task view.
+// taskInfo maps a task envelope and state to the external task view. The
+// broker overlays started_at and completed_at onto the envelope on reads;
+// they stay unset for tasks that have not yet been dispatched or finished.
 func taskInfo(envelope *conveyorv1.TaskEnvelope, state conveyorv1.TaskState) *conveyorv1.TaskInfo {
-	// completed_at stays unset: the broker does not expose the completion
-	// instant yet; the admin surface will extend it.
 	return &conveyorv1.TaskInfo{
-		Id:         envelope.GetId(),
-		Queue:      envelope.GetQueue(),
-		Type:       envelope.GetType(),
-		State:      state,
-		Priority:   envelope.GetOptions().GetPriority(),
-		Retried:    envelope.GetRetried(),
-		MaxRetry:   envelope.GetOptions().GetMaxRetry(),
-		LastError:  envelope.GetLastError(),
-		EnqueuedAt: envelope.GetEnqueuedAt(),
-		ProcessAt:  envelope.GetOptions().GetProcessAt(),
+		Id:          envelope.GetId(),
+		Queue:       envelope.GetQueue(),
+		Type:        envelope.GetType(),
+		State:       state,
+		Priority:    envelope.GetOptions().GetPriority(),
+		Retried:     envelope.GetRetried(),
+		MaxRetry:    envelope.GetOptions().GetMaxRetry(),
+		LastError:   envelope.GetLastError(),
+		EnqueuedAt:  envelope.GetEnqueuedAt(),
+		ProcessAt:   envelope.GetOptions().GetProcessAt(),
+		StartedAt:   envelope.GetStartedAt(),
+		CompletedAt: envelope.GetCompletedAt(),
+		Payload:     envelope.GetPayload(),
+		ContentType: envelope.GetContentType(),
 	}
 }
 

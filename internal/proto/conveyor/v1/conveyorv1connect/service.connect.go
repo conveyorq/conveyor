@@ -61,6 +61,21 @@ const (
 	AdminServiceDeleteTaskProcedure = "/conveyor.v1.AdminService/DeleteTask"
 	// AdminServiceRunTaskProcedure is the fully-qualified name of the AdminService's RunTask RPC.
 	AdminServiceRunTaskProcedure = "/conveyor.v1.AdminService/RunTask"
+	// AdminServiceArchiveTaskProcedure is the fully-qualified name of the AdminService's ArchiveTask
+	// RPC.
+	AdminServiceArchiveTaskProcedure = "/conveyor.v1.AdminService/ArchiveTask"
+	// AdminServiceBatchDeleteTasksProcedure is the fully-qualified name of the AdminService's
+	// BatchDeleteTasks RPC.
+	AdminServiceBatchDeleteTasksProcedure = "/conveyor.v1.AdminService/BatchDeleteTasks"
+	// AdminServiceBatchRunTasksProcedure is the fully-qualified name of the AdminService's
+	// BatchRunTasks RPC.
+	AdminServiceBatchRunTasksProcedure = "/conveyor.v1.AdminService/BatchRunTasks"
+	// AdminServiceBatchCancelTasksProcedure is the fully-qualified name of the AdminService's
+	// BatchCancelTasks RPC.
+	AdminServiceBatchCancelTasksProcedure = "/conveyor.v1.AdminService/BatchCancelTasks"
+	// AdminServiceBatchArchiveTasksProcedure is the fully-qualified name of the AdminService's
+	// BatchArchiveTasks RPC.
+	AdminServiceBatchArchiveTasksProcedure = "/conveyor.v1.AdminService/BatchArchiveTasks"
 	// AdminServiceListCronProcedure is the fully-qualified name of the AdminService's ListCron RPC.
 	AdminServiceListCronProcedure = "/conveyor.v1.AdminService/ListCron"
 	// AdminServiceUpsertCronProcedure is the fully-qualified name of the AdminService's UpsertCron RPC.
@@ -77,6 +92,8 @@ const (
 	// AdminServiceListWorkerSessionsProcedure is the fully-qualified name of the AdminService's
 	// ListWorkerSessions RPC.
 	AdminServiceListWorkerSessionsProcedure = "/conveyor.v1.AdminService/ListWorkerSessions"
+	// AdminServiceBrokerInfoProcedure is the fully-qualified name of the AdminService's BrokerInfo RPC.
+	AdminServiceBrokerInfoProcedure = "/conveyor.v1.AdminService/BrokerInfo"
 )
 
 // TaskServiceClient is a client for the conveyor.v1.TaskService service.
@@ -288,6 +305,16 @@ type AdminServiceClient interface {
 	CancelTask(context.Context, *connect.Request[v1.CancelTaskRequest]) (*connect.Response[v1.CancelTaskResponse], error)
 	DeleteTask(context.Context, *connect.Request[v1.DeleteTaskRequest]) (*connect.Response[v1.DeleteTaskResponse], error)
 	RunTask(context.Context, *connect.Request[v1.RunTaskRequest]) (*connect.Response[v1.RunTaskResponse], error)
+	// ArchiveTask dead-letters a waiting (scheduled, pending, or retry) task.
+	ArchiveTask(context.Context, *connect.Request[v1.ArchiveTaskRequest]) (*connect.Response[v1.ArchiveTaskResponse], error)
+	// BatchDeleteTasks deletes each listed task, reporting per-id outcomes.
+	BatchDeleteTasks(context.Context, *connect.Request[v1.BatchTasksRequest]) (*connect.Response[v1.BatchTasksResponse], error)
+	// BatchRunTasks makes each listed task due immediately.
+	BatchRunTasks(context.Context, *connect.Request[v1.BatchTasksRequest]) (*connect.Response[v1.BatchTasksResponse], error)
+	// BatchCancelTasks cancels each listed task.
+	BatchCancelTasks(context.Context, *connect.Request[v1.BatchTasksRequest]) (*connect.Response[v1.BatchTasksResponse], error)
+	// BatchArchiveTasks dead-letters each listed task.
+	BatchArchiveTasks(context.Context, *connect.Request[v1.BatchTasksRequest]) (*connect.Response[v1.BatchTasksResponse], error)
 	ListCron(context.Context, *connect.Request[v1.ListCronRequest]) (*connect.Response[v1.ListCronResponse], error)
 	UpsertCron(context.Context, *connect.Request[v1.UpsertCronRequest]) (*connect.Response[v1.UpsertCronResponse], error)
 	PauseCron(context.Context, *connect.Request[v1.PauseCronRequest]) (*connect.Response[v1.PauseCronResponse], error)
@@ -297,6 +324,9 @@ type AdminServiceClient interface {
 	// ListWorkerSessions lists the worker sessions connected to the node serving
 	// the request, for the operations dashboard's worker-topology view.
 	ListWorkerSessions(context.Context, *connect.Request[v1.ListWorkerSessionsRequest]) (*connect.Response[v1.ListWorkerSessionsResponse], error)
+	// BrokerInfo reports the storage engine's driver and runtime statistics,
+	// the analogue of a backing-store health page.
+	BrokerInfo(context.Context, *connect.Request[v1.BrokerInfoRequest]) (*connect.Response[v1.BrokerInfoResponse], error)
 }
 
 // NewAdminServiceClient constructs a client for the conveyor.v1.AdminService service. By default,
@@ -352,6 +382,36 @@ func NewAdminServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(adminServiceMethods.ByName("RunTask")),
 			connect.WithClientOptions(opts...),
 		),
+		archiveTask: connect.NewClient[v1.ArchiveTaskRequest, v1.ArchiveTaskResponse](
+			httpClient,
+			baseURL+AdminServiceArchiveTaskProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("ArchiveTask")),
+			connect.WithClientOptions(opts...),
+		),
+		batchDeleteTasks: connect.NewClient[v1.BatchTasksRequest, v1.BatchTasksResponse](
+			httpClient,
+			baseURL+AdminServiceBatchDeleteTasksProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("BatchDeleteTasks")),
+			connect.WithClientOptions(opts...),
+		),
+		batchRunTasks: connect.NewClient[v1.BatchTasksRequest, v1.BatchTasksResponse](
+			httpClient,
+			baseURL+AdminServiceBatchRunTasksProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("BatchRunTasks")),
+			connect.WithClientOptions(opts...),
+		),
+		batchCancelTasks: connect.NewClient[v1.BatchTasksRequest, v1.BatchTasksResponse](
+			httpClient,
+			baseURL+AdminServiceBatchCancelTasksProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("BatchCancelTasks")),
+			connect.WithClientOptions(opts...),
+		),
+		batchArchiveTasks: connect.NewClient[v1.BatchTasksRequest, v1.BatchTasksResponse](
+			httpClient,
+			baseURL+AdminServiceBatchArchiveTasksProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("BatchArchiveTasks")),
+			connect.WithClientOptions(opts...),
+		),
 		listCron: connect.NewClient[v1.ListCronRequest, v1.ListCronResponse](
 			httpClient,
 			baseURL+AdminServiceListCronProcedure,
@@ -394,6 +454,12 @@ func NewAdminServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(adminServiceMethods.ByName("ListWorkerSessions")),
 			connect.WithClientOptions(opts...),
 		),
+		brokerInfo: connect.NewClient[v1.BrokerInfoRequest, v1.BrokerInfoResponse](
+			httpClient,
+			baseURL+AdminServiceBrokerInfoProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("BrokerInfo")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -406,6 +472,11 @@ type adminServiceClient struct {
 	cancelTask         *connect.Client[v1.CancelTaskRequest, v1.CancelTaskResponse]
 	deleteTask         *connect.Client[v1.DeleteTaskRequest, v1.DeleteTaskResponse]
 	runTask            *connect.Client[v1.RunTaskRequest, v1.RunTaskResponse]
+	archiveTask        *connect.Client[v1.ArchiveTaskRequest, v1.ArchiveTaskResponse]
+	batchDeleteTasks   *connect.Client[v1.BatchTasksRequest, v1.BatchTasksResponse]
+	batchRunTasks      *connect.Client[v1.BatchTasksRequest, v1.BatchTasksResponse]
+	batchCancelTasks   *connect.Client[v1.BatchTasksRequest, v1.BatchTasksResponse]
+	batchArchiveTasks  *connect.Client[v1.BatchTasksRequest, v1.BatchTasksResponse]
 	listCron           *connect.Client[v1.ListCronRequest, v1.ListCronResponse]
 	upsertCron         *connect.Client[v1.UpsertCronRequest, v1.UpsertCronResponse]
 	pauseCron          *connect.Client[v1.PauseCronRequest, v1.PauseCronResponse]
@@ -413,6 +484,7 @@ type adminServiceClient struct {
 	deleteCron         *connect.Client[v1.DeleteCronRequest, v1.DeleteCronResponse]
 	clusterInfo        *connect.Client[v1.ClusterInfoRequest, v1.ClusterInfoResponse]
 	listWorkerSessions *connect.Client[v1.ListWorkerSessionsRequest, v1.ListWorkerSessionsResponse]
+	brokerInfo         *connect.Client[v1.BrokerInfoRequest, v1.BrokerInfoResponse]
 }
 
 // ListQueues calls conveyor.v1.AdminService.ListQueues.
@@ -450,6 +522,31 @@ func (c *adminServiceClient) RunTask(ctx context.Context, req *connect.Request[v
 	return c.runTask.CallUnary(ctx, req)
 }
 
+// ArchiveTask calls conveyor.v1.AdminService.ArchiveTask.
+func (c *adminServiceClient) ArchiveTask(ctx context.Context, req *connect.Request[v1.ArchiveTaskRequest]) (*connect.Response[v1.ArchiveTaskResponse], error) {
+	return c.archiveTask.CallUnary(ctx, req)
+}
+
+// BatchDeleteTasks calls conveyor.v1.AdminService.BatchDeleteTasks.
+func (c *adminServiceClient) BatchDeleteTasks(ctx context.Context, req *connect.Request[v1.BatchTasksRequest]) (*connect.Response[v1.BatchTasksResponse], error) {
+	return c.batchDeleteTasks.CallUnary(ctx, req)
+}
+
+// BatchRunTasks calls conveyor.v1.AdminService.BatchRunTasks.
+func (c *adminServiceClient) BatchRunTasks(ctx context.Context, req *connect.Request[v1.BatchTasksRequest]) (*connect.Response[v1.BatchTasksResponse], error) {
+	return c.batchRunTasks.CallUnary(ctx, req)
+}
+
+// BatchCancelTasks calls conveyor.v1.AdminService.BatchCancelTasks.
+func (c *adminServiceClient) BatchCancelTasks(ctx context.Context, req *connect.Request[v1.BatchTasksRequest]) (*connect.Response[v1.BatchTasksResponse], error) {
+	return c.batchCancelTasks.CallUnary(ctx, req)
+}
+
+// BatchArchiveTasks calls conveyor.v1.AdminService.BatchArchiveTasks.
+func (c *adminServiceClient) BatchArchiveTasks(ctx context.Context, req *connect.Request[v1.BatchTasksRequest]) (*connect.Response[v1.BatchTasksResponse], error) {
+	return c.batchArchiveTasks.CallUnary(ctx, req)
+}
+
 // ListCron calls conveyor.v1.AdminService.ListCron.
 func (c *adminServiceClient) ListCron(ctx context.Context, req *connect.Request[v1.ListCronRequest]) (*connect.Response[v1.ListCronResponse], error) {
 	return c.listCron.CallUnary(ctx, req)
@@ -485,6 +582,11 @@ func (c *adminServiceClient) ListWorkerSessions(ctx context.Context, req *connec
 	return c.listWorkerSessions.CallUnary(ctx, req)
 }
 
+// BrokerInfo calls conveyor.v1.AdminService.BrokerInfo.
+func (c *adminServiceClient) BrokerInfo(ctx context.Context, req *connect.Request[v1.BrokerInfoRequest]) (*connect.Response[v1.BrokerInfoResponse], error) {
+	return c.brokerInfo.CallUnary(ctx, req)
+}
+
 // AdminServiceHandler is an implementation of the conveyor.v1.AdminService service.
 type AdminServiceHandler interface {
 	ListQueues(context.Context, *connect.Request[v1.ListQueuesRequest]) (*connect.Response[v1.ListQueuesResponse], error)
@@ -494,6 +596,16 @@ type AdminServiceHandler interface {
 	CancelTask(context.Context, *connect.Request[v1.CancelTaskRequest]) (*connect.Response[v1.CancelTaskResponse], error)
 	DeleteTask(context.Context, *connect.Request[v1.DeleteTaskRequest]) (*connect.Response[v1.DeleteTaskResponse], error)
 	RunTask(context.Context, *connect.Request[v1.RunTaskRequest]) (*connect.Response[v1.RunTaskResponse], error)
+	// ArchiveTask dead-letters a waiting (scheduled, pending, or retry) task.
+	ArchiveTask(context.Context, *connect.Request[v1.ArchiveTaskRequest]) (*connect.Response[v1.ArchiveTaskResponse], error)
+	// BatchDeleteTasks deletes each listed task, reporting per-id outcomes.
+	BatchDeleteTasks(context.Context, *connect.Request[v1.BatchTasksRequest]) (*connect.Response[v1.BatchTasksResponse], error)
+	// BatchRunTasks makes each listed task due immediately.
+	BatchRunTasks(context.Context, *connect.Request[v1.BatchTasksRequest]) (*connect.Response[v1.BatchTasksResponse], error)
+	// BatchCancelTasks cancels each listed task.
+	BatchCancelTasks(context.Context, *connect.Request[v1.BatchTasksRequest]) (*connect.Response[v1.BatchTasksResponse], error)
+	// BatchArchiveTasks dead-letters each listed task.
+	BatchArchiveTasks(context.Context, *connect.Request[v1.BatchTasksRequest]) (*connect.Response[v1.BatchTasksResponse], error)
 	ListCron(context.Context, *connect.Request[v1.ListCronRequest]) (*connect.Response[v1.ListCronResponse], error)
 	UpsertCron(context.Context, *connect.Request[v1.UpsertCronRequest]) (*connect.Response[v1.UpsertCronResponse], error)
 	PauseCron(context.Context, *connect.Request[v1.PauseCronRequest]) (*connect.Response[v1.PauseCronResponse], error)
@@ -503,6 +615,9 @@ type AdminServiceHandler interface {
 	// ListWorkerSessions lists the worker sessions connected to the node serving
 	// the request, for the operations dashboard's worker-topology view.
 	ListWorkerSessions(context.Context, *connect.Request[v1.ListWorkerSessionsRequest]) (*connect.Response[v1.ListWorkerSessionsResponse], error)
+	// BrokerInfo reports the storage engine's driver and runtime statistics,
+	// the analogue of a backing-store health page.
+	BrokerInfo(context.Context, *connect.Request[v1.BrokerInfoRequest]) (*connect.Response[v1.BrokerInfoResponse], error)
 }
 
 // NewAdminServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -554,6 +669,36 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(adminServiceMethods.ByName("RunTask")),
 		connect.WithHandlerOptions(opts...),
 	)
+	adminServiceArchiveTaskHandler := connect.NewUnaryHandler(
+		AdminServiceArchiveTaskProcedure,
+		svc.ArchiveTask,
+		connect.WithSchema(adminServiceMethods.ByName("ArchiveTask")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceBatchDeleteTasksHandler := connect.NewUnaryHandler(
+		AdminServiceBatchDeleteTasksProcedure,
+		svc.BatchDeleteTasks,
+		connect.WithSchema(adminServiceMethods.ByName("BatchDeleteTasks")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceBatchRunTasksHandler := connect.NewUnaryHandler(
+		AdminServiceBatchRunTasksProcedure,
+		svc.BatchRunTasks,
+		connect.WithSchema(adminServiceMethods.ByName("BatchRunTasks")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceBatchCancelTasksHandler := connect.NewUnaryHandler(
+		AdminServiceBatchCancelTasksProcedure,
+		svc.BatchCancelTasks,
+		connect.WithSchema(adminServiceMethods.ByName("BatchCancelTasks")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceBatchArchiveTasksHandler := connect.NewUnaryHandler(
+		AdminServiceBatchArchiveTasksProcedure,
+		svc.BatchArchiveTasks,
+		connect.WithSchema(adminServiceMethods.ByName("BatchArchiveTasks")),
+		connect.WithHandlerOptions(opts...),
+	)
 	adminServiceListCronHandler := connect.NewUnaryHandler(
 		AdminServiceListCronProcedure,
 		svc.ListCron,
@@ -596,6 +741,12 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(adminServiceMethods.ByName("ListWorkerSessions")),
 		connect.WithHandlerOptions(opts...),
 	)
+	adminServiceBrokerInfoHandler := connect.NewUnaryHandler(
+		AdminServiceBrokerInfoProcedure,
+		svc.BrokerInfo,
+		connect.WithSchema(adminServiceMethods.ByName("BrokerInfo")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/conveyor.v1.AdminService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case AdminServiceListQueuesProcedure:
@@ -612,6 +763,16 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 			adminServiceDeleteTaskHandler.ServeHTTP(w, r)
 		case AdminServiceRunTaskProcedure:
 			adminServiceRunTaskHandler.ServeHTTP(w, r)
+		case AdminServiceArchiveTaskProcedure:
+			adminServiceArchiveTaskHandler.ServeHTTP(w, r)
+		case AdminServiceBatchDeleteTasksProcedure:
+			adminServiceBatchDeleteTasksHandler.ServeHTTP(w, r)
+		case AdminServiceBatchRunTasksProcedure:
+			adminServiceBatchRunTasksHandler.ServeHTTP(w, r)
+		case AdminServiceBatchCancelTasksProcedure:
+			adminServiceBatchCancelTasksHandler.ServeHTTP(w, r)
+		case AdminServiceBatchArchiveTasksProcedure:
+			adminServiceBatchArchiveTasksHandler.ServeHTTP(w, r)
 		case AdminServiceListCronProcedure:
 			adminServiceListCronHandler.ServeHTTP(w, r)
 		case AdminServiceUpsertCronProcedure:
@@ -626,6 +787,8 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 			adminServiceClusterInfoHandler.ServeHTTP(w, r)
 		case AdminServiceListWorkerSessionsProcedure:
 			adminServiceListWorkerSessionsHandler.ServeHTTP(w, r)
+		case AdminServiceBrokerInfoProcedure:
+			adminServiceBrokerInfoHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -663,6 +826,26 @@ func (UnimplementedAdminServiceHandler) RunTask(context.Context, *connect.Reques
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("conveyor.v1.AdminService.RunTask is not implemented"))
 }
 
+func (UnimplementedAdminServiceHandler) ArchiveTask(context.Context, *connect.Request[v1.ArchiveTaskRequest]) (*connect.Response[v1.ArchiveTaskResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("conveyor.v1.AdminService.ArchiveTask is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) BatchDeleteTasks(context.Context, *connect.Request[v1.BatchTasksRequest]) (*connect.Response[v1.BatchTasksResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("conveyor.v1.AdminService.BatchDeleteTasks is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) BatchRunTasks(context.Context, *connect.Request[v1.BatchTasksRequest]) (*connect.Response[v1.BatchTasksResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("conveyor.v1.AdminService.BatchRunTasks is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) BatchCancelTasks(context.Context, *connect.Request[v1.BatchTasksRequest]) (*connect.Response[v1.BatchTasksResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("conveyor.v1.AdminService.BatchCancelTasks is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) BatchArchiveTasks(context.Context, *connect.Request[v1.BatchTasksRequest]) (*connect.Response[v1.BatchTasksResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("conveyor.v1.AdminService.BatchArchiveTasks is not implemented"))
+}
+
 func (UnimplementedAdminServiceHandler) ListCron(context.Context, *connect.Request[v1.ListCronRequest]) (*connect.Response[v1.ListCronResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("conveyor.v1.AdminService.ListCron is not implemented"))
 }
@@ -689,4 +872,8 @@ func (UnimplementedAdminServiceHandler) ClusterInfo(context.Context, *connect.Re
 
 func (UnimplementedAdminServiceHandler) ListWorkerSessions(context.Context, *connect.Request[v1.ListWorkerSessionsRequest]) (*connect.Response[v1.ListWorkerSessionsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("conveyor.v1.AdminService.ListWorkerSessions is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) BrokerInfo(context.Context, *connect.Request[v1.BrokerInfoRequest]) (*connect.Response[v1.BrokerInfoResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("conveyor.v1.AdminService.BrokerInfo is not implemented"))
 }

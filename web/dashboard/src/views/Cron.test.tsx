@@ -41,6 +41,33 @@ test("renders an empty state with no entries", async () => {
   expect(await screen.findByText("No cron entries.")).toBeInTheDocument();
 });
 
+test("creates a schedule from the editor form", async () => {
+  const upsertCron = vi.fn().mockReturnValue({});
+  const transport = createRouterTransport((router) => {
+    router.service(AdminService, {
+      listCron: () => ({ entries: [] }),
+      upsertCron,
+    });
+  });
+
+  render(
+    <ApiProvider api={createApi(transport)}>
+      <Cron />
+    </ApiProvider>,
+  );
+
+  await screen.findByText("No cron entries.");
+  await userEvent.type(screen.getByPlaceholderText("hourly-report"), "nightly");
+  await userEvent.type(screen.getByPlaceholderText("0 0 * * * *"), "0 0 0 * * *");
+  await userEvent.type(screen.getByPlaceholderText("report:hourly"), "report:daily");
+  await userEvent.click(screen.getByRole("button", { name: "Save schedule" }));
+
+  // The argument is a protobuf message with a cyclic descriptor; assert on the
+  // entry id rather than deep-comparing the message.
+  expect(upsertCron).toHaveBeenCalledOnce();
+  expect(upsertCron.mock.calls[0][0].entry.id).toBe("nightly");
+});
+
 test("deletes a cron entry after confirmation", async () => {
   const deleteCron = vi.fn().mockReturnValue({});
   const transport = createRouterTransport((router) => {

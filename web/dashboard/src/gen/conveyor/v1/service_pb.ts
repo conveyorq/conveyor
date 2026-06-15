@@ -14,7 +14,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file conveyor/v1/service.proto.
  */
 export const file_conveyor_v1_service: GenFile = /*@__PURE__*/
-  fileDesc("Chljb252ZXlvci92MS9zZXJ2aWNlLnByb3RvEgtjb252ZXlvci52MSKiBAoORW5xdWV1ZVJlcXVlc3QSDwoHdGFza19pZBgBIAEoCRINCgVxdWV1ZRgCIAEoCRIMCgR0eXBlGAMgASgJEg8KB3BheWxvYWQYBCABKAwSFAoMY29udGVudF90eXBlGAUgASgJEjsKCG1ldGFkYXRhGAYgAygLMikuY29udmV5b3IudjEuRW5xdWV1ZVJlcXVlc3QuTWV0YWRhdGFFbnRyeRIRCgltYXhfcmV0cnkYByABKAUSKgoHdGltZW91dBgIIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbhIsCghkZWFkbGluZRgJIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLgoKcHJvY2Vzc19hdBgKIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLQoKcHJvY2Vzc19pbhgLIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbhISCgp1bmlxdWVfa2V5GAwgASgJEi0KCnVuaXF1ZV90dGwYDSABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24SEAoIcHJpb3JpdHkYDiABKAUSLAoJcmV0ZW50aW9uGA8gASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uGi8KDU1ldGFkYXRhRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASI2Cg9FbnF1ZXVlUmVzcG9uc2USIwoEdGFzaxgBIAEoCzIVLmNvbnZleW9yLnYxLlRhc2tJbmZvIkEKE0VucXVldWVCYXRjaFJlcXVlc3QSKgoFdGFza3MYASADKAsyGy5jb252ZXlvci52MS5FbnF1ZXVlUmVxdWVzdCJDChRFbnF1ZXVlQmF0Y2hSZXNwb25zZRIrCgdyZXN1bHRzGAEgAygLMhouY29udmV5b3IudjEuRW5xdWV1ZVJlc3VsdCJDCg1FbnF1ZXVlUmVzdWx0EiMKBHRhc2sYASABKAsyFS5jb252ZXlvci52MS5UYXNrSW5mbxINCgVlcnJvchgCIAEoCSIcCg5HZXRUYXNrUmVxdWVzdBIKCgJpZBgBIAEoCSI2Cg9HZXRUYXNrUmVzcG9uc2USIwoEdGFzaxgBIAEoCzIVLmNvbnZleW9yLnYxLlRhc2tJbmZvIrcCCghUYXNrSW5mbxIKCgJpZBgBIAEoCRINCgVxdWV1ZRgCIAEoCRIMCgR0eXBlGAMgASgJEiUKBXN0YXRlGAQgASgOMhYuY29udmV5b3IudjEuVGFza1N0YXRlEhAKCHByaW9yaXR5GAUgASgFEg8KB3JldHJpZWQYBiABKAUSEQoJbWF4X3JldHJ5GAcgASgFEhIKCmxhc3RfZXJyb3IYCCABKAkSLwoLZW5xdWV1ZWRfYXQYCSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi4KCnByb2Nlc3NfYXQYCiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEjAKDGNvbXBsZXRlZF9hdBgLIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAiuAEKDVdvcmtlck1lc3NhZ2USIwoFaGVsbG8YASABKAsyEi5jb252ZXlvci52MS5IZWxsb0gAEiUKBmNyZWRpdBgCIAEoCzITLmNvbnZleW9yLnYxLkNyZWRpdEgAEiUKBnJlc3VsdBgDIAEoCzITLmNvbnZleW9yLnYxLlJlc3VsdEgAEisKCWhlYXJ0YmVhdBgEIAEoCzIWLmNvbnZleW9yLnYxLkhlYXJ0YmVhdEgAQgcKBWZyYW1lIrYBCg1TZXJ2ZXJNZXNzYWdlEicKB3dlbGNvbWUYASABKAsyFC5jb252ZXlvci52MS5XZWxjb21lSAASKQoIZGlzcGF0Y2gYAiABKAsyFS5jb252ZXlvci52MS5EaXNwYXRjaEgAEiUKBmNhbmNlbBgDIAEoCzITLmNvbnZleW9yLnYxLkNhbmNlbEgAEiEKBHBpbmcYBCABKAsyES5jb252ZXlvci52MS5QaW5nSABCBwoFZnJhbWUi7wEKBUhlbGxvEi4KBnF1ZXVlcxgBIAMoCzIeLmNvbnZleW9yLnYxLkhlbGxvLlF1ZXVlc0VudHJ5EhMKC2NvbmN1cnJlbmN5GAIgASgFEi4KBmxhYmVscxgDIAMoCzIeLmNvbnZleW9yLnYxLkhlbGxvLkxhYmVsc0VudHJ5EhMKC3Nka192ZXJzaW9uGAQgASgJGi0KC1F1ZXVlc0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoBToCOAEaLQoLTGFiZWxzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASITCgZDcmVkaXQSCQoBbhgBIAEoBSJnCgZSZXN1bHQSDwoHdGFza19pZBgBIAEoCRIpCgdvdXRjb21lGAIgASgOMhguY29udmV5b3IudjEuVGFza091dGNvbWUSEQoJZXJyb3JfbXNnGAMgASgJEg4KBnJlc3VsdBgEIAEoDCIkCglIZWFydGJlYXQSFwoPYWN0aXZlX3Rhc2tfaWRzGAEgAygJIoIBCgdXZWxjb21lEhIKCnNlc3Npb25faWQYASABKAkSLAoJbGVhc2VfdHRsGAIgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uEjUKEmhlYXJ0YmVhdF9pbnRlcnZhbBgDIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbiJhCghEaXNwYXRjaBInCgR0YXNrGAEgASgLMhkuY29udmV5b3IudjEuVGFza0VudmVsb3BlEiwKCGRlYWRsaW5lGAIgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCIZCgZDYW5jZWwSDwoHdGFza19pZBgBIAEoCSIGCgRQaW5nIhMKEUxpc3RRdWV1ZXNSZXF1ZXN0IjwKEkxpc3RRdWV1ZXNSZXNwb25zZRImCgZxdWV1ZXMYASADKAsyFi5jb252ZXlvci52MS5RdWV1ZUluZm8ikQEKCVF1ZXVlSW5mbxIMCgRuYW1lGAEgASgJEg4KBnBhdXNlZBgCIAEoCBIRCglzY2hlZHVsZWQYAyABKAMSDwoHcGVuZGluZxgEIAEoAxIOCgZhY3RpdmUYBSABKAMSDQoFcmV0cnkYBiABKAMSEQoJY29tcGxldGVkGAcgASgDEhAKCGFyY2hpdmVkGAggASgDIiIKEVBhdXNlUXVldWVSZXF1ZXN0Eg0KBXF1ZXVlGAEgASgJIhQKElBhdXNlUXVldWVSZXNwb25zZSIjChJSZXN1bWVRdWV1ZVJlcXVlc3QSDQoFcXVldWUYASABKAkiFQoTUmVzdW1lUXVldWVSZXNwb25zZSJrChBMaXN0VGFza3NSZXF1ZXN0Eg0KBXF1ZXVlGAEgASgJEiUKBXN0YXRlGAIgASgOMhYuY29udmV5b3IudjEuVGFza1N0YXRlEg0KBWxpbWl0GAMgASgFEhIKCnBhZ2VfdG9rZW4YBCABKAkiUgoRTGlzdFRhc2tzUmVzcG9uc2USJAoFdGFza3MYASADKAsyFS5jb252ZXlvci52MS5UYXNrSW5mbxIXCg9uZXh0X3BhZ2VfdG9rZW4YAiABKAkiHwoRQ2FuY2VsVGFza1JlcXVlc3QSCgoCaWQYASABKAkiFAoSQ2FuY2VsVGFza1Jlc3BvbnNlIh8KEURlbGV0ZVRhc2tSZXF1ZXN0EgoKAmlkGAEgASgJIhQKEkRlbGV0ZVRhc2tSZXNwb25zZSIcCg5SdW5UYXNrUmVxdWVzdBIKCgJpZBgBIAEoCSIRCg9SdW5UYXNrUmVzcG9uc2UiEQoPTGlzdENyb25SZXF1ZXN0IjsKEExpc3RDcm9uUmVzcG9uc2USJwoHZW50cmllcxgBIAMoCzIWLmNvbnZleW9yLnYxLkNyb25FbnRyeSKpAQoJQ3JvbkVudHJ5EgoKAmlkGAEgASgJEgwKBHNwZWMYAiABKAkSEQoJdGFza190eXBlGAMgASgJEg0KBXF1ZXVlGAQgASgJEg8KB3BheWxvYWQYBSABKAwSFAoMY29udGVudF90eXBlGAYgASgJEikKB29wdGlvbnMYByABKAsyGC5jb252ZXlvci52MS5UYXNrT3B0aW9ucxIOCgZwYXVzZWQYCCABKAgiOgoRVXBzZXJ0Q3JvblJlcXVlc3QSJQoFZW50cnkYASABKAsyFi5jb252ZXlvci52MS5Dcm9uRW50cnkiFAoSVXBzZXJ0Q3JvblJlc3BvbnNlIh4KEFBhdXNlQ3JvblJlcXVlc3QSCgoCaWQYASABKAkiEwoRUGF1c2VDcm9uUmVzcG9uc2UiHwoRUmVzdW1lQ3JvblJlcXVlc3QSCgoCaWQYASABKAkiFAoSUmVzdW1lQ3JvblJlc3BvbnNlIh8KEURlbGV0ZUNyb25SZXF1ZXN0EgoKAmlkGAEgASgJIhQKEkRlbGV0ZUNyb25SZXNwb25zZSIUChJDbHVzdGVySW5mb1JlcXVlc3QiOwoTQ2x1c3RlckluZm9SZXNwb25zZRIkCgVub2RlcxgBIAMoCzIVLmNvbnZleW9yLnYxLk5vZGVJbmZvIksKCE5vZGVJbmZvEg8KB2FkZHJlc3MYASABKAkSLgoKc3RhcnRlZF9hdBgCIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAiGwoZTGlzdFdvcmtlclNlc3Npb25zUmVxdWVzdCJKChpMaXN0V29ya2VyU2Vzc2lvbnNSZXNwb25zZRIsCghzZXNzaW9ucxgBIAMoCzIaLmNvbnZleW9yLnYxLldvcmtlclNlc3Npb24ihwEKDVdvcmtlclNlc3Npb24SCgoCaWQYASABKAkSDgoGcXVldWVzGAIgAygJEhMKC2NvbmN1cnJlbmN5GAMgASgFEhMKC3Nka192ZXJzaW9uGAQgASgJEjAKDGNvbm5lY3RlZF9hdBgFIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAqlQEKC1Rhc2tPdXRjb21lEhwKGFRBU0tfT1VUQ09NRV9VTlNQRUNJRklFRBAAEhgKFFRBU0tfT1VUQ09NRV9TVUNDRVNTEAESFgoSVEFTS19PVVRDT01FX1JFVFJZEAISGwoXVEFTS19PVVRDT01FX1NLSVBfUkVUUlkQAxIZChVUQVNLX09VVENPTUVfUkVMRUFTRUQQBDL0AQoLVGFza1NlcnZpY2USRgoHRW5xdWV1ZRIbLmNvbnZleW9yLnYxLkVucXVldWVSZXF1ZXN0GhwuY29udmV5b3IudjEuRW5xdWV1ZVJlc3BvbnNlIgASVQoMRW5xdWV1ZUJhdGNoEiAuY29udmV5b3IudjEuRW5xdWV1ZUJhdGNoUmVxdWVzdBohLmNvbnZleW9yLnYxLkVucXVldWVCYXRjaFJlc3BvbnNlIgASRgoHR2V0VGFzaxIbLmNvbnZleW9yLnYxLkdldFRhc2tSZXF1ZXN0GhwuY29udmV5b3IudjEuR2V0VGFza1Jlc3BvbnNlIgAyWAoNV29ya2VyU2VydmljZRJHCgdTZXNzaW9uEhouY29udmV5b3IudjEuV29ya2VyTWVzc2FnZRoaLmNvbnZleW9yLnYxLlNlcnZlck1lc3NhZ2UiACgBMAEyhQkKDEFkbWluU2VydmljZRJPCgpMaXN0UXVldWVzEh4uY29udmV5b3IudjEuTGlzdFF1ZXVlc1JlcXVlc3QaHy5jb252ZXlvci52MS5MaXN0UXVldWVzUmVzcG9uc2UiABJPCgpQYXVzZVF1ZXVlEh4uY29udmV5b3IudjEuUGF1c2VRdWV1ZVJlcXVlc3QaHy5jb252ZXlvci52MS5QYXVzZVF1ZXVlUmVzcG9uc2UiABJSCgtSZXN1bWVRdWV1ZRIfLmNvbnZleW9yLnYxLlJlc3VtZVF1ZXVlUmVxdWVzdBogLmNvbnZleW9yLnYxLlJlc3VtZVF1ZXVlUmVzcG9uc2UiABJMCglMaXN0VGFza3MSHS5jb252ZXlvci52MS5MaXN0VGFza3NSZXF1ZXN0Gh4uY29udmV5b3IudjEuTGlzdFRhc2tzUmVzcG9uc2UiABJPCgpDYW5jZWxUYXNrEh4uY29udmV5b3IudjEuQ2FuY2VsVGFza1JlcXVlc3QaHy5jb252ZXlvci52MS5DYW5jZWxUYXNrUmVzcG9uc2UiABJPCgpEZWxldGVUYXNrEh4uY29udmV5b3IudjEuRGVsZXRlVGFza1JlcXVlc3QaHy5jb252ZXlvci52MS5EZWxldGVUYXNrUmVzcG9uc2UiABJGCgdSdW5UYXNrEhsuY29udmV5b3IudjEuUnVuVGFza1JlcXVlc3QaHC5jb252ZXlvci52MS5SdW5UYXNrUmVzcG9uc2UiABJJCghMaXN0Q3JvbhIcLmNvbnZleW9yLnYxLkxpc3RDcm9uUmVxdWVzdBodLmNvbnZleW9yLnYxLkxpc3RDcm9uUmVzcG9uc2UiABJPCgpVcHNlcnRDcm9uEh4uY29udmV5b3IudjEuVXBzZXJ0Q3JvblJlcXVlc3QaHy5jb252ZXlvci52MS5VcHNlcnRDcm9uUmVzcG9uc2UiABJMCglQYXVzZUNyb24SHS5jb252ZXlvci52MS5QYXVzZUNyb25SZXF1ZXN0Gh4uY29udmV5b3IudjEuUGF1c2VDcm9uUmVzcG9uc2UiABJPCgpSZXN1bWVDcm9uEh4uY29udmV5b3IudjEuUmVzdW1lQ3JvblJlcXVlc3QaHy5jb252ZXlvci52MS5SZXN1bWVDcm9uUmVzcG9uc2UiABJPCgpEZWxldGVDcm9uEh4uY29udmV5b3IudjEuRGVsZXRlQ3JvblJlcXVlc3QaHy5jb252ZXlvci52MS5EZWxldGVDcm9uUmVzcG9uc2UiABJSCgtDbHVzdGVySW5mbxIfLmNvbnZleW9yLnYxLkNsdXN0ZXJJbmZvUmVxdWVzdBogLmNvbnZleW9yLnYxLkNsdXN0ZXJJbmZvUmVzcG9uc2UiABJnChJMaXN0V29ya2VyU2Vzc2lvbnMSJi5jb252ZXlvci52MS5MaXN0V29ya2VyU2Vzc2lvbnNSZXF1ZXN0GicuY29udmV5b3IudjEuTGlzdFdvcmtlclNlc3Npb25zUmVzcG9uc2UiAGIGcHJvdG8z", [file_conveyor_v1_task, file_google_protobuf_duration, file_google_protobuf_timestamp]);
+  fileDesc("Chljb252ZXlvci92MS9zZXJ2aWNlLnByb3RvEgtjb252ZXlvci52MSKiBAoORW5xdWV1ZVJlcXVlc3QSDwoHdGFza19pZBgBIAEoCRINCgVxdWV1ZRgCIAEoCRIMCgR0eXBlGAMgASgJEg8KB3BheWxvYWQYBCABKAwSFAoMY29udGVudF90eXBlGAUgASgJEjsKCG1ldGFkYXRhGAYgAygLMikuY29udmV5b3IudjEuRW5xdWV1ZVJlcXVlc3QuTWV0YWRhdGFFbnRyeRIRCgltYXhfcmV0cnkYByABKAUSKgoHdGltZW91dBgIIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbhIsCghkZWFkbGluZRgJIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLgoKcHJvY2Vzc19hdBgKIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLQoKcHJvY2Vzc19pbhgLIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbhISCgp1bmlxdWVfa2V5GAwgASgJEi0KCnVuaXF1ZV90dGwYDSABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24SEAoIcHJpb3JpdHkYDiABKAUSLAoJcmV0ZW50aW9uGA8gASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uGi8KDU1ldGFkYXRhRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASI2Cg9FbnF1ZXVlUmVzcG9uc2USIwoEdGFzaxgBIAEoCzIVLmNvbnZleW9yLnYxLlRhc2tJbmZvIkEKE0VucXVldWVCYXRjaFJlcXVlc3QSKgoFdGFza3MYASADKAsyGy5jb252ZXlvci52MS5FbnF1ZXVlUmVxdWVzdCJDChRFbnF1ZXVlQmF0Y2hSZXNwb25zZRIrCgdyZXN1bHRzGAEgAygLMhouY29udmV5b3IudjEuRW5xdWV1ZVJlc3VsdCJDCg1FbnF1ZXVlUmVzdWx0EiMKBHRhc2sYASABKAsyFS5jb252ZXlvci52MS5UYXNrSW5mbxINCgVlcnJvchgCIAEoCSIcCg5HZXRUYXNrUmVxdWVzdBIKCgJpZBgBIAEoCSI2Cg9HZXRUYXNrUmVzcG9uc2USIwoEdGFzaxgBIAEoCzIVLmNvbnZleW9yLnYxLlRhc2tJbmZvIo4DCghUYXNrSW5mbxIKCgJpZBgBIAEoCRINCgVxdWV1ZRgCIAEoCRIMCgR0eXBlGAMgASgJEiUKBXN0YXRlGAQgASgOMhYuY29udmV5b3IudjEuVGFza1N0YXRlEhAKCHByaW9yaXR5GAUgASgFEg8KB3JldHJpZWQYBiABKAUSEQoJbWF4X3JldHJ5GAcgASgFEhIKCmxhc3RfZXJyb3IYCCABKAkSLwoLZW5xdWV1ZWRfYXQYCSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi4KCnByb2Nlc3NfYXQYCiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEjAKDGNvbXBsZXRlZF9hdBgLIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDwoHcGF5bG9hZBgMIAEoDBIUCgxjb250ZW50X3R5cGUYDSABKAkSLgoKc3RhcnRlZF9hdBgOIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAiuAEKDVdvcmtlck1lc3NhZ2USIwoFaGVsbG8YASABKAsyEi5jb252ZXlvci52MS5IZWxsb0gAEiUKBmNyZWRpdBgCIAEoCzITLmNvbnZleW9yLnYxLkNyZWRpdEgAEiUKBnJlc3VsdBgDIAEoCzITLmNvbnZleW9yLnYxLlJlc3VsdEgAEisKCWhlYXJ0YmVhdBgEIAEoCzIWLmNvbnZleW9yLnYxLkhlYXJ0YmVhdEgAQgcKBWZyYW1lIrYBCg1TZXJ2ZXJNZXNzYWdlEicKB3dlbGNvbWUYASABKAsyFC5jb252ZXlvci52MS5XZWxjb21lSAASKQoIZGlzcGF0Y2gYAiABKAsyFS5jb252ZXlvci52MS5EaXNwYXRjaEgAEiUKBmNhbmNlbBgDIAEoCzITLmNvbnZleW9yLnYxLkNhbmNlbEgAEiEKBHBpbmcYBCABKAsyES5jb252ZXlvci52MS5QaW5nSABCBwoFZnJhbWUi7wEKBUhlbGxvEi4KBnF1ZXVlcxgBIAMoCzIeLmNvbnZleW9yLnYxLkhlbGxvLlF1ZXVlc0VudHJ5EhMKC2NvbmN1cnJlbmN5GAIgASgFEi4KBmxhYmVscxgDIAMoCzIeLmNvbnZleW9yLnYxLkhlbGxvLkxhYmVsc0VudHJ5EhMKC3Nka192ZXJzaW9uGAQgASgJGi0KC1F1ZXVlc0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoBToCOAEaLQoLTGFiZWxzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASITCgZDcmVkaXQSCQoBbhgBIAEoBSJnCgZSZXN1bHQSDwoHdGFza19pZBgBIAEoCRIpCgdvdXRjb21lGAIgASgOMhguY29udmV5b3IudjEuVGFza091dGNvbWUSEQoJZXJyb3JfbXNnGAMgASgJEg4KBnJlc3VsdBgEIAEoDCIkCglIZWFydGJlYXQSFwoPYWN0aXZlX3Rhc2tfaWRzGAEgAygJIoIBCgdXZWxjb21lEhIKCnNlc3Npb25faWQYASABKAkSLAoJbGVhc2VfdHRsGAIgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uEjUKEmhlYXJ0YmVhdF9pbnRlcnZhbBgDIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbiJhCghEaXNwYXRjaBInCgR0YXNrGAEgASgLMhkuY29udmV5b3IudjEuVGFza0VudmVsb3BlEiwKCGRlYWRsaW5lGAIgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCIZCgZDYW5jZWwSDwoHdGFza19pZBgBIAEoCSIGCgRQaW5nIhMKEUxpc3RRdWV1ZXNSZXF1ZXN0IjwKEkxpc3RRdWV1ZXNSZXNwb25zZRImCgZxdWV1ZXMYASADKAsyFi5jb252ZXlvci52MS5RdWV1ZUluZm8ikQEKCVF1ZXVlSW5mbxIMCgRuYW1lGAEgASgJEg4KBnBhdXNlZBgCIAEoCBIRCglzY2hlZHVsZWQYAyABKAMSDwoHcGVuZGluZxgEIAEoAxIOCgZhY3RpdmUYBSABKAMSDQoFcmV0cnkYBiABKAMSEQoJY29tcGxldGVkGAcgASgDEhAKCGFyY2hpdmVkGAggASgDIiIKEVBhdXNlUXVldWVSZXF1ZXN0Eg0KBXF1ZXVlGAEgASgJIhQKElBhdXNlUXVldWVSZXNwb25zZSIjChJSZXN1bWVRdWV1ZVJlcXVlc3QSDQoFcXVldWUYASABKAkiFQoTUmVzdW1lUXVldWVSZXNwb25zZSJrChBMaXN0VGFza3NSZXF1ZXN0Eg0KBXF1ZXVlGAEgASgJEiUKBXN0YXRlGAIgASgOMhYuY29udmV5b3IudjEuVGFza1N0YXRlEg0KBWxpbWl0GAMgASgFEhIKCnBhZ2VfdG9rZW4YBCABKAkiUgoRTGlzdFRhc2tzUmVzcG9uc2USJAoFdGFza3MYASADKAsyFS5jb252ZXlvci52MS5UYXNrSW5mbxIXCg9uZXh0X3BhZ2VfdG9rZW4YAiABKAkiHwoRQ2FuY2VsVGFza1JlcXVlc3QSCgoCaWQYASABKAkiFAoSQ2FuY2VsVGFza1Jlc3BvbnNlIh8KEURlbGV0ZVRhc2tSZXF1ZXN0EgoKAmlkGAEgASgJIhQKEkRlbGV0ZVRhc2tSZXNwb25zZSIcCg5SdW5UYXNrUmVxdWVzdBIKCgJpZBgBIAEoCSIRCg9SdW5UYXNrUmVzcG9uc2UiIAoSQXJjaGl2ZVRhc2tSZXF1ZXN0EgoKAmlkGAEgASgJIhUKE0FyY2hpdmVUYXNrUmVzcG9uc2UiIAoRQmF0Y2hUYXNrc1JlcXVlc3QSCwoDaWRzGAEgAygJIkQKEkJhdGNoVGFza3NSZXNwb25zZRIuCgdyZXN1bHRzGAEgAygLMh0uY29udmV5b3IudjEuVGFza0FjdGlvblJlc3VsdCItChBUYXNrQWN0aW9uUmVzdWx0EgoKAmlkGAEgASgJEg0KBWVycm9yGAIgASgJIhEKD0xpc3RDcm9uUmVxdWVzdCI7ChBMaXN0Q3JvblJlc3BvbnNlEicKB2VudHJpZXMYASADKAsyFi5jb252ZXlvci52MS5Dcm9uRW50cnki2gEKCUNyb25FbnRyeRIKCgJpZBgBIAEoCRIMCgRzcGVjGAIgASgJEhEKCXRhc2tfdHlwZRgDIAEoCRINCgVxdWV1ZRgEIAEoCRIPCgdwYXlsb2FkGAUgASgMEhQKDGNvbnRlbnRfdHlwZRgGIAEoCRIpCgdvcHRpb25zGAcgASgLMhguY29udmV5b3IudjEuVGFza09wdGlvbnMSDgoGcGF1c2VkGAggASgIEi8KC25leHRfcnVuX2F0GAkgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCI6ChFVcHNlcnRDcm9uUmVxdWVzdBIlCgVlbnRyeRgBIAEoCzIWLmNvbnZleW9yLnYxLkNyb25FbnRyeSIUChJVcHNlcnRDcm9uUmVzcG9uc2UiHgoQUGF1c2VDcm9uUmVxdWVzdBIKCgJpZBgBIAEoCSITChFQYXVzZUNyb25SZXNwb25zZSIfChFSZXN1bWVDcm9uUmVxdWVzdBIKCgJpZBgBIAEoCSIUChJSZXN1bWVDcm9uUmVzcG9uc2UiHwoRRGVsZXRlQ3JvblJlcXVlc3QSCgoCaWQYASABKAkiFAoSRGVsZXRlQ3JvblJlc3BvbnNlIhQKEkNsdXN0ZXJJbmZvUmVxdWVzdCI7ChNDbHVzdGVySW5mb1Jlc3BvbnNlEiQKBW5vZGVzGAEgAygLMhUuY29udmV5b3IudjEuTm9kZUluZm8iSwoITm9kZUluZm8SDwoHYWRkcmVzcxgBIAEoCRIuCgpzdGFydGVkX2F0GAIgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCIbChlMaXN0V29ya2VyU2Vzc2lvbnNSZXF1ZXN0IkoKGkxpc3RXb3JrZXJTZXNzaW9uc1Jlc3BvbnNlEiwKCHNlc3Npb25zGAEgAygLMhouY29udmV5b3IudjEuV29ya2VyU2Vzc2lvbiKHAQoNV29ya2VyU2Vzc2lvbhIKCgJpZBgBIAEoCRIOCgZxdWV1ZXMYAiADKAkSEwoLY29uY3VycmVuY3kYAyABKAUSEwoLc2RrX3ZlcnNpb24YBCABKAkSMAoMY29ubmVjdGVkX2F0GAUgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCITChFCcm9rZXJJbmZvUmVxdWVzdCKTAQoSQnJva2VySW5mb1Jlc3BvbnNlEg4KBmRyaXZlchgBIAEoCRI9CgdtZXRyaWNzGAIgAygLMiwuY29udmV5b3IudjEuQnJva2VySW5mb1Jlc3BvbnNlLk1ldHJpY3NFbnRyeRouCgxNZXRyaWNzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASqVAQoLVGFza091dGNvbWUSHAoYVEFTS19PVVRDT01FX1VOU1BFQ0lGSUVEEAASGAoUVEFTS19PVVRDT01FX1NVQ0NFU1MQARIWChJUQVNLX09VVENPTUVfUkVUUlkQAhIbChdUQVNLX09VVENPTUVfU0tJUF9SRVRSWRADEhkKFVRBU0tfT1VUQ09NRV9SRUxFQVNFRBAEMvQBCgtUYXNrU2VydmljZRJGCgdFbnF1ZXVlEhsuY29udmV5b3IudjEuRW5xdWV1ZVJlcXVlc3QaHC5jb252ZXlvci52MS5FbnF1ZXVlUmVzcG9uc2UiABJVCgxFbnF1ZXVlQmF0Y2gSIC5jb252ZXlvci52MS5FbnF1ZXVlQmF0Y2hSZXF1ZXN0GiEuY29udmV5b3IudjEuRW5xdWV1ZUJhdGNoUmVzcG9uc2UiABJGCgdHZXRUYXNrEhsuY29udmV5b3IudjEuR2V0VGFza1JlcXVlc3QaHC5jb252ZXlvci52MS5HZXRUYXNrUmVzcG9uc2UiADJYCg1Xb3JrZXJTZXJ2aWNlEkcKB1Nlc3Npb24SGi5jb252ZXlvci52MS5Xb3JrZXJNZXNzYWdlGhouY29udmV5b3IudjEuU2VydmVyTWVzc2FnZSIAKAEwATKEDQoMQWRtaW5TZXJ2aWNlEk8KCkxpc3RRdWV1ZXMSHi5jb252ZXlvci52MS5MaXN0UXVldWVzUmVxdWVzdBofLmNvbnZleW9yLnYxLkxpc3RRdWV1ZXNSZXNwb25zZSIAEk8KClBhdXNlUXVldWUSHi5jb252ZXlvci52MS5QYXVzZVF1ZXVlUmVxdWVzdBofLmNvbnZleW9yLnYxLlBhdXNlUXVldWVSZXNwb25zZSIAElIKC1Jlc3VtZVF1ZXVlEh8uY29udmV5b3IudjEuUmVzdW1lUXVldWVSZXF1ZXN0GiAuY29udmV5b3IudjEuUmVzdW1lUXVldWVSZXNwb25zZSIAEkwKCUxpc3RUYXNrcxIdLmNvbnZleW9yLnYxLkxpc3RUYXNrc1JlcXVlc3QaHi5jb252ZXlvci52MS5MaXN0VGFza3NSZXNwb25zZSIAEk8KCkNhbmNlbFRhc2sSHi5jb252ZXlvci52MS5DYW5jZWxUYXNrUmVxdWVzdBofLmNvbnZleW9yLnYxLkNhbmNlbFRhc2tSZXNwb25zZSIAEk8KCkRlbGV0ZVRhc2sSHi5jb252ZXlvci52MS5EZWxldGVUYXNrUmVxdWVzdBofLmNvbnZleW9yLnYxLkRlbGV0ZVRhc2tSZXNwb25zZSIAEkYKB1J1blRhc2sSGy5jb252ZXlvci52MS5SdW5UYXNrUmVxdWVzdBocLmNvbnZleW9yLnYxLlJ1blRhc2tSZXNwb25zZSIAElIKC0FyY2hpdmVUYXNrEh8uY29udmV5b3IudjEuQXJjaGl2ZVRhc2tSZXF1ZXN0GiAuY29udmV5b3IudjEuQXJjaGl2ZVRhc2tSZXNwb25zZSIAElUKEEJhdGNoRGVsZXRlVGFza3MSHi5jb252ZXlvci52MS5CYXRjaFRhc2tzUmVxdWVzdBofLmNvbnZleW9yLnYxLkJhdGNoVGFza3NSZXNwb25zZSIAElIKDUJhdGNoUnVuVGFza3MSHi5jb252ZXlvci52MS5CYXRjaFRhc2tzUmVxdWVzdBofLmNvbnZleW9yLnYxLkJhdGNoVGFza3NSZXNwb25zZSIAElUKEEJhdGNoQ2FuY2VsVGFza3MSHi5jb252ZXlvci52MS5CYXRjaFRhc2tzUmVxdWVzdBofLmNvbnZleW9yLnYxLkJhdGNoVGFza3NSZXNwb25zZSIAElYKEUJhdGNoQXJjaGl2ZVRhc2tzEh4uY29udmV5b3IudjEuQmF0Y2hUYXNrc1JlcXVlc3QaHy5jb252ZXlvci52MS5CYXRjaFRhc2tzUmVzcG9uc2UiABJJCghMaXN0Q3JvbhIcLmNvbnZleW9yLnYxLkxpc3RDcm9uUmVxdWVzdBodLmNvbnZleW9yLnYxLkxpc3RDcm9uUmVzcG9uc2UiABJPCgpVcHNlcnRDcm9uEh4uY29udmV5b3IudjEuVXBzZXJ0Q3JvblJlcXVlc3QaHy5jb252ZXlvci52MS5VcHNlcnRDcm9uUmVzcG9uc2UiABJMCglQYXVzZUNyb24SHS5jb252ZXlvci52MS5QYXVzZUNyb25SZXF1ZXN0Gh4uY29udmV5b3IudjEuUGF1c2VDcm9uUmVzcG9uc2UiABJPCgpSZXN1bWVDcm9uEh4uY29udmV5b3IudjEuUmVzdW1lQ3JvblJlcXVlc3QaHy5jb252ZXlvci52MS5SZXN1bWVDcm9uUmVzcG9uc2UiABJPCgpEZWxldGVDcm9uEh4uY29udmV5b3IudjEuRGVsZXRlQ3JvblJlcXVlc3QaHy5jb252ZXlvci52MS5EZWxldGVDcm9uUmVzcG9uc2UiABJSCgtDbHVzdGVySW5mbxIfLmNvbnZleW9yLnYxLkNsdXN0ZXJJbmZvUmVxdWVzdBogLmNvbnZleW9yLnYxLkNsdXN0ZXJJbmZvUmVzcG9uc2UiABJnChJMaXN0V29ya2VyU2Vzc2lvbnMSJi5jb252ZXlvci52MS5MaXN0V29ya2VyU2Vzc2lvbnNSZXF1ZXN0GicuY29udmV5b3IudjEuTGlzdFdvcmtlclNlc3Npb25zUmVzcG9uc2UiABJPCgpCcm9rZXJJbmZvEh4uY29udmV5b3IudjEuQnJva2VySW5mb1JlcXVlc3QaHy5jb252ZXlvci52MS5Ccm9rZXJJbmZvUmVzcG9uc2UiAGIGcHJvdG8z", [file_conveyor_v1_task, file_google_protobuf_duration, file_google_protobuf_timestamp]);
 
 /**
  * EnqueueRequest mirrors the SDK enqueue options. Zero values select the
@@ -291,6 +291,29 @@ export type TaskInfo = Message<"conveyor.v1.TaskInfo"> & {
    * @generated from field: google.protobuf.Timestamp completed_at = 11;
    */
   completedAt?: Timestamp | undefined;
+
+  /**
+   * payload is the opaque task payload, surfaced for inspection in the
+   * dashboard. SDK codecs own the encoding described by content_type.
+   *
+   * @generated from field: bytes payload = 12;
+   */
+  payload: Uint8Array;
+
+  /**
+   * content_type describes the payload encoding, e.g. "application/json".
+   *
+   * @generated from field: string content_type = 13;
+   */
+  contentType: string;
+
+  /**
+   * started_at is when the most recent execution attempt began (lease time).
+   * Unset for tasks that have never been dispatched.
+   *
+   * @generated from field: google.protobuf.Timestamp started_at = 14;
+   */
+  startedAt?: Timestamp | undefined;
 };
 
 /**
@@ -873,6 +896,101 @@ export const RunTaskResponseSchema: GenMessage<RunTaskResponse> = /*@__PURE__*/
   messageDesc(file_conveyor_v1_service, 32);
 
 /**
+ * @generated from message conveyor.v1.ArchiveTaskRequest
+ */
+export type ArchiveTaskRequest = Message<"conveyor.v1.ArchiveTaskRequest"> & {
+  /**
+   * @generated from field: string id = 1;
+   */
+  id: string;
+};
+
+/**
+ * Describes the message conveyor.v1.ArchiveTaskRequest.
+ * Use `create(ArchiveTaskRequestSchema)` to create a new message.
+ */
+export const ArchiveTaskRequestSchema: GenMessage<ArchiveTaskRequest> = /*@__PURE__*/
+  messageDesc(file_conveyor_v1_service, 33);
+
+/**
+ * @generated from message conveyor.v1.ArchiveTaskResponse
+ */
+export type ArchiveTaskResponse = Message<"conveyor.v1.ArchiveTaskResponse"> & {
+};
+
+/**
+ * Describes the message conveyor.v1.ArchiveTaskResponse.
+ * Use `create(ArchiveTaskResponseSchema)` to create a new message.
+ */
+export const ArchiveTaskResponseSchema: GenMessage<ArchiveTaskResponse> = /*@__PURE__*/
+  messageDesc(file_conveyor_v1_service, 34);
+
+/**
+ * BatchTasksRequest carries the task ids a batch operation applies to.
+ *
+ * @generated from message conveyor.v1.BatchTasksRequest
+ */
+export type BatchTasksRequest = Message<"conveyor.v1.BatchTasksRequest"> & {
+  /**
+   * @generated from field: repeated string ids = 1;
+   */
+  ids: string[];
+};
+
+/**
+ * Describes the message conveyor.v1.BatchTasksRequest.
+ * Use `create(BatchTasksRequestSchema)` to create a new message.
+ */
+export const BatchTasksRequestSchema: GenMessage<BatchTasksRequest> = /*@__PURE__*/
+  messageDesc(file_conveyor_v1_service, 35);
+
+/**
+ * BatchTasksResponse reports the per-id outcome of a batch operation, in the
+ * same order as the request.
+ *
+ * @generated from message conveyor.v1.BatchTasksResponse
+ */
+export type BatchTasksResponse = Message<"conveyor.v1.BatchTasksResponse"> & {
+  /**
+   * @generated from field: repeated conveyor.v1.TaskActionResult results = 1;
+   */
+  results: TaskActionResult[];
+};
+
+/**
+ * Describes the message conveyor.v1.BatchTasksResponse.
+ * Use `create(BatchTasksResponseSchema)` to create a new message.
+ */
+export const BatchTasksResponseSchema: GenMessage<BatchTasksResponse> = /*@__PURE__*/
+  messageDesc(file_conveyor_v1_service, 36);
+
+/**
+ * TaskActionResult is the outcome of one task in a batch operation.
+ *
+ * @generated from message conveyor.v1.TaskActionResult
+ */
+export type TaskActionResult = Message<"conveyor.v1.TaskActionResult"> & {
+  /**
+   * @generated from field: string id = 1;
+   */
+  id: string;
+
+  /**
+   * error is empty on success, otherwise the failure reason for this id.
+   *
+   * @generated from field: string error = 2;
+   */
+  error: string;
+};
+
+/**
+ * Describes the message conveyor.v1.TaskActionResult.
+ * Use `create(TaskActionResultSchema)` to create a new message.
+ */
+export const TaskActionResultSchema: GenMessage<TaskActionResult> = /*@__PURE__*/
+  messageDesc(file_conveyor_v1_service, 37);
+
+/**
  * @generated from message conveyor.v1.ListCronRequest
  */
 export type ListCronRequest = Message<"conveyor.v1.ListCronRequest"> & {
@@ -883,7 +1001,7 @@ export type ListCronRequest = Message<"conveyor.v1.ListCronRequest"> & {
  * Use `create(ListCronRequestSchema)` to create a new message.
  */
 export const ListCronRequestSchema: GenMessage<ListCronRequest> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_service, 33);
+  messageDesc(file_conveyor_v1_service, 38);
 
 /**
  * @generated from message conveyor.v1.ListCronResponse
@@ -900,7 +1018,7 @@ export type ListCronResponse = Message<"conveyor.v1.ListCronResponse"> & {
  * Use `create(ListCronResponseSchema)` to create a new message.
  */
 export const ListCronResponseSchema: GenMessage<ListCronResponse> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_service, 34);
+  messageDesc(file_conveyor_v1_service, 39);
 
 /**
  * CronEntry is a persisted cron schedule that materializes tasks.
@@ -949,6 +1067,14 @@ export type CronEntry = Message<"conveyor.v1.CronEntry"> & {
    * @generated from field: bool paused = 8;
    */
   paused: boolean;
+
+  /**
+   * next_run_at is when the scheduler will next materialize a task from this
+   * entry. Unset until the scheduler has armed the entry from its spec.
+   *
+   * @generated from field: google.protobuf.Timestamp next_run_at = 9;
+   */
+  nextRunAt?: Timestamp | undefined;
 };
 
 /**
@@ -956,7 +1082,7 @@ export type CronEntry = Message<"conveyor.v1.CronEntry"> & {
  * Use `create(CronEntrySchema)` to create a new message.
  */
 export const CronEntrySchema: GenMessage<CronEntry> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_service, 35);
+  messageDesc(file_conveyor_v1_service, 40);
 
 /**
  * @generated from message conveyor.v1.UpsertCronRequest
@@ -973,7 +1099,7 @@ export type UpsertCronRequest = Message<"conveyor.v1.UpsertCronRequest"> & {
  * Use `create(UpsertCronRequestSchema)` to create a new message.
  */
 export const UpsertCronRequestSchema: GenMessage<UpsertCronRequest> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_service, 36);
+  messageDesc(file_conveyor_v1_service, 41);
 
 /**
  * @generated from message conveyor.v1.UpsertCronResponse
@@ -986,7 +1112,7 @@ export type UpsertCronResponse = Message<"conveyor.v1.UpsertCronResponse"> & {
  * Use `create(UpsertCronResponseSchema)` to create a new message.
  */
 export const UpsertCronResponseSchema: GenMessage<UpsertCronResponse> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_service, 37);
+  messageDesc(file_conveyor_v1_service, 42);
 
 /**
  * @generated from message conveyor.v1.PauseCronRequest
@@ -1003,7 +1129,7 @@ export type PauseCronRequest = Message<"conveyor.v1.PauseCronRequest"> & {
  * Use `create(PauseCronRequestSchema)` to create a new message.
  */
 export const PauseCronRequestSchema: GenMessage<PauseCronRequest> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_service, 38);
+  messageDesc(file_conveyor_v1_service, 43);
 
 /**
  * @generated from message conveyor.v1.PauseCronResponse
@@ -1016,7 +1142,7 @@ export type PauseCronResponse = Message<"conveyor.v1.PauseCronResponse"> & {
  * Use `create(PauseCronResponseSchema)` to create a new message.
  */
 export const PauseCronResponseSchema: GenMessage<PauseCronResponse> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_service, 39);
+  messageDesc(file_conveyor_v1_service, 44);
 
 /**
  * @generated from message conveyor.v1.ResumeCronRequest
@@ -1033,7 +1159,7 @@ export type ResumeCronRequest = Message<"conveyor.v1.ResumeCronRequest"> & {
  * Use `create(ResumeCronRequestSchema)` to create a new message.
  */
 export const ResumeCronRequestSchema: GenMessage<ResumeCronRequest> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_service, 40);
+  messageDesc(file_conveyor_v1_service, 45);
 
 /**
  * @generated from message conveyor.v1.ResumeCronResponse
@@ -1046,7 +1172,7 @@ export type ResumeCronResponse = Message<"conveyor.v1.ResumeCronResponse"> & {
  * Use `create(ResumeCronResponseSchema)` to create a new message.
  */
 export const ResumeCronResponseSchema: GenMessage<ResumeCronResponse> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_service, 41);
+  messageDesc(file_conveyor_v1_service, 46);
 
 /**
  * @generated from message conveyor.v1.DeleteCronRequest
@@ -1063,7 +1189,7 @@ export type DeleteCronRequest = Message<"conveyor.v1.DeleteCronRequest"> & {
  * Use `create(DeleteCronRequestSchema)` to create a new message.
  */
 export const DeleteCronRequestSchema: GenMessage<DeleteCronRequest> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_service, 42);
+  messageDesc(file_conveyor_v1_service, 47);
 
 /**
  * @generated from message conveyor.v1.DeleteCronResponse
@@ -1076,7 +1202,7 @@ export type DeleteCronResponse = Message<"conveyor.v1.DeleteCronResponse"> & {
  * Use `create(DeleteCronResponseSchema)` to create a new message.
  */
 export const DeleteCronResponseSchema: GenMessage<DeleteCronResponse> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_service, 43);
+  messageDesc(file_conveyor_v1_service, 48);
 
 /**
  * @generated from message conveyor.v1.ClusterInfoRequest
@@ -1089,7 +1215,7 @@ export type ClusterInfoRequest = Message<"conveyor.v1.ClusterInfoRequest"> & {
  * Use `create(ClusterInfoRequestSchema)` to create a new message.
  */
 export const ClusterInfoRequestSchema: GenMessage<ClusterInfoRequest> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_service, 44);
+  messageDesc(file_conveyor_v1_service, 49);
 
 /**
  * @generated from message conveyor.v1.ClusterInfoResponse
@@ -1106,7 +1232,7 @@ export type ClusterInfoResponse = Message<"conveyor.v1.ClusterInfoResponse"> & {
  * Use `create(ClusterInfoResponseSchema)` to create a new message.
  */
 export const ClusterInfoResponseSchema: GenMessage<ClusterInfoResponse> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_service, 45);
+  messageDesc(file_conveyor_v1_service, 50);
 
 /**
  * NodeInfo describes one conveyord node (debugging aid).
@@ -1130,7 +1256,7 @@ export type NodeInfo = Message<"conveyor.v1.NodeInfo"> & {
  * Use `create(NodeInfoSchema)` to create a new message.
  */
 export const NodeInfoSchema: GenMessage<NodeInfo> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_service, 46);
+  messageDesc(file_conveyor_v1_service, 51);
 
 /**
  * @generated from message conveyor.v1.ListWorkerSessionsRequest
@@ -1143,7 +1269,7 @@ export type ListWorkerSessionsRequest = Message<"conveyor.v1.ListWorkerSessionsR
  * Use `create(ListWorkerSessionsRequestSchema)` to create a new message.
  */
 export const ListWorkerSessionsRequestSchema: GenMessage<ListWorkerSessionsRequest> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_service, 47);
+  messageDesc(file_conveyor_v1_service, 52);
 
 /**
  * @generated from message conveyor.v1.ListWorkerSessionsResponse
@@ -1160,7 +1286,7 @@ export type ListWorkerSessionsResponse = Message<"conveyor.v1.ListWorkerSessions
  * Use `create(ListWorkerSessionsResponseSchema)` to create a new message.
  */
 export const ListWorkerSessionsResponseSchema: GenMessage<ListWorkerSessionsResponse> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_service, 48);
+  messageDesc(file_conveyor_v1_service, 53);
 
 /**
  * WorkerSession describes one connected worker process: the queues it serves,
@@ -1200,7 +1326,49 @@ export type WorkerSession = Message<"conveyor.v1.WorkerSession"> & {
  * Use `create(WorkerSessionSchema)` to create a new message.
  */
 export const WorkerSessionSchema: GenMessage<WorkerSession> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_service, 49);
+  messageDesc(file_conveyor_v1_service, 54);
+
+/**
+ * @generated from message conveyor.v1.BrokerInfoRequest
+ */
+export type BrokerInfoRequest = Message<"conveyor.v1.BrokerInfoRequest"> & {
+};
+
+/**
+ * Describes the message conveyor.v1.BrokerInfoRequest.
+ * Use `create(BrokerInfoRequestSchema)` to create a new message.
+ */
+export const BrokerInfoRequestSchema: GenMessage<BrokerInfoRequest> = /*@__PURE__*/
+  messageDesc(file_conveyor_v1_service, 55);
+
+/**
+ * BrokerInfoResponse reports the storage engine backing the broker.
+ *
+ * @generated from message conveyor.v1.BrokerInfoResponse
+ */
+export type BrokerInfoResponse = Message<"conveyor.v1.BrokerInfoResponse"> & {
+  /**
+   * driver names the storage engine, e.g. "memory" or "postgres".
+   *
+   * @generated from field: string driver = 1;
+   */
+  driver: string;
+
+  /**
+   * metrics carries freeform engine statistics (connection pool counters,
+   * row counts, server version) as display-ready key/value strings.
+   *
+   * @generated from field: map<string, string> metrics = 2;
+   */
+  metrics: { [key: string]: string };
+};
+
+/**
+ * Describes the message conveyor.v1.BrokerInfoResponse.
+ * Use `create(BrokerInfoResponseSchema)` to create a new message.
+ */
+export const BrokerInfoResponseSchema: GenMessage<BrokerInfoResponse> = /*@__PURE__*/
+  messageDesc(file_conveyor_v1_service, 56);
 
 /**
  * TaskOutcome is the worker-reported result of one execution attempt.
@@ -1370,6 +1538,56 @@ export const AdminService: GenService<{
     output: typeof RunTaskResponseSchema;
   },
   /**
+   * ArchiveTask dead-letters a waiting (scheduled, pending, or retry) task.
+   *
+   * @generated from rpc conveyor.v1.AdminService.ArchiveTask
+   */
+  archiveTask: {
+    methodKind: "unary";
+    input: typeof ArchiveTaskRequestSchema;
+    output: typeof ArchiveTaskResponseSchema;
+  },
+  /**
+   * BatchDeleteTasks deletes each listed task, reporting per-id outcomes.
+   *
+   * @generated from rpc conveyor.v1.AdminService.BatchDeleteTasks
+   */
+  batchDeleteTasks: {
+    methodKind: "unary";
+    input: typeof BatchTasksRequestSchema;
+    output: typeof BatchTasksResponseSchema;
+  },
+  /**
+   * BatchRunTasks makes each listed task due immediately.
+   *
+   * @generated from rpc conveyor.v1.AdminService.BatchRunTasks
+   */
+  batchRunTasks: {
+    methodKind: "unary";
+    input: typeof BatchTasksRequestSchema;
+    output: typeof BatchTasksResponseSchema;
+  },
+  /**
+   * BatchCancelTasks cancels each listed task.
+   *
+   * @generated from rpc conveyor.v1.AdminService.BatchCancelTasks
+   */
+  batchCancelTasks: {
+    methodKind: "unary";
+    input: typeof BatchTasksRequestSchema;
+    output: typeof BatchTasksResponseSchema;
+  },
+  /**
+   * BatchArchiveTasks dead-letters each listed task.
+   *
+   * @generated from rpc conveyor.v1.AdminService.BatchArchiveTasks
+   */
+  batchArchiveTasks: {
+    methodKind: "unary";
+    input: typeof BatchTasksRequestSchema;
+    output: typeof BatchTasksResponseSchema;
+  },
+  /**
    * @generated from rpc conveyor.v1.AdminService.ListCron
    */
   listCron: {
@@ -1427,6 +1645,17 @@ export const AdminService: GenService<{
     methodKind: "unary";
     input: typeof ListWorkerSessionsRequestSchema;
     output: typeof ListWorkerSessionsResponseSchema;
+  },
+  /**
+   * BrokerInfo reports the storage engine's driver and runtime statistics,
+   * the analogue of a backing-store health page.
+   *
+   * @generated from rpc conveyor.v1.AdminService.BrokerInfo
+   */
+  brokerInfo: {
+    methodKind: "unary";
+    input: typeof BrokerInfoRequestSchema;
+    output: typeof BrokerInfoResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_conveyor_v1_service, 2);

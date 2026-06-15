@@ -78,7 +78,7 @@ var leaseQuery = fmt.Sprintf(`WITH due AS (
   FOR UPDATE SKIP LOCKED
 ), claimed AS (
   UPDATE conveyor_tasks t
-  SET state = %d, lease_id = $3, lease_expires_at = $5, updated_at = $4
+  SET state = %d, lease_id = $3, lease_expires_at = $5, started_at = $4, updated_at = $4
   FROM due WHERE t.id = due.id
   RETURNING t.id, t.payload, t.retried, t.last_error
 )
@@ -179,11 +179,18 @@ var cancelTaskQuery = fmt.Sprintf(`UPDATE conveyor_tasks
 var deleteTaskQuery = fmt.Sprintf(
 	"DELETE FROM conveyor_tasks WHERE id = $1 AND state <> %d", stateActive)
 
-// runTaskNowQuery makes a waiting task due immediately.
+// runTaskNowQuery makes a waiting or archived task due immediately; re-running
+// an archived task clears its completion stamp so it lives again.
 var runTaskNowQuery = fmt.Sprintf(`UPDATE conveyor_tasks
-  SET state = %d, process_at = $2, updated_at = $2
+  SET state = %d, process_at = $2, completed_at = NULL, updated_at = $2
+  WHERE id = $1 AND state IN (%d, %d, %d, %d)`,
+	statePending, stateScheduled, statePending, stateRetry, stateArchived)
+
+// archiveWaitingQuery dead-letters a scheduled, pending, or retry task.
+var archiveWaitingQuery = fmt.Sprintf(`UPDATE conveyor_tasks
+  SET state = %d, completed_at = $2, updated_at = $2
   WHERE id = $1 AND state IN (%d, %d, %d)`,
-	statePending, stateScheduled, statePending, stateRetry)
+	stateArchived, stateScheduled, statePending, stateRetry)
 
 // pendingCountQuery counts due tasks per queue.
 var pendingCountQuery = fmt.Sprintf(`SELECT queue, count(*) FROM conveyor_tasks
@@ -625,18 +632,55 @@ func (b *Broker) QueuePaused(ctx context.Context, queue string) (bool, error) {
 	return paused, nil
 }
 
+// Info reports the Postgres engine's driver, connection-pool counters, and
+// table row counts; see broker.Broker.
+func (b *Broker) Info(ctx context.Context) (broker.Info, error) {
+	metrics := map[string]string{}
+
+	stat := b.pool.Stat()
+	metrics["pool_total_conns"] = strconv.FormatInt(int64(stat.TotalConns()), 10)
+	metrics["pool_acquired_conns"] = strconv.FormatInt(int64(stat.AcquiredConns()), 10)
+	metrics["pool_idle_conns"] = strconv.FormatInt(int64(stat.IdleConns()), 10)
+	metrics["pool_max_conns"] = strconv.FormatInt(int64(stat.MaxConns()), 10)
+
+	var (
+		tasks   int64
+		entries int64
+		version string
+	)
+
+	if err := b.pool.QueryRow(ctx, "SELECT count(*) FROM conveyor_tasks").Scan(&tasks); err != nil {
+		return broker.Info{}, fmt.Errorf("postgres: count tasks: %w", err)
+	}
+
+	if err := b.pool.QueryRow(ctx, "SELECT count(*) FROM conveyor_cron_entries").Scan(&entries); err != nil {
+		return broker.Info{}, fmt.Errorf("postgres: count cron entries: %w", err)
+	}
+
+	if err := b.pool.QueryRow(ctx, "SHOW server_version").Scan(&version); err == nil {
+		metrics["server_version"] = version
+	}
+
+	metrics["tasks"] = strconv.FormatInt(tasks, 10)
+	metrics["cron_entries"] = strconv.FormatInt(entries, 10)
+
+	return broker.Info{Driver: "postgres", Metrics: metrics}, nil
+}
+
 // GetTask returns one task and its state; see broker.Broker.
 func (b *Broker) GetTask(ctx context.Context, id string) (*conveyorv1.TaskEnvelope, conveyorv1.TaskState, error) {
 	var (
-		payload   []byte
-		state     int16
-		retried   int32
-		lastError string
+		payload     []byte
+		state       int16
+		retried     int32
+		lastError   string
+		startedAt   *time.Time
+		completedAt *time.Time
 	)
 
 	err := b.pool.QueryRow(ctx,
-		"SELECT payload, state, retried, last_error FROM conveyor_tasks WHERE id = $1", id,
-	).Scan(&payload, &state, &retried, &lastError)
+		"SELECT payload, state, retried, last_error, started_at, completed_at FROM conveyor_tasks WHERE id = $1", id,
+	).Scan(&payload, &state, &retried, &lastError, &startedAt, &completedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, conveyorv1.TaskState_TASK_STATE_UNSPECIFIED, broker.ErrTaskNotFound
 	}
@@ -649,6 +693,8 @@ func (b *Broker) GetTask(ctx context.Context, id string) (*conveyorv1.TaskEnvelo
 	if err != nil {
 		return nil, conveyorv1.TaskState_TASK_STATE_UNSPECIFIED, err
 	}
+
+	stampExecutionTimes(envelope, startedAt, completedAt)
 
 	return envelope, conveyorv1.TaskState(state), nil
 }
@@ -679,7 +725,7 @@ func (b *Broker) ListTasks(ctx context.Context, query broker.TaskQuery) ([]broke
 		addCondition("id", "<", query.AfterID)
 	}
 
-	listTasks := "SELECT payload, retried, last_error, state FROM conveyor_tasks"
+	listTasks := "SELECT payload, retried, last_error, state, started_at, completed_at FROM conveyor_tasks"
 	if len(conditions) > 0 {
 		listTasks += " WHERE " + strings.Join(conditions, " AND ")
 	}
@@ -697,13 +743,15 @@ func (b *Broker) ListTasks(ctx context.Context, query broker.TaskQuery) ([]broke
 
 	for rows.Next() {
 		var (
-			payload   []byte
-			retried   int32
-			lastError string
-			state     int16
+			payload     []byte
+			retried     int32
+			lastError   string
+			state       int16
+			startedAt   *time.Time
+			completedAt *time.Time
 		)
 
-		if err = rows.Scan(&payload, &retried, &lastError, &state); err != nil {
+		if err = rows.Scan(&payload, &retried, &lastError, &state, &startedAt, &completedAt); err != nil {
 			return nil, fmt.Errorf("postgres: scan task: %w", err)
 		}
 
@@ -711,6 +759,8 @@ func (b *Broker) ListTasks(ctx context.Context, query broker.TaskQuery) ([]broke
 		if err != nil {
 			return nil, err
 		}
+
+		stampExecutionTimes(envelope, startedAt, completedAt)
 
 		records = append(records, broker.TaskRecord{Envelope: envelope, State: conveyorv1.TaskState(state)})
 	}
@@ -755,6 +805,20 @@ func (b *Broker) RunTaskNow(ctx context.Context, id string) error {
 	tag, err := b.pool.Exec(ctx, runTaskNowQuery, id, b.clock.Now())
 	if err != nil {
 		return fmt.Errorf("postgres: run task now: %w", err)
+	}
+
+	if tag.RowsAffected() == 0 {
+		return b.explainMiss(ctx, id)
+	}
+
+	return nil
+}
+
+// ArchiveTask dead-letters a waiting task; see broker.Broker.
+func (b *Broker) ArchiveTask(ctx context.Context, id string) error {
+	tag, err := b.pool.Exec(ctx, archiveWaitingQuery, id, b.clock.Now())
+	if err != nil {
+		return fmt.Errorf("postgres: archive task: %w", err)
 	}
 
 	if tag.RowsAffected() == 0 {
@@ -970,6 +1034,18 @@ func unmarshalEnvelope(payload []byte, retried int32, lastError string) (*convey
 	envelope.LastError = lastError
 
 	return envelope, nil
+}
+
+// stampExecutionTimes overlays the authoritative lease and terminal instants
+// onto an envelope read from storage. Nil columns leave the fields unset.
+func stampExecutionTimes(envelope *conveyorv1.TaskEnvelope, startedAt, completedAt *time.Time) {
+	if startedAt != nil {
+		envelope.StartedAt = timestamppb.New(*startedAt)
+	}
+
+	if completedAt != nil {
+		envelope.CompletedAt = timestamppb.New(*completedAt)
+	}
 }
 
 // isUniqueViolation reports whether err is a 23505 on the index enforcing

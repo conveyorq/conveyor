@@ -107,6 +107,16 @@ type CronEntry struct {
 	NextRunAt time.Time
 }
 
+// Info reports the storage engine backing a broker for the dashboard's
+// broker-info view, the analogue of a backing-store health page.
+type Info struct {
+	// Driver names the storage engine, e.g. "memory" or "postgres".
+	Driver string
+	// Metrics carries freeform engine statistics (pool counters, row counts,
+	// server version) as display-ready key/value strings.
+	Metrics map[string]string
+}
+
 // QueueStat reports one queue's persisted pause flag and its task counts
 // per lifecycle state.
 type QueueStat struct {
@@ -235,6 +245,10 @@ type Broker interface {
 	// not paused.
 	QueuePaused(ctx context.Context, queue string) (bool, error)
 
+	// Info reports the storage engine's driver and runtime statistics for
+	// the dashboard's broker-info view.
+	Info(ctx context.Context) (Info, error)
+
 	// GetTask returns the task and its current state, or ErrTaskNotFound.
 	GetTask(ctx context.Context, id string) (*conveyorv1.TaskEnvelope, conveyorv1.TaskState, error)
 
@@ -251,9 +265,16 @@ type Broker interface {
 	// returns ErrInvalidState.
 	DeleteTask(ctx context.Context, id string) error
 
-	// RunTaskNow makes a scheduled, retry, or pending task due
-	// immediately. It returns ErrInvalidState in any other state.
+	// RunTaskNow makes a scheduled, pending, retry, or archived task due
+	// immediately; re-running an archived task revives it for another
+	// attempt. It returns ErrInvalidState in any other state.
 	RunTaskNow(ctx context.Context, id string) error
+
+	// ArchiveTask dead-letters a waiting task: a scheduled, pending, or
+	// retry task becomes archived. It returns ErrInvalidState in any other
+	// state (an active task is dead-lettered through its lease instead) and
+	// ErrTaskNotFound when the id is unknown.
+	ArchiveTask(ctx context.Context, id string) error
 
 	// UpsertCronEntry creates or replaces a cron entry by id.
 	UpsertCronEntry(ctx context.Context, entry *CronEntry) error

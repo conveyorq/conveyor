@@ -203,6 +203,11 @@ type APIConfig struct {
 	// GrafanaURL, when set, is surfaced to the dashboard as a "Metrics" link to
 	// the operator's Grafana. Empty hides the link.
 	GrafanaURL string `koanf:"grafana_url"`
+	// ReadOnly puts the admin API in read-only mode: inspection and listing
+	// stay available, but every mutating operation (pause/resume, task and cron
+	// actions) is rejected. The dashboard reads this flag and hides its action
+	// controls. Task ingestion through the enqueue API is unaffected.
+	ReadOnly bool `koanf:"read_only"`
 }
 
 // ClusterConfig configures GoAkt clustering.

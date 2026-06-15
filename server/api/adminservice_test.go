@@ -150,6 +150,28 @@ func TestListTasksPaginationAndFilters(t *testing.T) {
 	require.Empty(t, none.Msg.GetTasks())
 }
 
+func TestListTasksSurfacesPayloadAndContentType(t *testing.T) {
+	admin, tasks, _ := newTestAdminService(t)
+	ctx := context.Background()
+
+	mustEnqueueType(t, tasks, &conveyorv1.EnqueueRequest{
+		Type:        "test:payload",
+		Payload:     []byte(`{"hello":"world"}`),
+		ContentType: "application/json",
+	})
+
+	listed, err := admin.ListTasks(ctx, connect.NewRequest(&conveyorv1.ListTasksRequest{}))
+	require.NoError(t, err)
+	require.Len(t, listed.Msg.GetTasks(), 1)
+
+	task := listed.Msg.GetTasks()[0]
+	require.Equal(t, []byte(`{"hello":"world"}`), task.GetPayload())
+	require.Equal(t, "application/json", task.GetContentType())
+	// Never dispatched: execution timestamps stay unset.
+	require.Nil(t, task.GetStartedAt())
+	require.Nil(t, task.GetCompletedAt())
+}
+
 func TestCancelTaskTransitions(t *testing.T) {
 	admin, tasks, taskLog := newTestAdminService(t)
 	ctx := context.Background()
@@ -235,6 +257,52 @@ func TestRunTaskMakesScheduledDue(t *testing.T) {
 	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
 }
 
+func TestArchiveTaskDeadLetters(t *testing.T) {
+	admin, tasks, taskLog := newTestAdminService(t)
+	ctx := context.Background()
+
+	id := mustEnqueueType(t, tasks, &conveyorv1.EnqueueRequest{Type: "test:archive"})
+
+	_, err := admin.ArchiveTask(ctx, connect.NewRequest(&conveyorv1.ArchiveTaskRequest{Id: id}))
+	require.NoError(t, err)
+
+	_, state, err := taskLog.GetTask(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, conveyorv1.TaskState_TASK_STATE_ARCHIVED, state)
+
+	_, err = admin.ArchiveTask(ctx, connect.NewRequest(&conveyorv1.ArchiveTaskRequest{Id: "missing"}))
+	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
+}
+
+func TestBatchTaskActions(t *testing.T) {
+	admin, tasks, taskLog := newTestAdminService(t)
+	ctx := context.Background()
+
+	first := mustEnqueueType(t, tasks, &conveyorv1.EnqueueRequest{Type: "test:batch-1"})
+	second := mustEnqueueType(t, tasks, &conveyorv1.EnqueueRequest{Type: "test:batch-2"})
+
+	// An empty batch is a whole-request error.
+	_, err := admin.BatchDeleteTasks(ctx, connect.NewRequest(&conveyorv1.BatchTasksRequest{}))
+	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+
+	// A mixed batch reports a per-id error for the unknown id but still
+	// applies the operation to the valid ones.
+	resp, err := admin.BatchArchiveTasks(ctx, connect.NewRequest(&conveyorv1.BatchTasksRequest{
+		Ids: []string{first, second, "missing"},
+	}))
+	require.NoError(t, err)
+	require.Len(t, resp.Msg.GetResults(), 3)
+	require.Empty(t, resp.Msg.GetResults()[0].GetError())
+	require.Empty(t, resp.Msg.GetResults()[1].GetError())
+	require.NotEmpty(t, resp.Msg.GetResults()[2].GetError())
+
+	for _, id := range []string{first, second} {
+		_, state, err := taskLog.GetTask(ctx, id)
+		require.NoError(t, err)
+		require.Equal(t, conveyorv1.TaskState_TASK_STATE_ARCHIVED, state)
+	}
+}
+
 func TestCronLifecycle(t *testing.T) {
 	admin, _, _ := newTestAdminService(t)
 	ctx := context.Background()
@@ -282,6 +350,15 @@ func TestCronLifecycle(t *testing.T) {
 
 	listed, _ = admin.ListCron(ctx, connect.NewRequest(&conveyorv1.ListCronRequest{}))
 	require.Empty(t, listed.Msg.GetEntries())
+}
+
+func TestBrokerInfoReportsDriver(t *testing.T) {
+	admin, _, _ := newTestAdminService(t)
+
+	resp, err := admin.BrokerInfo(context.Background(), connect.NewRequest(&conveyorv1.BrokerInfoRequest{}))
+	require.NoError(t, err)
+	require.Equal(t, "memory", resp.Msg.GetDriver())
+	require.Contains(t, resp.Msg.GetMetrics(), "tasks")
 }
 
 func TestClusterInfoReportsSelf(t *testing.T) {

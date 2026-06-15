@@ -65,6 +65,79 @@ export function formatNumber(value: bigint | number): string {
   return value.toLocaleString("en-US");
 }
 
+// humanizeDuration renders a millisecond span as a compact human string.
+function humanizeDuration(ms: number): string {
+  if (ms < 1000) {
+    return `${ms}ms`;
+  }
+
+  const seconds = ms / 1000;
+  if (seconds < 60) {
+    return `${seconds.toFixed(seconds < 10 ? 2 : 1)}s`;
+  }
+
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) {
+    return `${minutes}m ${Math.round(seconds % 60)}s`;
+  }
+
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ${minutes % 60}m`;
+}
+
+// formatDuration renders a task's execution duration: the span from its start
+// (lease) to completion, or the elapsed time so far while it is still running.
+// Returns "—" when the task has not started. now is injectable for testing.
+export function formatDuration(
+  startedAt: Timestamp | undefined,
+  completedAt: Timestamp | undefined,
+  now: Date = new Date(),
+): string {
+  if (!startedAt) {
+    return "—";
+  }
+
+  const start = timestampDate(startedAt).getTime();
+  const end = completedAt ? timestampDate(completedAt).getTime() : now.getTime();
+  const text = humanizeDuration(Math.max(0, end - start));
+
+  return completedAt ? text : `${text} (running)`;
+}
+
+// decodePayload renders a task payload for inspection: JSON content is pretty-
+// printed, other text is shown as-is, and undecodable bytes fall back to a size
+// summary. Output is capped at maxLength characters to keep the panel bounded.
+export function decodePayload(
+  payload: Uint8Array,
+  contentType: string,
+  maxLength = 2000,
+): string {
+  if (payload.length === 0) {
+    return "—";
+  }
+
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(payload);
+  } catch {
+    return `${payload.length} bytes (binary)`;
+  }
+
+  if (contentType.includes("json")) {
+    try {
+      text = JSON.stringify(JSON.parse(text), null, 2);
+    } catch {
+      // Not valid JSON despite the content type: show the raw text.
+    }
+  }
+
+  if (text.length > maxLength) {
+    return `${text.slice(0, maxLength)}… (${payload.length} bytes)`;
+  }
+
+  return text;
+}
+
 // relativeTime renders how long ago a timestamp was (e.g. "5m ago"), or "—"
 // when absent. now is injectable for testing.
 export function relativeTime(ts: Timestamp | undefined, now: Date = new Date()): string {

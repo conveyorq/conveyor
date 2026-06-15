@@ -1,5 +1,5 @@
 import { expect, test, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createRouterTransport } from "@connectrpc/connect";
 import { create } from "@bufbuild/protobuf";
@@ -96,6 +96,35 @@ test("hides Run for a completed task", async () => {
   expect(screen.queryByRole("button", { name: "Run now" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
   expect(screen.getByRole("button", { name: "Delete" })).toBeInTheDocument();
+});
+
+test("batch-runs the selected tasks", async () => {
+  // The handler receives a protobuf message whose descriptor graph is cyclic,
+  // so assert on the ids field directly rather than deep-comparing the message.
+  const batchRunTasks = vi.fn().mockReturnValue({ results: [] });
+  const transport = createRouterTransport((router) => {
+    router.service(AdminService, {
+      listTasks: () => ({
+        tasks: [task("01A", TaskState.RETRY), task("02B", TaskState.RETRY)],
+        nextPageToken: "",
+      }),
+      batchRunTasks,
+    });
+  });
+
+  render(
+    <ApiProvider api={createApi(transport)}>
+      <Tasks />
+    </ApiProvider>,
+  );
+
+  await userEvent.click(await screen.findByLabelText("Select task 01A"));
+  expect(screen.getByText("1 selected")).toBeInTheDocument();
+
+  await userEvent.click(screen.getByRole("button", { name: "Run" }));
+
+  await waitFor(() => expect(batchRunTasks).toHaveBeenCalledOnce());
+  expect(batchRunTasks.mock.calls[0][0].ids).toEqual(["01A"]);
 });
 
 test("runs a task from the detail panel", async () => {

@@ -53,6 +53,14 @@ message TaskEnvelope {
   string last_error = 9;
   // enqueued_at is when the task was first committed to the broker.
   google.protobuf.Timestamp enqueued_at = 10;
+  // started_at is when the most recent execution attempt was leased to a
+  // worker. It is an overlay field: brokers stamp it on reads from the
+  // authoritative lease timestamp, never persist it inside the payload.
+  google.protobuf.Timestamp started_at = 11;
+  // completed_at is when the task reached its most recent terminal state
+  // (completed, archived, or canceled). It is an overlay field, stamped on
+  // reads from the authoritative column. Unset while the task is not terminal.
+  google.protobuf.Timestamp completed_at = 12;
 }
 
 // TaskOptions captures the per-task execution options.

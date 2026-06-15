@@ -4,15 +4,21 @@ import { Queues } from "./views/Queues.tsx";
 import { Tasks } from "./views/Tasks.tsx";
 import { Cron } from "./views/Cron.tsx";
 import { Workers } from "./views/Workers.tsx";
+import { Metrics } from "./views/Metrics.tsx";
+import { Broker } from "./views/Broker.tsx";
 import { getToken, setToken } from "./api/token.ts";
 import { RefreshTickContext } from "./api/refresh.ts";
+import { ReadOnlyProvider } from "./api/readonly.tsx";
 import { loadDashboardConfig } from "./api/config.ts";
 import { apiBaseUrl } from "./api/transport.ts";
 import { applyTheme, getTheme, setTheme, type Theme } from "./lib/theme.ts";
+import { Badge } from "./components/Badge.tsx";
 import {
+  IconBroker,
   IconCron,
   IconExternal,
   IconLogo,
+  IconMetrics,
   IconMoon,
   IconOverview,
   IconQueues,
@@ -31,6 +37,8 @@ const tabs = [
   { id: "tasks", label: "Tasks", icon: <IconTasks />, render: () => <Tasks /> },
   { id: "cron", label: "Cron", icon: <IconCron />, render: () => <Cron /> },
   { id: "workers", label: "Workers", icon: <IconWorkers />, render: () => <Workers /> },
+  { id: "metrics", label: "Metrics", icon: <IconMetrics />, render: () => <Metrics /> },
+  { id: "broker", label: "Broker", icon: <IconBroker />, render: () => <Broker /> },
 ] as const;
 
 type TabId = (typeof tabs)[number]["id"];
@@ -48,6 +56,7 @@ export function App() {
   const [auto, setAuto] = useState(false);
   const [tick, setTick] = useState(0);
   const [grafanaUrl, setGrafanaUrl] = useState("");
+  const [readOnly, setReadOnly] = useState(false);
   const [theme, setThemeValue] = useState<Theme>(getTheme);
 
   useEffect(() => {
@@ -65,7 +74,10 @@ export function App() {
   }, [auto]);
 
   useEffect(() => {
-    void loadDashboardConfig(apiBaseUrl()).then((config) => setGrafanaUrl(config.grafanaUrl));
+    void loadDashboardConfig(apiBaseUrl()).then((config) => {
+      setGrafanaUrl(config.grafanaUrl);
+      setReadOnly(config.readOnly);
+    });
   }, []);
 
   const current = tabs.find((tab) => tab.id === active) ?? tabs[0];
@@ -121,6 +133,7 @@ export function App() {
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex h-16 shrink-0 items-center gap-4 border-b border-[var(--border)] px-6">
           <h2 className="text-base font-semibold">{current.label}</h2>
+          {readOnly && <Badge tone="amber">Read-only</Badge>}
 
           <div className="ml-auto flex items-center gap-3">
             <button
@@ -169,7 +182,9 @@ export function App() {
         </header>
 
         <RefreshTickContext.Provider value={tick}>
-          <main className="flex-1 overflow-auto p-6">{current.render()}</main>
+          <ReadOnlyProvider value={readOnly}>
+            <main className="flex-1 overflow-auto p-6">{current.render()}</main>
+          </ReadOnlyProvider>
         </RefreshTickContext.Provider>
       </div>
     </div>

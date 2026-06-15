@@ -348,8 +348,13 @@ func (s *Server) buildMux() *http.ServeMux {
 	s.workerService = api.NewWorkerService(s.engine, s.logger, clock.System())
 	mux.Handle(conveyorv1connect.NewWorkerServiceHandler(s.workerService, options...))
 
+	adminOptions := options
+	if s.config.API.ReadOnly {
+		adminOptions = append(adminOptions, connect.WithInterceptors(api.NewReadOnlyInterceptor()))
+	}
+
 	adminService := api.NewAdminService(s.engine, s.taskLog, clock.System(), s.workerService)
-	mux.Handle(conveyorv1connect.NewAdminServiceHandler(adminService, options...))
+	mux.Handle(conveyorv1connect.NewAdminServiceHandler(adminService, adminOptions...))
 
 	s.mountDashboard(mux)
 

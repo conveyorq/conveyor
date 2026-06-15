@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import { TaskState } from "../gen/conveyor/v1/task_pb.ts";
-import { formatNumber, formatTime, orDash, relativeTime, taskStateLabel } from "./format.ts";
+import { decodePayload, formatDuration, formatNumber, formatTime, orDash, relativeTime, taskStateLabel } from "./format.ts";
 
 test("labels every task state", () => {
   expect(taskStateLabel(TaskState.PENDING)).toBe("pending");
@@ -33,4 +33,22 @@ test("relativeTime renders a coarse age", () => {
   expect(relativeTime(undefined, now)).toBe("—");
   expect(relativeTime(timestampFromDate(new Date("2026-06-15T11:55:00Z")), now)).toBe("5m ago");
   expect(relativeTime(timestampFromDate(new Date("2026-06-15T09:00:00Z")), now)).toBe("3h ago");
+});
+
+test("formatDuration measures completed and running spans", () => {
+  const started = timestampFromDate(new Date("2026-06-15T12:00:00Z"));
+  const completed = timestampFromDate(new Date("2026-06-15T12:00:03.5Z"));
+  const now = new Date("2026-06-15T12:00:10Z");
+
+  expect(formatDuration(undefined, undefined, now)).toBe("—");
+  expect(formatDuration(started, completed, now)).toBe("3.50s");
+  expect(formatDuration(started, undefined, now)).toBe("10.0s (running)");
+});
+
+test("decodePayload pretty-prints JSON and handles binary", () => {
+  const json = new TextEncoder().encode('{"b":2,"a":1}');
+  expect(decodePayload(json, "application/json")).toBe('{\n  "b": 2,\n  "a": 1\n}');
+
+  expect(decodePayload(new Uint8Array(), "application/json")).toBe("—");
+  expect(decodePayload(new Uint8Array([0xff, 0xfe]), "application/octet-stream")).toBe("2 bytes (binary)");
 });

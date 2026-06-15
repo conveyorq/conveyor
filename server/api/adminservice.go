@@ -232,28 +232,108 @@ func (s *AdminService) DeleteTask(ctx context.Context, request *connect.Request[
 	return connect.NewResponse(&conveyorv1.DeleteTaskResponse{}), nil
 }
 
-// RunTask makes a scheduled, pending, or retry task due immediately and
-// wakes its queue grain.
+// RunTask makes a scheduled, pending, retry, or archived task due immediately
+// and wakes its queue grain.
 func (s *AdminService) RunTask(ctx context.Context, request *connect.Request[conveyorv1.RunTaskRequest]) (*connect.Response[conveyorv1.RunTaskResponse], error) {
 	if err := requireTaskID(request.Msg.GetId()); err != nil {
 		return nil, err
 	}
 
-	envelope, _, err := s.taskLog.GetTask(ctx, request.Msg.GetId())
+	if err := s.runTask(ctx, request.Msg.GetId()); err != nil {
+		return nil, adminTaskError(err)
+	}
+
+	return connect.NewResponse(&conveyorv1.RunTaskResponse{}), nil
+}
+
+// ArchiveTask dead-letters a waiting (scheduled, pending, or retry) task.
+func (s *AdminService) ArchiveTask(ctx context.Context, request *connect.Request[conveyorv1.ArchiveTaskRequest]) (*connect.Response[conveyorv1.ArchiveTaskResponse], error) {
+	if err := requireTaskID(request.Msg.GetId()); err != nil {
+		return nil, err
+	}
+
+	if err := s.taskLog.ArchiveTask(ctx, request.Msg.GetId()); err != nil {
+		return nil, adminTaskError(err)
+	}
+
+	return connect.NewResponse(&conveyorv1.ArchiveTaskResponse{}), nil
+}
+
+// BatchDeleteTasks deletes each listed task, reporting per-id outcomes.
+func (s *AdminService) BatchDeleteTasks(ctx context.Context, request *connect.Request[conveyorv1.BatchTasksRequest]) (*connect.Response[conveyorv1.BatchTasksResponse], error) {
+	return s.batchTasks(request.Msg.GetIds(), func(id string) error {
+		return s.taskLog.DeleteTask(ctx, id)
+	})
+}
+
+// BatchRunTasks makes each listed task due immediately.
+func (s *AdminService) BatchRunTasks(ctx context.Context, request *connect.Request[conveyorv1.BatchTasksRequest]) (*connect.Response[conveyorv1.BatchTasksResponse], error) {
+	return s.batchTasks(request.Msg.GetIds(), func(id string) error {
+		return s.runTask(ctx, id)
+	})
+}
+
+// BatchCancelTasks cancels each listed task.
+func (s *AdminService) BatchCancelTasks(ctx context.Context, request *connect.Request[conveyorv1.BatchTasksRequest]) (*connect.Response[conveyorv1.BatchTasksResponse], error) {
+	return s.batchTasks(request.Msg.GetIds(), func(id string) error {
+		return s.taskLog.CancelTask(ctx, id)
+	})
+}
+
+// BatchArchiveTasks dead-letters each listed task.
+func (s *AdminService) BatchArchiveTasks(ctx context.Context, request *connect.Request[conveyorv1.BatchTasksRequest]) (*connect.Response[conveyorv1.BatchTasksResponse], error) {
+	return s.batchTasks(request.Msg.GetIds(), func(id string) error {
+		return s.taskLog.ArchiveTask(ctx, id)
+	})
+}
+
+// batchTasks applies op to each id, collecting a per-id result. A whole-batch
+// failure (empty or oversized id list) returns an error; per-id failures are
+// reported in the response so a partial batch still succeeds.
+func (s *AdminService) batchTasks(ids []string, op func(string) error) (*connect.Response[conveyorv1.BatchTasksResponse], error) {
+	if len(ids) == 0 {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("at least one task id is required"))
+	}
+
+	if len(ids) > maxBatchTasks {
+		return nil, connect.NewError(connect.CodeInvalidArgument,
+			fmt.Errorf("batch of %d exceeds the %d-task limit", len(ids), maxBatchTasks))
+	}
+
+	results := make([]*conveyorv1.TaskActionResult, 0, len(ids))
+
+	for _, id := range ids {
+		result := &conveyorv1.TaskActionResult{Id: id}
+
+		if id == "" {
+			result.Error = "task id is required"
+		} else if err := op(id); err != nil {
+			result.Error = err.Error()
+		}
+
+		results = append(results, result)
+	}
+
+	return connect.NewResponse(&conveyorv1.BatchTasksResponse{Results: results}), nil
+}
+
+// runTask makes one task due immediately and best-effort wakes its queue
+// grain. It backs both RunTask and BatchRunTasks.
+func (s *AdminService) runTask(ctx context.Context, id string) error {
+	envelope, _, err := s.taskLog.GetTask(ctx, id)
 	if err != nil {
-		return nil, adminTaskError(err)
+		return err
 	}
 
-	if err := s.taskLog.RunTaskNow(ctx, request.Msg.GetId()); err != nil {
-		return nil, adminTaskError(err)
+	if err := s.taskLog.RunTaskNow(ctx, id); err != nil {
+		return err
 	}
 
-	// The wake-up is a best-effort hint; the reaper sweep recovers lost
-	// ones.
+	// The wake-up is a best-effort hint; the reaper sweep recovers lost ones.
 	queue := envelope.GetQueue()
 	_ = s.engine.TellQueue(ctx, queue, &conveyorv1.TaskEnqueued{Queue: queue})
 
-	return connect.NewResponse(&conveyorv1.RunTaskResponse{}), nil
+	return nil
 }
 
 // ListCron returns all persisted cron entries ordered by id.
@@ -266,7 +346,7 @@ func (s *AdminService) ListCron(ctx context.Context, _ *connect.Request[conveyor
 	infos := make([]*conveyorv1.CronEntry, 0, len(entries))
 
 	for _, entry := range entries {
-		infos = append(infos, &conveyorv1.CronEntry{
+		info := &conveyorv1.CronEntry{
 			Id:          entry.ID,
 			Spec:        entry.Spec,
 			TaskType:    entry.TaskType,
@@ -275,7 +355,13 @@ func (s *AdminService) ListCron(ctx context.Context, _ *connect.Request[conveyor
 			ContentType: entry.ContentType,
 			Options:     entry.Options,
 			Paused:      entry.Paused,
-		})
+		}
+
+		if !entry.NextRunAt.IsZero() {
+			info.NextRunAt = timestamppb.New(entry.NextRunAt)
+		}
+
+		infos = append(infos, info)
 	}
 
 	return connect.NewResponse(&conveyorv1.ListCronResponse{Entries: infos}), nil
@@ -402,6 +488,19 @@ func (s *AdminService) ListWorkerSessions(_ context.Context, _ *connect.Request[
 	}
 
 	return connect.NewResponse(&conveyorv1.ListWorkerSessionsResponse{Sessions: sessions}), nil
+}
+
+// BrokerInfo reports the storage engine's driver and runtime statistics.
+func (s *AdminService) BrokerInfo(ctx context.Context, _ *connect.Request[conveyorv1.BrokerInfoRequest]) (*connect.Response[conveyorv1.BrokerInfoResponse], error) {
+	info, err := s.taskLog.Info(ctx)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+
+	return connect.NewResponse(&conveyorv1.BrokerInfoResponse{
+		Driver:  info.Driver,
+		Metrics: info.Metrics,
+	}), nil
 }
 
 // setCronPaused validates the id and persists the entry pause flag.

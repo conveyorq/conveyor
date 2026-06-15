@@ -84,6 +84,23 @@ func TestDashboardConfigEndpoint(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Contains(t, resp.Header.Get("Content-Type"), "application/json")
 	require.Contains(t, string(body), `"grafanaUrl":"https://grafana.example.com/d/abc"`)
+	require.Contains(t, string(body), `"readOnly":false`)
+}
+
+// TestDashboardConfigReportsReadOnly verifies the runtime-config endpoint
+// reflects the configured read-only mode.
+func TestDashboardConfigReportsReadOnly(t *testing.T) {
+	node := startServerWithConfig(t, func(c *Config) { c.API.ReadOnly = true })
+
+	resp, err := http.Get("http://" + node.Addr() + "/dashboard-config.json")
+	require.NoError(t, err)
+
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+
+	require.Contains(t, string(body), `"readOnly":true`)
 }
 
 // startServerWithConfig boots a dev-config server with a mutator applied,

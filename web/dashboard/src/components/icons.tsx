@@ -87,6 +87,27 @@ export function IconWorkers(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+// IconMetrics is a line chart (metrics over time).
+export function IconMetrics(props: SVGProps<SVGSVGElement>) {
+  return (
+    <Svg {...props}>
+      <path d="M3 3v18h18" />
+      <path d="m7 14 3-4 3 3 4-6" />
+    </Svg>
+  );
+}
+
+// IconBroker is a database cylinder (the storage engine).
+export function IconBroker(props: SVGProps<SVGSVGElement>) {
+  return (
+    <Svg {...props}>
+      <ellipse cx="12" cy="5" rx="8" ry="3" />
+      <path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5" />
+      <path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6" />
+    </Svg>
+  );
+}
+
 // IconExternal is an external-link arrow.
 export function IconExternal(props: SVGProps<SVGSVGElement>) {
   return (

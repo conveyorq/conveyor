@@ -42,6 +42,9 @@ const dashboardConfigPath = "/dashboard-config.json"
 type dashboardConfig struct {
 	// GrafanaURL is the operator's Grafana link, or empty to hide it.
 	GrafanaURL string `json:"grafanaUrl"`
+	// ReadOnly mirrors the admin read-only mode so the SPA hides its action
+	// controls; the server enforces it regardless.
+	ReadOnly bool `json:"readOnly"`
 }
 
 // mountDashboard serves the embedded operations console at the API root when
@@ -67,5 +70,8 @@ func (s *Server) mountDashboard(mux *http.ServeMux) {
 // serveDashboardConfig returns the SPA's runtime config as JSON.
 func (s *Server) serveDashboardConfig(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(dashboardConfig{GrafanaURL: s.config.API.GrafanaURL})
+	_ = json.NewEncoder(w).Encode(dashboardConfig{
+		GrafanaURL: s.config.API.GrafanaURL,
+		ReadOnly:   s.config.API.ReadOnly,
+	})
 }

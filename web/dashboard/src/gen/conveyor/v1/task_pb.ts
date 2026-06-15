@@ -12,7 +12,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file conveyor/v1/task.proto.
  */
 export const file_conveyor_v1_task: GenFile = /*@__PURE__*/
-  fileDesc("ChZjb252ZXlvci92MS90YXNrLnByb3RvEgtjb252ZXlvci52MSLLAgoMVGFza0VudmVsb3BlEgoKAmlkGAEgASgJEg0KBXF1ZXVlGAIgASgJEgwKBHR5cGUYAyABKAkSDwoHcGF5bG9hZBgEIAEoDBIUCgxjb250ZW50X3R5cGUYBSABKAkSOQoIbWV0YWRhdGEYBiADKAsyJy5jb252ZXlvci52MS5UYXNrRW52ZWxvcGUuTWV0YWRhdGFFbnRyeRIpCgdvcHRpb25zGAcgASgLMhguY29udmV5b3IudjEuVGFza09wdGlvbnMSDwoHcmV0cmllZBgIIAEoBRISCgpsYXN0X2Vycm9yGAkgASgJEi8KC2VucXVldWVkX2F0GAogASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBovCg1NZXRhZGF0YUVudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAEiswIKC1Rhc2tPcHRpb25zEhEKCW1heF9yZXRyeRgBIAEoBRIqCgd0aW1lb3V0GAIgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uEiwKCGRlYWRsaW5lGAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIuCgpwcm9jZXNzX2F0GAQgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBISCgp1bmlxdWVfa2V5GAUgASgJEi0KCnVuaXF1ZV90dGwYBiABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24SLAoJcmV0ZW50aW9uGAcgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uEhAKCHByaW9yaXR5GAggASgFSgQICRAQKtIBCglUYXNrU3RhdGUSGgoWVEFTS19TVEFURV9VTlNQRUNJRklFRBAAEhgKFFRBU0tfU1RBVEVfU0NIRURVTEVEEAESFgoSVEFTS19TVEFURV9QRU5ESU5HEAISFQoRVEFTS19TVEFURV9BQ1RJVkUQAxIUChBUQVNLX1NUQVRFX1JFVFJZEAQSGAoUVEFTS19TVEFURV9DT01QTEVURUQQBRIXChNUQVNLX1NUQVRFX0FSQ0hJVkVEEAYSFwoTVEFTS19TVEFURV9DQU5DRUxFRBAHYgZwcm90bzM", [file_google_protobuf_duration, file_google_protobuf_timestamp]);
+  fileDesc("ChZjb252ZXlvci92MS90YXNrLnByb3RvEgtjb252ZXlvci52MSKtAwoMVGFza0VudmVsb3BlEgoKAmlkGAEgASgJEg0KBXF1ZXVlGAIgASgJEgwKBHR5cGUYAyABKAkSDwoHcGF5bG9hZBgEIAEoDBIUCgxjb250ZW50X3R5cGUYBSABKAkSOQoIbWV0YWRhdGEYBiADKAsyJy5jb252ZXlvci52MS5UYXNrRW52ZWxvcGUuTWV0YWRhdGFFbnRyeRIpCgdvcHRpb25zGAcgASgLMhguY29udmV5b3IudjEuVGFza09wdGlvbnMSDwoHcmV0cmllZBgIIAEoBRISCgpsYXN0X2Vycm9yGAkgASgJEi8KC2VucXVldWVkX2F0GAogASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIuCgpzdGFydGVkX2F0GAsgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIwCgxjb21wbGV0ZWRfYXQYDCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wGi8KDU1ldGFkYXRhRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASKzAgoLVGFza09wdGlvbnMSEQoJbWF4X3JldHJ5GAEgASgFEioKB3RpbWVvdXQYAiABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24SLAoIZGVhZGxpbmUYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi4KCnByb2Nlc3NfYXQYBCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhIKCnVuaXF1ZV9rZXkYBSABKAkSLQoKdW5pcXVlX3R0bBgGIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbhIsCglyZXRlbnRpb24YByABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24SEAoIcHJpb3JpdHkYCCABKAVKBAgJEBAq0gEKCVRhc2tTdGF0ZRIaChZUQVNLX1NUQVRFX1VOU1BFQ0lGSUVEEAASGAoUVEFTS19TVEFURV9TQ0hFRFVMRUQQARIWChJUQVNLX1NUQVRFX1BFTkRJTkcQAhIVChFUQVNLX1NUQVRFX0FDVElWRRADEhQKEFRBU0tfU1RBVEVfUkVUUlkQBBIYChRUQVNLX1NUQVRFX0NPTVBMRVRFRBAFEhcKE1RBU0tfU1RBVEVfQVJDSElWRUQQBhIXChNUQVNLX1NUQVRFX0NBTkNFTEVEEAdiBnByb3RvMw", [file_google_protobuf_duration, file_google_protobuf_timestamp]);
 
 /**
  * TaskEnvelope is the internal, durable representation of a task.
@@ -93,6 +93,24 @@ export type TaskEnvelope = Message<"conveyor.v1.TaskEnvelope"> & {
    * @generated from field: google.protobuf.Timestamp enqueued_at = 10;
    */
   enqueuedAt?: Timestamp | undefined;
+
+  /**
+   * started_at is when the most recent execution attempt was leased to a
+   * worker. It is an overlay field: brokers stamp it on reads from the
+   * authoritative lease timestamp, never persist it inside the payload.
+   *
+   * @generated from field: google.protobuf.Timestamp started_at = 11;
+   */
+  startedAt?: Timestamp | undefined;
+
+  /**
+   * completed_at is when the task reached its most recent terminal state
+   * (completed, archived, or canceled). It is an overlay field, stamped on
+   * reads from the authoritative column. Unset while the task is not terminal.
+   *
+   * @generated from field: google.protobuf.Timestamp completed_at = 12;
+   */
+  completedAt?: Timestamp | undefined;
 };
 
 /**

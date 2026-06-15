@@ -73,6 +73,7 @@ func Run(t *testing.T, factory Factory) {
 		{"LeaseHonorsLimitAndClaims", testLeaseHonorsLimitAndClaims},
 		{"LeaseScopesToQueueAndDueTime", testLeaseScopesToQueueAndDueTime},
 		{"AckCompletesTask", testAckCompletesTask},
+		{"ExecutionTimestamps", testExecutionTimestamps},
 		{"FailSchedulesRetry", testFailSchedulesRetry},
 		{"ReleaseReturnsToPendingWithoutPenalty", testReleaseReturnsToPendingWithoutPenalty},
 		{"ArchiveDeadLetters", testArchiveDeadLetters},
@@ -87,10 +88,12 @@ func Run(t *testing.T, factory Factory) {
 		{"CancelTask", testCancelTask},
 		{"DeleteTask", testDeleteTask},
 		{"RunTaskNow", testRunTaskNow},
+		{"ArchiveTask", testArchiveTask},
 		{"QueuePauseFlag", testQueuePauseFlag},
 		{"QueueStats", testQueueStats},
 		{"CronEntries", testCronEntries},
 		{"ListTasks", testListTasks},
+		{"Info", testInfo},
 		{"ConcurrentLeaseNoDoubleDelivery", testConcurrentLeaseNoDoubleDelivery},
 	}
 
@@ -351,6 +354,58 @@ func testAckCompletesTask(t *testing.T, b broker.Broker, _ *clock.Fake) {
 
 	if err := b.Ack(context.Background(), "task-001", "lease-1", nil); !errors.Is(err, broker.ErrLeaseLost) {
 		t.Fatalf("double Ack: err = %v, want ErrLeaseLost", err)
+	}
+}
+
+// testExecutionTimestamps verifies that the broker overlays started_at at
+// lease time and completed_at at terminal time, so the admin surface can
+// report a finished task's execution duration.
+func testExecutionTimestamps(t *testing.T, b broker.Broker, fake *clock.Fake) {
+	mustEnqueue(t, b, newTask("task-001", withRetention(time.Hour)))
+
+	enqueued, _, err := b.GetTask(context.Background(), "task-001")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if enqueued.GetStartedAt() != nil || enqueued.GetCompletedAt() != nil {
+		t.Fatalf("before dispatch: started_at = %v, completed_at = %v; want both unset",
+			enqueued.GetStartedAt().AsTime(), enqueued.GetCompletedAt().AsTime())
+	}
+
+	mustLease(t, b, queueName, 1, "lease-1")
+
+	leased, _, err := b.GetTask(context.Background(), "task-001")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := leased.GetStartedAt(); got == nil || !got.AsTime().Equal(start) {
+		t.Fatalf("after lease: started_at = %v, want %v", got.AsTime(), start)
+	}
+
+	if leased.GetCompletedAt() != nil {
+		t.Fatalf("after lease: completed_at = %v, want unset", leased.GetCompletedAt().AsTime())
+	}
+
+	fake.Advance(3 * time.Second)
+	finishedAt := start.Add(3 * time.Second)
+
+	if err := b.Ack(context.Background(), "task-001", "lease-1", []byte("done")); err != nil {
+		t.Fatal(err)
+	}
+
+	completed, _, err := b.GetTask(context.Background(), "task-001")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := completed.GetStartedAt(); got == nil || !got.AsTime().Equal(start) {
+		t.Fatalf("after ack: started_at = %v, want %v", got.AsTime(), start)
+	}
+
+	if got := completed.GetCompletedAt(); got == nil || !got.AsTime().Equal(finishedAt) {
+		t.Fatalf("after ack: completed_at = %v, want %v", got.AsTime(), finishedAt)
 	}
 }
 
@@ -672,6 +727,37 @@ func testRunTaskNow(t *testing.T, b broker.Broker, _ *clock.Fake) {
 	}
 }
 
+// testArchiveTask covers the admin archive of a waiting task and reviving a
+// dead-lettered task back into the dispatch path.
+func testArchiveTask(t *testing.T, b broker.Broker, _ *clock.Fake) {
+	mustEnqueue(t, b, newTask("task-001"))
+
+	if err := b.ArchiveTask(context.Background(), "task-001"); err != nil {
+		t.Fatal(err)
+	}
+
+	mustState(t, b, "task-001", conveyorv1.TaskState_TASK_STATE_ARCHIVED)
+
+	if err := b.ArchiveTask(context.Background(), "task-001"); !errors.Is(err, broker.ErrInvalidState) {
+		t.Fatalf("archive already-archived: err = %v, want ErrInvalidState", err)
+	}
+
+	if err := b.ArchiveTask(context.Background(), "absent"); !errors.Is(err, broker.ErrTaskNotFound) {
+		t.Fatalf("archive absent: err = %v, want ErrTaskNotFound", err)
+	}
+
+	// Reviving an archived task makes it leasable again.
+	if err := b.RunTaskNow(context.Background(), "task-001"); err != nil {
+		t.Fatalf("run-now archived: %v", err)
+	}
+
+	mustState(t, b, "task-001", conveyorv1.TaskState_TASK_STATE_PENDING)
+
+	if leased := mustLease(t, b, queueName, 1, "lease-1"); len(leased) != 1 {
+		t.Fatal("revived archived task must be leasable")
+	}
+}
+
 func testQueuePauseFlag(t *testing.T, b broker.Broker, _ *clock.Fake) {
 	paused, err := b.QueuePaused(context.Background(), queueName)
 	if err != nil || paused {
@@ -917,6 +1003,34 @@ func recordIDs(records []broker.TaskRecord) []string {
 	}
 
 	return ids
+}
+
+// testInfo checks that Info reports a non-empty driver and includes a task
+// count that tracks committed work.
+func testInfo(t *testing.T, b broker.Broker, _ *clock.Fake) {
+	info, err := b.Info(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if info.Driver == "" {
+		t.Fatal("Info must report a non-empty driver")
+	}
+
+	if _, ok := info.Metrics["tasks"]; !ok {
+		t.Fatalf("Info metrics missing tasks count: %v", info.Metrics)
+	}
+
+	mustEnqueue(t, b, newTask("task-001"))
+
+	info, err = b.Info(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if info.Metrics["tasks"] != "1" {
+		t.Fatalf("Info tasks = %q after one enqueue, want 1", info.Metrics["tasks"])
+	}
 }
 
 func testConcurrentLeaseNoDoubleDelivery(t *testing.T, b broker.Broker, _ *clock.Fake) {

@@ -2,6 +2,9 @@
 // on load — settings that are not baked into the static bundle.
 export interface DashboardConfig {
   grafanaUrl: string;
+  // readOnly mirrors the server's admin read-only mode; the SPA hides its
+  // action controls when set (the server enforces it regardless).
+  readOnly: boolean;
 }
 
 // loadDashboardConfig fetches /dashboard-config.json relative to the API base.
@@ -11,13 +14,13 @@ export async function loadDashboardConfig(baseUrl: string): Promise<DashboardCon
   try {
     const response = await fetch(`${baseUrl}/dashboard-config.json`);
     if (!response.ok) {
-      return { grafanaUrl: "" };
+      return { grafanaUrl: "", readOnly: false };
     }
 
     const data = (await response.json()) as Partial<DashboardConfig>;
 
-    return { grafanaUrl: data.grafanaUrl ?? "" };
+    return { grafanaUrl: data.grafanaUrl ?? "", readOnly: data.readOnly ?? false };
   } catch {
-    return { grafanaUrl: "" };
+    return { grafanaUrl: "", readOnly: false };
   }
 }
