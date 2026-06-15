@@ -1,10 +1,13 @@
 name: release
 
-# Publishes the conveyor container image to the GitHub Container Registry:
-#   - every push to main  -> ghcr.io/conveyorq/conveyor:edge (+ :sha-<short>)
-#   - every v* tag         -> :vX.Y.Z, :X.Y, :latest (+ :sha-<short>)
-# Images are multi-arch (amd64 + arm64), signed with cosign (keyless), and
-# carry SBOM + provenance attestations.
+# Publishes the conveyor container image to the GitHub Container Registry. Each
+# build produces a single multi-arch image (amd64 + arm64); the tags below are
+# just pointers to that one image, not separate builds:
+#   - every push to main  -> :edge   (a moving tag; always the latest main build)
+#   - every v* tag         -> :X.Y.Z + :latest
+# The originating commit is recorded on every image as the OCI
+# org.opencontainers.image.revision label. Images are signed with cosign
+# (keyless) and carry SBOM + provenance attestations.
 #
 # On every v* tag it also packages and pushes the Helm chart as an OCI artifact
 #   - oci://ghcr.io/conveyorq/charts/conveyor:X.Y.Z
@@ -74,11 +77,11 @@ jobs:
           images: ${{ env.IMAGE }}
           # :latest is applied only to semver tags, never to branch pushes.
           flavor: latest=auto
+          # One moving tag on main (:edge), and :X.Y.Z + :latest on a release
+          # tag. No per-commit :sha tags — they accumulate without bound.
           tags: |
             type=edge,branch=main
             type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha,format=short
 
       - id: build
         name: Build & push
