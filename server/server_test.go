@@ -175,6 +175,7 @@ func TestAddrBeforeStartIsEmpty(t *testing.T) {
 func TestBuildBrokerRejectsBadPostgresDSN(t *testing.T) {
 	config := DefaultConfig()
 	config.Broker.DSN = "postgres://nobody@127.0.0.1:1/nothing?connect_timeout=1"
+	config.API.AllowUnauthenticated = true
 
 	node, err := New(config, NewLogger(LogConfig{Level: LogLevelError, Format: LogFormatText}))
 	if err != nil {

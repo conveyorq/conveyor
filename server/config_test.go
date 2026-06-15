@@ -64,6 +64,33 @@ func TestDevConfigIsValid(t *testing.T) {
 	}
 }
 
+func TestValidateFailsClosedWithoutAuth(t *testing.T) {
+	// Outside the dev preset, an empty auth_tokens with no explicit opt-out
+	// must fail validation so a deployment never serves an open API by accident.
+	config := DevConfig()
+	config.API.AllowUnauthenticated = false
+
+	err := config.Validate()
+	if err == nil || !strings.Contains(err.Error(), "api.auth_tokens") {
+		t.Fatalf("auth-disabled config must fail validation, got %v", err)
+	}
+
+	// The explicit opt-out restores validity.
+	config.API.AllowUnauthenticated = true
+	if err := config.Validate(); err != nil {
+		t.Fatalf("allow_unauthenticated must permit a no-token config: %v", err)
+	}
+
+	// Providing a token is the other way to validate.
+	config = DevConfig()
+	config.API.AllowUnauthenticated = false
+	config.API.AuthTokens = []string{"secret"}
+
+	if err := config.Validate(); err != nil {
+		t.Fatalf("token-authenticated config must validate: %v", err)
+	}
+}
+
 func TestLoadConfigFromFile(t *testing.T) {
 	path := writeConfigFile(t, `
 mode: cluster
@@ -106,6 +133,8 @@ mode: kubernetes
 broker:
   driver: postgres
   dsn: postgres://localhost/conveyor
+api:
+  allow_unauthenticated: true
 cluster:
   discovery: kubernetes
   kubernetes:
@@ -142,6 +171,8 @@ func TestLoadConfigExpandsEnvInFile(t *testing.T) {
 broker:
   driver: postgres
   dsn: ${TEST_DATABASE_URL}
+api:
+  allow_unauthenticated: true
 `)
 
 	config, err := LoadConfig(path)

@@ -17,7 +17,15 @@ WARNING: broker.driver is "memory" — tasks are NOT durable and do not survive
 a restart. Set broker.driver=postgres with a DSN for any real deployment.
 {{- end }}
 {{- if and (not .Values.auth.tokens) (not .Values.auth.tokensSecret.name) }}
+{{- if .Values.auth.allowUnauthenticated }}
 
-WARNING: no API auth tokens configured — the API accepts unauthenticated
-requests. Set auth.tokens or auth.tokensSecret before exposing it.
+WARNING: no API auth tokens configured and auth.allowUnauthenticated is true —
+the API accepts unauthenticated requests. Set auth.tokens or auth.tokensSecret
+before exposing it beyond a trusted network.
+{{- else }}
+
+WARNING: no API auth tokens configured — conveyord will FAIL TO START (auth is
+on by default). Set auth.tokens or auth.tokensSecret, or set
+auth.allowUnauthenticated=true to run without authentication.
+{{- end }}
 {{- end }}

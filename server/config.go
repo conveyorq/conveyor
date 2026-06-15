@@ -184,6 +184,13 @@ type APIConfig struct {
 	// authentication, which is intended for development only and logged
 	// loudly at startup.
 	AuthTokens []string `koanf:"auth_tokens"`
+	// AllowUnauthenticated permits the API to run with authentication
+	// disabled (no AuthTokens). It must be set explicitly: outside the
+	// `--dev` preset, an empty AuthTokens without this flag fails validation,
+	// so a deployment never serves an unauthenticated API by accident. Set it
+	// only when another layer (a gateway, mTLS, or a private network) secures
+	// the API.
+	AllowUnauthenticated bool `koanf:"allow_unauthenticated"`
 }
 
 // ClusterConfig configures GoAkt clustering.
@@ -308,6 +315,9 @@ func DevConfig() *Config {
 	config.Broker = BrokerConfig{Driver: BrokerMemory}
 	config.Log = LogConfig{Level: LogLevelDebug, Format: LogFormatText}
 	config.Metrics = MetricsConfig{Listen: "127.0.0.1:0"}
+	// Dev runs without authentication by design; opt in explicitly so the
+	// fail-closed auth check in Validate accepts it.
+	config.API.AllowUnauthenticated = true
 
 	return config
 }
@@ -409,6 +419,10 @@ func (c *Config) Validate() error {
 
 	if err := c.API.TLS.validate("api.tls"); err != nil {
 		return err
+	}
+
+	if c.AuthDisabled() && !c.API.AllowUnauthenticated {
+		return fmt.Errorf("api.auth_tokens: set at least one token, or set api.allow_unauthenticated to run the API without authentication (the --dev preset does this)")
 	}
 
 	providers := []string{

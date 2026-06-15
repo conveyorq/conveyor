@@ -47,7 +47,7 @@ client.Enqueue(ctx, task, conveyor.Queue("critical"), conveyor.MaxRetry(5), conv
 | `asynq.Retention(d)`               | `conveyor.Retention(d)`                         | keep the completed task visible                                                                                                                                                                          |
 | `asynq.Unique(ttl)`                | `conveyor.Unique(ttl)`                          | dedup by type+payload; add `conveyor.UniqueKey(k)` for an explicit key                                                                                                                                   |
 | weighted priority queues           | `conveyor.Priority(1..9)` **and** queue weights | Conveyor also has a per-task priority                                                                                                                                                                    |
-| `asynq.Timeout` / `asynq.Deadline` | — (handler `ctx`)                               | The protocol carries a per-task deadline/timeout, but the Go SDK does not yet expose enqueue options for them. Today the handler `ctx` is canceled at the lease deadline (`engine.lease_ttl`); honor it. |
+| `asynq.Timeout(d)` / `asynq.Deadline(t)` | `conveyor.Timeout(d)` / `conveyor.Deadline(t)`  | the handler `ctx` is canceled at the earliest of the timeout, the deadline, and the lease expiry (`engine.lease_ttl`); honor it. |
 | `asynq.Group` (aggregation)        | —                                               | task aggregation is not in v1                                                                                                                                                                            |
 
 Payloads: asynq takes raw `[]byte`; Conveyor takes a `conveyor.Payload` —
@@ -158,6 +158,5 @@ reasons that actually apply to you.
 
 ## Not yet covered
 
-Task aggregation/groups, a built-in web UI, and a per-task execution deadline
-option are not in v1. Everything else in asynq's core has a direct equivalent
-above.
+Task aggregation/groups and a built-in web UI are not in v1. Everything else in
+asynq's core has a direct equivalent above.

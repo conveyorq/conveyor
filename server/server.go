@@ -208,7 +208,7 @@ func (s *Server) Start(ctx context.Context) error {
 	s.http.Handler = s.buildMux()
 
 	if s.config.AuthDisabled() {
-		s.logger.Warn("API authentication is DISABLED — acceptable for development only; set api.auth_tokens for any non-loopback deployment")
+		s.logger.Warn("API authentication is DISABLED via api.allow_unauthenticated — acceptable for development or behind another security layer only; set api.auth_tokens to enable it")
 	}
 
 	go func() {

@@ -160,6 +160,9 @@ func buildServerConfig(config Config) (*server.Config, error) {
 	serverConfig := server.DefaultConfig()
 	serverConfig.Broker = server.BrokerConfig{Driver: driver, DSN: config.Broker.dsn}
 	serverConfig.API.Listen = loopbackAnyPort
+	// The embedded API binds an ephemeral loopback port for the in-process host
+	// only, so it runs without bearer-token auth.
+	serverConfig.API.AllowUnauthenticated = true
 	serverConfig.Cluster.RemotingPort = ports[0]
 	serverConfig.Cluster.DiscoveryPort = ports[1]
 	serverConfig.Cluster.PeersPort = ports[2]

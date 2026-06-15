@@ -51,7 +51,7 @@ func TestLoadConfigDevRejectsOtherFlags(t *testing.T) {
 func TestLoadConfigFromFileWithModeOverride(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "conveyor.yaml")
 
-	require.NoError(t, os.WriteFile(path, []byte("mode: standalone\nbroker:\n  driver: memory\n"), 0o600))
+	require.NoError(t, os.WriteFile(path, []byte("mode: standalone\nbroker:\n  driver: memory\napi:\n  allow_unauthenticated: true\n"), 0o600))
 
 	config, err := loadConfig(path, "cluster", false)
 	require.NoError(t, err)
@@ -61,7 +61,7 @@ func TestLoadConfigFromFileWithModeOverride(t *testing.T) {
 func TestLoadConfigRejectsInvalidModeOverride(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "conveyor.yaml")
 
-	require.NoError(t, os.WriteFile(path, []byte("broker:\n  driver: memory\n"), 0o600))
+	require.NoError(t, os.WriteFile(path, []byte("broker:\n  driver: memory\napi:\n  allow_unauthenticated: true\n"), 0o600))
 
 	_, err := loadConfig(path, "warp-drive", false)
 	require.ErrorContains(t, err, "mode")

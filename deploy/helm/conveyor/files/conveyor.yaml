@@ -21,6 +21,9 @@ broker:
 api:
   # Public ConnectRPC + health listener.
   listen: ":{{ .Values.ports.api }}"
+  # Run without bearer-token auth. Must be true to start with no auth tokens;
+  # leave false in production so a tokenless install fails closed.
+  allow_unauthenticated: {{ .Values.auth.allowUnauthenticated }}
   {{- if .Values.api.tls.enabled }}
   # Serve the API over TLS. conveyord uses only the certificate and key for
   # the listener (it does not verify client certificates on the API port).

@@ -81,10 +81,14 @@ within a queue, and per-queue weights bias a worker that serves several queues.
 
 ## Security
 
-- **Authentication.** `api.auth_tokens` are accepted bearer tokens; an empty
-  list disables auth and is logged loudly — only for `--dev`. Clients and
-  workers pass a token with `conveyor.WithToken` (or `CONVEYOR_TOKEN` / the
-  CLI `--token`).
+- **Authentication.** `api.auth_tokens` are accepted bearer tokens. Auth is on
+  by default: with no tokens, conveyord **refuses to start** unless you set
+  `api.allow_unauthenticated: true`, so a deployment never serves an open API by
+  accident. The `--dev` preset sets that flag for you; in production set
+  `api.auth_tokens` instead (the Helm chart's `auth.tokensSecret`), and only use
+  `allow_unauthenticated` when a gateway, mTLS, or a private network fronts the
+  API. Clients and workers pass a token with `conveyor.WithToken` (or
+  `CONVEYOR_TOKEN` / the CLI `--token`).
 - **TLS.** `api.tls` serves the API over TLS; `cluster.tls` turns on mutual TLS
   between cluster peers (set `ca_file` for peer verification).
 - **Network.** The Helm chart ships an opt-in NetworkPolicy example and keeps

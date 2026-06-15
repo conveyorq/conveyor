@@ -15,14 +15,17 @@ broker, with no Redis and no polling.
 - **At-least-once with crash safety** — tasks are persisted before dispatch and
   survive server and worker crashes; a dead worker's task is redelivered.
 - **Retries** with exponential backoff, **delayed** and **scheduled** tasks,
-  per-task **priorities** and weighted queues.
+  per-task **timeouts/deadlines**, per-task **priorities** and weighted queues.
 - **Unique tasks**, **dead-letter/archive**, **retention**, per-queue
   **pause/resume**, and a per-task-type **circuit breaker**.
-- **Cron** — server-persisted schedules that survive restarts and failover.
+- **Cron** — server-persisted schedules that survive restarts and failover,
+  pausable at runtime.
 - **Built-in clustering / HA** — multi-node by default; a lost node's work
   re-activates elsewhere with zero task loss.
 - **Four ways to run it** — standalone, cluster, Kubernetes, or
   [embedded](#embedded-mode) in a Go process.
+- **Secure by default** — bearer-token auth that fails closed: outside `--dev`
+  the server refuses to start unauthenticated unless you opt in explicitly.
 - **Prometheus metrics** and **OpenTelemetry traces** out of the box.
 
 ## Quickstart
@@ -68,7 +71,9 @@ docker compose -f deploy/compose/quickstart.yaml up
 
 Either way the API is on `http://localhost:8080` (with `/healthz` and
 `/readyz`); the Compose stack also serves metrics on
-`http://localhost:9464/metrics`.
+`http://localhost:9464/metrics`. Both run the API without authentication for
+local evaluation; a real deployment sets `api.auth_tokens` (see the
+[operations guide](docs/operations.md#security)).
 
 ## Writing a worker
 

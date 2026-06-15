@@ -39,14 +39,20 @@ broker:
     key: dsn
 
 auth:
-  # tokens are accepted API bearer tokens. An empty list disables
-  # authentication, which conveyord logs loudly and is for development only.
+  # tokens are accepted API bearer tokens. With no tokens (and no
+  # tokensSecret), conveyord refuses to start unless allowUnauthenticated is
+  # set below — the API is never served unauthenticated by accident.
   tokens: []
   # tokensSecret pulls a comma-separated token list from an existing Secret
   # (mapped to CONVEYOR_API__AUTH_TOKENS). Takes precedence over auth.tokens.
   tokensSecret:
     name: ""
     key: auth-tokens
+  # allowUnauthenticated runs the API with authentication disabled. Leave false
+  # for production; set true only when another layer (a gateway, mTLS, or a
+  # private network) secures the API, or conveyord will fail to start without
+  # tokens.
+  allowUnauthenticated: false
 
 api:
   # tls optionally serves the API over TLS. certSecret must contain tls.crt

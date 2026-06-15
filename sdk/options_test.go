@@ -47,6 +47,7 @@ func TestOptionsApply(t *testing.T) {
 
 func TestEnqueueOptionsApply(t *testing.T) {
 	processAt := time.Date(2026, 6, 12, 12, 0, 0, 0, time.UTC)
+	deadline := time.Date(2026, 6, 12, 13, 0, 0, 0, time.UTC)
 	settings := &enqueueOptions{}
 
 	for _, opt := range []EnqueueOption{
@@ -54,6 +55,8 @@ func TestEnqueueOptionsApply(t *testing.T) {
 		Queue("critical"),
 		MaxRetry(10),
 		Priority(7),
+		Timeout(30 * time.Second),
+		Deadline(deadline),
 		ProcessAt(processAt),
 		ProcessIn(5 * time.Minute),
 		Retention(48 * time.Hour),
@@ -67,6 +70,8 @@ func TestEnqueueOptionsApply(t *testing.T) {
 	require.Equal(t, "critical", settings.queue)
 	require.Equal(t, 10, settings.maxRetry)
 	require.Equal(t, 7, settings.priority)
+	require.Equal(t, 30*time.Second, settings.timeout)
+	require.Equal(t, deadline, settings.deadline)
 	require.Equal(t, processAt, settings.processAt)
 	require.Equal(t, 5*time.Minute, settings.processIn)
 	require.Equal(t, 48*time.Hour, settings.retention)

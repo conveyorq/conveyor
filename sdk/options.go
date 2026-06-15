@@ -69,6 +69,10 @@ type enqueueOptions struct {
 	maxRetry int
 	// priority orders dispatch within a queue; zero selects the default.
 	priority int
+	// timeout bounds a single execution attempt; zero leaves it unbounded.
+	timeout time.Duration
+	// deadline is the absolute time after which the task must not run.
+	deadline time.Time
 	// processAt delays execution to an absolute time.
 	processAt time.Time
 	// processIn delays execution by a duration.
@@ -101,6 +105,19 @@ func MaxRetry(n int) EnqueueOption {
 // unset tasks run at the default priority 4.
 func Priority(p int) EnqueueOption {
 	return func(o *enqueueOptions) { o.priority = p }
+}
+
+// Timeout bounds a single execution attempt: the handler's context is
+// canceled after the duration. The effective deadline is the earliest of the
+// timeout, any Deadline, and the lease expiry.
+func Timeout(d time.Duration) EnqueueOption {
+	return func(o *enqueueOptions) { o.timeout = d }
+}
+
+// Deadline sets an absolute time after which the task must not run; the
+// handler's context is canceled at that time if execution is still in flight.
+func Deadline(t time.Time) EnqueueOption {
+	return func(o *enqueueOptions) { o.deadline = t }
 }
 
 // ProcessAt delays execution until the given time.

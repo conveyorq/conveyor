@@ -4,8 +4,9 @@
 #   docker compose -f deploy/compose/quickstart.yaml up
 #
 # The API and health endpoints are then on http://localhost:8080 and metrics
-# on http://localhost:9464/metrics. Authentication is off (no tokens) — this
-# stack is for local evaluation only.
+# on http://localhost:9464/metrics. Authentication is off — this stack opts in
+# with CONVEYOR_API__ALLOW_UNAUTHENTICATED and is for local evaluation only; a
+# real deployment sets CONVEYOR_API__AUTH_TOKENS instead.
 services:
   postgres:
     image: postgres:16-alpine
@@ -31,6 +32,9 @@ services:
       CONVEYOR_BROKER__DRIVER: postgres
       CONVEYOR_BROKER__DSN: postgres://conveyor:conveyor@postgres:5432/conveyor?sslmode=disable
       CONVEYOR_LOG__FORMAT: text
+      # Evaluation-only: run the API without bearer-token auth. Drop this and
+      # set CONVEYOR_API__AUTH_TOKENS for anything reachable beyond localhost.
+      CONVEYOR_API__ALLOW_UNAUTHENTICATED: "true"
     ports:
       - "8080:8080" # API + health (/healthz, /readyz)
       - "9464:9464" # Prometheus metrics

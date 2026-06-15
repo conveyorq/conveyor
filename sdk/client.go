@@ -148,6 +148,14 @@ func (c *Client) Enqueue(ctx context.Context, task *Task, opts ...EnqueueOption)
 		UniqueKey:   uniqueKey,
 	}
 
+	if settings.timeout > 0 {
+		request.Timeout = durationpb.New(settings.timeout)
+	}
+
+	if !settings.deadline.IsZero() {
+		request.Deadline = timestamppb.New(settings.deadline)
+	}
+
 	if !settings.processAt.IsZero() {
 		request.ProcessAt = timestamppb.New(settings.processAt)
 	}
