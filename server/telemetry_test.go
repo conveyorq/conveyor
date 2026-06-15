@@ -30,11 +30,53 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
 	conveyor "github.com/conveyorq/conveyor/sdk"
 )
+
+// TestMetricsRecordsExecutionTiming is the end-to-end check that the §13 timing
+// histograms fire on the real gateway path: a worker processes one task, after
+// which the process-duration and queue-latency series appear at /metrics.
+func TestMetricsRecordsExecutionTiming(t *testing.T) {
+	node := startTestServer(t)
+	addr := "http://" + node.Addr()
+
+	worker, err := conveyor.NewWorker(addr, conveyor.WithConcurrency(4), conveyor.WithQueues(map[string]int{"default": 1}))
+	require.NoError(t, err)
+
+	mux := conveyor.NewMux()
+	mux.HandleFunc("bench:noop", func(context.Context, *conveyor.Task) error { return nil })
+
+	workerCtx, stopWorker := context.WithCancel(context.Background())
+	t.Cleanup(stopWorker)
+
+	go func() { _ = worker.Run(workerCtx, mux) }()
+
+	client, err := conveyor.NewClient(addr)
+	require.NoError(t, err)
+
+	_, err = client.Enqueue(context.Background(), conveyor.NewTask("bench:noop", conveyor.Bytes(nil)), conveyor.Retention(time.Hour))
+	require.NoError(t, err)
+
+	// The histograms are synchronous instruments — they appear only after the
+	// task has been dispatched and completed.
+	require.Eventually(t, func() bool {
+		resp, scrapeErr := http.Get(fmt.Sprintf("http://%s%s", node.MetricsAddr(), metricsPath))
+		if scrapeErr != nil {
+			return false
+		}
+
+		defer func() { _ = resp.Body.Close() }()
+		body, _ := io.ReadAll(resp.Body)
+
+		return strings.Contains(string(body), "conveyor_process_duration_seconds")
+	}, 15*time.Second, 100*time.Millisecond, "process-duration histogram must appear after a task runs")
+
+	require.Contains(t, scrapeMetrics(t, node), "conveyor_queue_latency_seconds")
+}
 
 // scrapeMetrics fetches the Prometheus exposition from the node's /metrics
 // endpoint and returns it as text.

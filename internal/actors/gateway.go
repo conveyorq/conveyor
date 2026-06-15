@@ -125,6 +125,9 @@ type GatewaySession struct {
 type inflightTask struct {
 	// leaseID scopes every durable transition for this delivery.
 	leaseID string
+	// dispatchedAt is when the task was sent to the worker, for the process
+	// duration histogram.
+	dispatchedAt time.Time
 	// queue is the queue the task was leased from.
 	queue string
 	// taskType is the handler routing key, keying the circuit breaker.
@@ -300,12 +303,20 @@ func (g *Gateway) register(ctx *goakt.ReceiveContext) {
 func (g *Gateway) dispatch(message *conveyorv1.ExecuteTask) {
 	task := message.GetTask()
 
+	now := g.runtime.Clock().Now()
+
 	g.inflight[task.GetId()] = &inflightTask{
-		leaseID:  message.GetLeaseId(),
-		queue:    task.GetQueue(),
-		taskType: task.GetType(),
-		retried:  task.GetRetried(),
-		maxRetry: task.GetOptions().GetMaxRetry(),
+		leaseID:      message.GetLeaseId(),
+		dispatchedAt: now,
+		queue:        task.GetQueue(),
+		taskType:     task.GetType(),
+		retried:      task.GetRetried(),
+		maxRetry:     task.GetOptions().GetMaxRetry(),
+	}
+
+	// Queue latency: how long the task waited from enqueue to dispatch.
+	if enqueuedAt := task.GetEnqueuedAt(); enqueuedAt.IsValid() {
+		g.runtime.Metrics().RecordQueueLatency(context.Background(), now.Sub(enqueuedAt.AsTime()).Seconds(), task.GetQueue())
 	}
 
 	frame := &conveyorv1.ServerMessage{
@@ -422,9 +433,14 @@ func (g *Gateway) result(ctx *goakt.ReceiveContext, message *conveyorv1.Result) 
 
 	success := message.GetOutcome() == conveyorv1.TaskOutcome_TASK_OUTCOME_SUCCESS && err == nil
 
+	// Process duration: how long the execution took from dispatch to result.
+	g.runtime.Metrics().RecordProcessDuration(context.Background(),
+		g.runtime.Clock().Now().Sub(entry.dispatchedAt).Seconds(), entry.queue)
+
 	g.recordOutcome(entry.taskType, message.GetOutcome())
 
 	if g.breakerFor(entry.taskType).State() == breaker.Open {
+		g.runtime.Metrics().BreakerOpen(context.Background())
 		g.deferCompletion(ctx, entry.queue, taskID, success)
 
 		return

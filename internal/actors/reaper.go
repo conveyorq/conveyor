@@ -106,6 +106,10 @@ func (r *Reaper) maintain(ctx *goakt.ReceiveContext) {
 		r.runtime.Logger().Warn("reaping expired leases failed", "error", err)
 	}
 
+	if len(reaped) > 0 {
+		r.runtime.Metrics().LeaseExpired(goCtx, len(reaped))
+	}
+
 	for _, queue := range reaped {
 		r.runtime.Logger().Debug("expired leases reclaimed", "queue", queue)
 		wakeQueue(goCtx, ctx.ActorSystem(), r.runtime, queue, 0)
@@ -125,9 +129,16 @@ func (r *Reaper) maintain(ctx *goakt.ReceiveContext) {
 		return
 	}
 
+	swept := 0
+
 	for queue, count := range pending {
 		if count > 0 {
 			wakeQueue(goCtx, ctx.ActorSystem(), r.runtime, queue, count)
+			swept++
 		}
+	}
+
+	if swept > 0 {
+		r.runtime.Metrics().WakeupsSwept(goCtx, swept)
 	}
 }

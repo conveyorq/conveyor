@@ -39,6 +39,7 @@ import (
 
 	"github.com/conveyorq/conveyor/internal/broker"
 	"github.com/conveyorq/conveyor/internal/clock"
+	"github.com/conveyorq/conveyor/internal/metrics"
 )
 
 // BrokerExtensionID names the actor-system extension carrying the broker and its
@@ -98,6 +99,8 @@ type Runtime struct {
 	logger *slog.Logger
 	// counters are the core engine counters.
 	counters *Counters
+	// metrics are the synchronous timing/canary instruments.
+	metrics *metrics.Engine
 
 	// idMutex guards idEntropy: lease and task ids are generated from any
 	// goroutine (API handlers, grains).
@@ -110,12 +113,18 @@ var _ extension.Extension = (*Runtime)(nil)
 
 // NewRuntime assembles the engine runtime extension.
 func NewRuntime(taskLog broker.Broker, timeSource clock.Clock, settings Settings, logger *slog.Logger) *Runtime {
+	instruments, err := metrics.NewEngine()
+	if err != nil {
+		logger.Warn("registering engine metrics instruments failed", "error", err)
+	}
+
 	return &Runtime{
 		broker:    taskLog,
 		clock:     timeSource,
 		settings:  settings,
 		logger:    logger,
 		counters:  &Counters{},
+		metrics:   instruments,
 		idEntropy: ulid.Monotonic(rand.Reader, 0),
 	}
 }
@@ -148,6 +157,11 @@ func (r *Runtime) Logger() *slog.Logger {
 // Counters returns the core engine counters.
 func (r *Runtime) Counters() *Counters {
 	return r.counters
+}
+
+// Metrics returns the synchronous timing and canary instruments.
+func (r *Runtime) Metrics() *metrics.Engine {
+	return r.metrics
 }
 
 // NewID returns a fresh ULID derived from the injected clock.

@@ -30,7 +30,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 	goakt "github.com/tochemey/goakt/v4/actor"
+	"google.golang.org/protobuf/types/known/durationpb"
 
+	"github.com/conveyorq/conveyor/internal/broker"
 	"github.com/conveyorq/conveyor/internal/broker/memory"
 	"github.com/conveyorq/conveyor/internal/clock"
 	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
@@ -123,4 +125,74 @@ func TestThreeNodeChaosLosesNothing(t *testing.T) {
 		2*time.Minute, 50*time.Millisecond, "all tasks must complete on the survivor")
 
 	requireDrained(t, taskLog)
+}
+
+// TestCronSurvivesSchedulerFailover is the Phase 6 cron failover acceptance:
+// across the loss of the node hosting the scheduler singleton, cron keeps
+// firing on the survivor. The per-slot unique key (covered by the cron and
+// broker tests) guarantees no slot fires twice during the relocation; this
+// test proves the schedule does not stall.
+func TestCronSurvivesSchedulerFailover(t *testing.T) {
+	if testing.Short() {
+		t.Skip("cron failover test skipped in -short mode")
+	}
+
+	const cronQueue = "cronfailover"
+
+	ctx := context.Background()
+	taskLog := memory.New(clock.System())
+
+	survivorPorts := freePorts(t, 3)
+	doomedPorts1 := freePorts(t, 3)
+	doomedPorts2 := freePorts(t, 3)
+
+	peers := []string{
+		fmt.Sprintf("%s:%d", testBindAddr, survivorPorts[1]),
+		fmt.Sprintf("%s:%d", testBindAddr, doomedPorts1[1]),
+		fmt.Sprintf("%s:%d", testBindAddr, doomedPorts2[1]),
+	}
+
+	survivor := newNode(taskLog, recoverySettings, survivorPorts, peers)
+	require.NoError(t, survivor.Start(ctx))
+
+	t.Cleanup(func() {
+		stopCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		_ = survivor.Stop(stopCtx)
+	})
+
+	doomed1 := newNode(taskLog, recoverySettings, doomedPorts1, peers)
+	require.NoError(t, doomed1.Start(ctx))
+
+	doomed2 := newNode(taskLog, recoverySettings, doomedPorts2, peers)
+	require.NoError(t, doomed2.Start(ctx))
+
+	// The gateway that runs cron tasks lives on the survivor.
+	spawnGateway(t, survivor, &mockGateway{queue: cronQueue, capacity: 20})
+
+	entry := &broker.CronEntry{
+		ID:          "failover-cron",
+		Spec:        "* * * * * *",
+		TaskType:    "test:ok",
+		Queue:       cronQueue,
+		Payload:     []byte(`{}`),
+		ContentType: "application/json",
+		Options:     &conveyorv1.TaskOptions{MaxRetry: 1, Retention: durationpb.New(time.Hour)},
+	}
+	require.NoError(t, taskLog.UpsertCronEntry(ctx, entry))
+
+	// Cron is firing before the failover.
+	require.Eventually(t, completedReaches(taskLog, 2),
+		30*time.Second, 50*time.Millisecond, "cron must fire before the failover")
+
+	before, err := tasksInState(taskLog, conveyorv1.TaskState_TASK_STATE_COMPLETED)
+	require.NoError(t, err)
+
+	// Kill every node but the survivor. Whichever node hosted the scheduler
+	// singleton, it must relocate to the survivor and resume firing.
+	killNode(doomed1)
+	killNode(doomed2)
+
+	require.Eventually(t, completedReaches(taskLog, before+3),
+		2*time.Minute, 100*time.Millisecond, "cron must keep firing after losing the scheduler's host")
 }
