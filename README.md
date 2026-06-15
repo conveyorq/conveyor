@@ -214,6 +214,7 @@ a different-origin UI, and `api.grafana_url` for the metrics link. See the
   Compose, and Grafana.
 - [Contributing](CONTRIBUTING.md) — build, test, conventions, and how to submit
   changes.
+- [Changelog](CHANGELOG.md) — release history.
 
 ## Development
 
