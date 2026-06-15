@@ -6,7 +6,9 @@ coverage.out
 .cache/
 .gocache/
 .gomodcache/
-gen/
+# Proto staging dir at the repo root (make proto). Anchored so it does NOT
+# match the committed generated TS client at web/dashboard/src/gen.
+/gen/
 .claude/
 
 # go test compiled binaries left by `go test -c` / `-cpuprofile`
