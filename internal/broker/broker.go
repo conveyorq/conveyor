@@ -108,7 +108,7 @@ type CronEntry struct {
 }
 
 // Info reports the storage engine backing a broker for the dashboard's
-// broker-info view, the analogue of a backing-store health page.
+// broker-info view, the analog of a backing-store health page.
 type Info struct {
 	// Driver names the storage engine, e.g. "memory" or "postgres".
 	Driver string
