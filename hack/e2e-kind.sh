@@ -17,6 +17,7 @@ readonly CLUSTER="conveyor-e2e"
 readonly RELEASE="conveyor"
 readonly NAMESPACE="conveyor"
 readonly IMAGE="conveyor:e2e"
+readonly LOAD_IMAGE="conveyor-e2e-load:e2e"
 readonly REPLICAS=3
 readonly TOKEN="e2e-token"
 readonly DSN="postgres://conveyor:conveyor@postgres.${NAMESPACE}.svc:5432/conveyor?sslmode=disable"
@@ -130,4 +131,61 @@ metrics=$(curl -fsS "http://localhost:9464/metrics")
 echo "${metrics}" | grep -q "^conveyor_enqueued_total" || { echo "FAIL: missing conveyor metrics"; exit 1; }
 echo "${metrics}" | grep -q "^actor_" || { echo "FAIL: missing GoAkt actor metrics"; exit 1; }
 
-log "e2e PASSED: Postgres-backed ${REPLICAS}-node cluster formed, metrics served"
+# ---------------------------------------------------------------------------
+# Rolling-restart under load: a workload driver runs in-cluster as producer and
+# worker against the load-balanced API Service while the StatefulSet is rolled
+# one pod at a time. The driver loses nothing and finishes every task, proving
+# clients keep processing across a server rolling upgrade.
+# ---------------------------------------------------------------------------
+log "building workload driver image ${LOAD_IMAGE}"
+docker build -f "${ROOT}/hack/e2e-load.Dockerfile" -t "${LOAD_IMAGE}" "${ROOT}"
+kind load docker-image "${LOAD_IMAGE}" --name "${CLUSTER}"
+
+log "starting the workload driver Job (producer + worker)"
+kubectl -n "${NAMESPACE}" apply -f - <<YAML
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: conveyor-load
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: load
+          image: ${LOAD_IMAGE}
+          imagePullPolicy: Never
+          args: ["--total=300", "--interval=400ms", "--drain-timeout=4m"]
+          env:
+            - { name: CONVEYOR_ADDR, value: "http://${RELEASE}.${NAMESPACE}.svc:8080" }
+            - { name: CONVEYOR_TOKEN, value: "${TOKEN}" }
+YAML
+
+log "waiting for the driver to begin producing under load"
+kubectl -n "${NAMESPACE}" wait --for=condition=ready pod -l job-name=conveyor-load --timeout 60s
+sleep 15
+
+log "rolling the StatefulSet while the driver runs"
+kubectl -n "${NAMESPACE}" rollout restart "statefulset/${RELEASE}"
+kubectl -n "${NAMESPACE}" rollout status "statefulset/${RELEASE}" --timeout 300s
+
+log "asserting the cluster reformed to ${REPLICAS} nodes after the roll"
+info=$(kubectl -n "${NAMESPACE}" exec "${RELEASE}-0" -- \
+  conveyor cluster info --addr "http://localhost:8080" --token "${TOKEN}")
+echo "${info}"
+nodes=$(echo "${info}" | grep -cE ':[0-9]+' || true)
+if [[ "${nodes}" -ne "${REPLICAS}" ]]; then
+  echo "FAIL: expected ${REPLICAS} cluster members after the roll, got ${nodes}"
+  exit 1
+fi
+
+log "waiting for the workload driver to finish (zero task loss)"
+if ! kubectl -n "${NAMESPACE}" wait --for=condition=complete job/conveyor-load --timeout 300s; then
+  echo "FAIL: workload driver did not complete every task across the rolling restart"
+  kubectl -n "${NAMESPACE}" logs job/conveyor-load --tail 50 || true
+  exit 1
+fi
+kubectl -n "${NAMESPACE}" logs job/conveyor-load --tail 5
+
+log "e2e PASSED: Postgres-backed ${REPLICAS}-node cluster formed, metrics served, survived a rolling restart under load"

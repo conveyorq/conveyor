@@ -424,3 +424,54 @@ func spawnGateway(t *testing.T, engine *Engine, gateway *mockGateway) {
 
 	require.NoError(t, engine.System().Schedule(context.Background(), reRegisterTick{}, pid, gatewayHeartbeat))
 }
+
+// spawnGatewayWithRetry spawns a mock gateway, retrying the spawn until the
+// cluster has cleared any prior holder of the gateway's name. A node that just
+// rejoined on the same ports re-uses its predecessor's cluster-unique gateway
+// name, and the departed node's deregistration may not have fully propagated
+// yet; the retry absorbs that window.
+func spawnGatewayWithRetry(t *testing.T, engine *Engine, gateway *mockGateway) {
+	t.Helper()
+
+	gateway.runtime = engine.runtime
+
+	var pid *goakt.PID
+
+	require.Eventually(t, func() bool {
+		spawned, err := engine.System().Spawn(context.Background(), gateway.name, gateway,
+			goakt.WithLongLived(), goakt.WithRelocationDisabled())
+		if err != nil {
+			return false
+		}
+
+		pid = spawned
+
+		return true
+	}, 15*time.Second, 100*time.Millisecond, "gateway %q must spawn once the prior cluster entry clears", gateway.name)
+
+	require.NoError(t, engine.System().Schedule(context.Background(), reRegisterTick{}, pid, gatewayHeartbeat))
+}
+
+// requireClusterMembers waits until every live node agrees the cluster has
+// exactly want members. Each node reports its peers (itself excluded), so a
+// healthy cluster of want nodes has every node seeing want-1 peers. Settling
+// on this before stopping or rejoining a node keeps a same-port restart from
+// racing GoAkt's membership reconciliation.
+func requireClusterMembers(t *testing.T, want int, nodes ...*Engine) {
+	t.Helper()
+
+	require.Eventually(t, func() bool {
+		for _, node := range nodes {
+			if node == nil {
+				continue
+			}
+
+			peers, err := node.System().Peers(context.Background(), 2*time.Second)
+			if err != nil || len(peers) != want-1 {
+				return false
+			}
+		}
+
+		return true
+	}, 30*time.Second, 200*time.Millisecond, "cluster must converge to %d members", want)
+}

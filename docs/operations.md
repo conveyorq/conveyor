@@ -117,6 +117,14 @@ within a queue, and per-queue weights bias a worker that serves several queues.
 - **Rolling restart.** Because execution is **at-least-once**, redelivery during
   a restart is always safe — design handlers to be idempotent. The StatefulSet
   rolls one pod at a time; a PodDisruptionBudget keeps a quorum available.
-- **Wire compatibility.** The protocol is additive; a newer server serves older
-  workers. Roll the server first, then workers.
+  Workers reconnect with jitter to the API Service and keep processing while a
+  node is replaced; tasks held by a restarting node are reclaimed by lease
+  expiry and redelivered. The kind e2e (`make e2e`) drives load through a full
+  rolling restart and asserts zero task loss.
+- **Version-skew policy.** The wire protocol is additive, so a newer server
+  serves older workers: **roll the server tier first, then workers.** During a
+  rolling restart the cluster runs mixed server versions briefly; keep upgrades
+  to one minor version at a time. Full mixed-version cluster testing is deferred
+  past v1 — do not run a cluster on more than one server version longer than a
+  rollout takes.
 - **Schema migrations** run automatically on Postgres connect; no manual step.

@@ -43,6 +43,8 @@ jobs:
               - 'go.sum'
               - 'deploy/**'
               - 'hack/e2e-kind.sh'
+              - 'hack/e2e-load.Dockerfile'
+              - 'hack/e2e-load/**'
               - 'Makefile'
               - '.github/workflows/ci.yml'
 

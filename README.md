@@ -205,5 +205,8 @@ kubernetes mode discovering each other through the Kubernetes API, the database
 DSN and API tokens delivered as Secrets, and metrics on their own port. It
 builds the image, loads it into kind, installs the Helm chart, and asserts the
 rollout completes, the three nodes form one cluster, and the metrics endpoint
-serves — then deletes the cluster. It needs `docker`, `kind`, `kubectl`, and
-`helm`, and runs the same way locally and in CI.
+serves. It then drives load through a **rolling restart** — an in-cluster
+producer/worker enqueues and processes tasks through the API Service while the
+StatefulSet is rolled one pod at a time — and asserts the cluster reforms and
+every task completes with zero loss, before deleting the cluster. It needs
+`docker`, `kind`, `kubectl`, and `helm`, and runs the same way locally and in CI.

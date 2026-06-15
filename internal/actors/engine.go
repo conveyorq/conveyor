@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	goakt "github.com/tochemey/goakt/v4/actor"
 	"github.com/tochemey/goakt/v4/discovery"
@@ -51,6 +52,16 @@ import (
 const (
 	schedulerActorName = "conveyor-scheduler"
 	reaperActorName    = "conveyor-reaper"
+)
+
+// Singleton placement consults every peer's load before choosing a host, so a
+// node booting into a cluster that is still reconciling membership (a peer just
+// left or joined, as during a rolling restart) can get a transient error from a
+// peer that is not yet serving. These bound a short retry so such a node still
+// starts instead of crashing.
+const (
+	singletonSpawnAttempts   = 5
+	singletonSpawnRetryDelay = 500 * time.Millisecond
 )
 
 // Config wires one engine node. Clustering is always on: a node with no
@@ -176,11 +187,29 @@ func (e *Engine) Start(ctx context.Context) error {
 // the desired state — exactly one instance runs cluster-wide. GoAkt's
 // relocator re-spawns it on a survivor when the host node is lost.
 func spawnSingleton(ctx context.Context, system goakt.ActorSystem, name string, actor goakt.Actor) error {
-	if _, err := system.SpawnSingleton(ctx, name, actor); err != nil && !errors.Is(err, gerrors.ErrSingletonAlreadyExists) {
-		return err
+	var err error
+
+	for attempt := range singletonSpawnAttempts {
+		_, err = system.SpawnSingleton(ctx, name, actor)
+		if err == nil || errors.Is(err, gerrors.ErrSingletonAlreadyExists) {
+			return nil
+		}
+
+		if attempt == singletonSpawnAttempts-1 {
+			break
+		}
+
+		// The error is most likely a peer mid-reconciliation; wait for the
+		// cluster to settle, honoring a caller cancellation.
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+
+		case <-time.After(singletonSpawnRetryDelay):
+		}
 	}
 
-	return nil
+	return err
 }
 
 // Stop shuts the actor system down. Worker sessions must be drained
