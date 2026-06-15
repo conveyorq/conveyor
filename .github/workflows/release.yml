@@ -1,13 +1,14 @@
 name: release
 
 # Publishes the conveyor container image to the GitHub Container Registry. Each
-# build produces a single multi-arch image (amd64 + arm64); the tags below are
-# just pointers to that one image, not separate builds:
-#   - every push to main  -> :edge   (a moving tag; always the latest main build)
-#   - every v* tag         -> :X.Y.Z + :latest
-# The originating commit is recorded on every image as the OCI
-# org.opencontainers.image.revision label. Images are signed with cosign
-# (keyless) and carry SBOM + provenance attestations.
+# build produces a single multi-arch image (amd64 + arm64). A multi-arch image
+# is an index that references one manifest per architecture, so GHCR always
+# lists those per-arch manifests as untagged versions next to the tag:
+#   - every push to main  -> :<short-sha>   (a single tag: the 7-char commit)
+#   - every v* tag         -> :X.Y.Z         (the release version, nothing else)
+# No SBOM/provenance attestations are attached (each would add another untagged
+# manifest); the originating commit is still recorded as the OCI
+# org.opencontainers.image.revision label.
 #
 # On every v* tag it also packages and pushes the Helm chart as an OCI artifact
 #   - oci://ghcr.io/conveyorq/charts/conveyor:X.Y.Z
@@ -30,8 +31,8 @@ env:
   # (charts/conveyor) never collides with the image repository (conveyor).
   CHART_REPO: ghcr.io/conveyorq/charts
 
-# Coalesce rapid pushes to the same ref (e.g. main → :edge); each tag is its
-# own ref, so tag publishes never cancel one another.
+# Coalesce rapid pushes to the same ref (e.g. successive pushes to main); each
+# tag is its own ref, so tag publishes never cancel one another.
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: true
@@ -75,12 +76,11 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.IMAGE }}
-          # :latest is applied only to semver tags, never to branch pushes.
-          flavor: latest=auto
-          # One moving tag on main (:edge), and :X.Y.Z + :latest on a release
-          # tag. No per-commit :sha tags — they accumulate without bound.
+          # main  -> a single tag: the 7-char short commit SHA (no "sha-" prefix)
+          # v* tag -> :X.Y.Z only (latest=false, so no :latest is added)
+          flavor: latest=false
           tags: |
-            type=edge,branch=main
+            type=sha,format=short,prefix=,enable={{is_default_branch}}
             type=semver,pattern={{version}}
 
       - id: build
@@ -95,15 +95,9 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             VERSION=${{ steps.meta.outputs.version }}
-          provenance: mode=max
-          sbom: true
-
-      - uses: sigstore/cosign-installer@v3
-        name: Install cosign
-      - name: Sign the published image
-        # --recursive signs the index and every per-arch manifest, so a consumer
-        # that pulls a single architecture can still verify the signature.
-        run: cosign sign --yes --recursive "${IMAGE}@${{ steps.build.outputs.digest }}"
+          # No SBOM/provenance attestations: each attaches an extra untagged
+          # manifest per platform to the package listing.
+          provenance: false
 
   publish-chart:
     name: Package & publish Helm chart
@@ -159,3 +153,38 @@ jobs:
         name: Install cosign
       - name: Sign the published chart
         run: cosign sign --yes "${CHART_REPO}/conveyor@${{ steps.push.outputs.digest }}"
+
+  cleanup:
+    name: Prune untagged package versions
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Run after the image (and, on a tag, the chart) is published. always() so
+    # it still runs on main where publish-chart is skipped; the guard keeps it
+    # from pruning when the build itself failed.
+    needs: [publish, publish-chart]
+    if: always() && needs.publish.result == 'success'
+    permissions:
+      packages: write
+    steps:
+      # Deletes only genuinely orphaned untagged versions. The action is
+      # multi-arch and cosign aware: per-architecture child manifests, SBOM /
+      # provenance attestations, and .sig signatures referenced by a tagged
+      # image are kept — only versions no tag points at are removed. validate
+      # re-checks that every remaining tagged image is still intact afterwards.
+      - uses: dataaxiom/ghcr-cleanup-action@v1
+        name: Prune the image package
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          package: conveyor
+          delete-untagged: true
+          validate: true
+
+      - uses: dataaxiom/ghcr-cleanup-action@v1
+        name: Prune the chart package
+        # The chart package only exists once a tag has published it.
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          package: charts/conveyor
+          delete-untagged: true
+          validate: true
