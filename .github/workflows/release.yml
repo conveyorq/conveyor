@@ -5,6 +5,11 @@ name: release
 #   - every v* tag         -> :vX.Y.Z, :X.Y, :latest (+ :sha-<short>)
 # Images are multi-arch (amd64 + arm64), signed with cosign (keyless), and
 # carry SBOM + provenance attestations.
+#
+# On every v* tag it also packages and pushes the Helm chart as an OCI artifact
+#   - oci://ghcr.io/conveyorq/charts/conveyor:X.Y.Z
+# with the chart version and appVersion pinned to the tag and signed with
+# cosign (keyless). Branch pushes do not publish a chart.
 
 on:
   push:
@@ -18,6 +23,9 @@ permissions:
 
 env:
   IMAGE: ghcr.io/conveyorq/conveyor
+  # Helm charts publish under a separate OCI namespace so the chart repository
+  # (charts/conveyor) never collides with the image repository (conveyor).
+  CHART_REPO: ghcr.io/conveyorq/charts
 
 # Coalesce rapid pushes to the same ref (e.g. main → :edge); each tag is its
 # own ref, so tag publishes never cancel one another.
@@ -93,3 +101,49 @@ jobs:
         # --recursive signs the index and every per-arch manifest, so a consumer
         # that pulls a single architecture can still verify the signature.
         run: cosign sign --yes --recursive "${IMAGE}@${{ steps.build.outputs.digest }}"
+
+  publish-chart:
+    name: Package & publish Helm chart
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Only version tags publish a chart, and only after the matching image is
+    # pushed — the chart's appVersion points at an image that must already exist.
+    needs: publish
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v6
+        name: Checkout
+
+      - uses: azure/setup-helm@v4
+        name: Setup Helm
+
+      - name: Log in to GHCR
+        # Helm uses the OCI registry's own auth; reuse the workflow token.
+        run: helm registry login ghcr.io --username "${{ github.actor }}" --password-stdin <<<"${{ secrets.GITHUB_TOKEN }}"
+
+      - id: package
+        name: Package chart
+        # Pin both the chart version and the appVersion to the release tag
+        # (strip the leading "v") so the published artifact always matches the
+        # tag, regardless of what Chart.yaml currently holds.
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          helm package deploy/helm/conveyor \
+            --version "${version}" \
+            --app-version "${version}" \
+            --destination dist
+          echo "version=${version}" >>"${GITHUB_OUTPUT}"
+
+      - id: push
+        name: Push chart to GHCR
+        # helm push prints the pushed digest; capture it for signing.
+        run: |
+          version="${{ steps.package.outputs.version }}"
+          helm push "dist/conveyor-${version}.tgz" "oci://${CHART_REPO}" 2>&1 | tee push.log
+          digest="$(awk '/Digest: /{print $NF}' push.log)"
+          echo "digest=${digest}" >>"${GITHUB_OUTPUT}"
+
+      - uses: sigstore/cosign-installer@v3
+        name: Install cosign
+      - name: Sign the published chart
+        run: cosign sign --yes "${CHART_REPO}/conveyor@${{ steps.push.outputs.digest }}"

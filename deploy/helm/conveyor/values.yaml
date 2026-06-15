@@ -1,8 +1,11 @@
 # Default values for the conveyor chart.
 #
-# conveyord is stateless: durable state lives in the broker (Postgres), and
-# peers discover one another through the Kubernetes API, so the workload is a
-# plain Deployment that scales horizontally.
+# conveyord keeps no durable disk state: tasks live in the broker (Postgres)
+# and peers discover one another through the Kubernetes API. The workload is a
+# StatefulSet — not for storage, but for stable pod identity and one-at-a-time
+# rollouts, since the cluster is membership-sensitive (grain placement,
+# singletons, and leases rebalance on every membership change). It scales
+# horizontally via replicaCount.
 
 # replicaCount is the number of conveyord nodes (cluster members).
 replicaCount: 3

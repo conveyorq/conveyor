@@ -54,11 +54,3 @@ task-queue features and adds push-based dispatch (no polling), built-in
 clustering/HA, an embeddable mode, and an operations dashboard that goes beyond
 asynqmon's read-only inspection — mutations, a live worker-topology view, and
 host-anywhere hosting.
-
-### Deferred (post-v1)
-
-- A comparative asynq/River throughput benchmark and latency/throughput gate
-  recalibration (needs matched, pinned hardware).
-- The v2 roadmap: group aggregation, SQLite and rqlite brokers, polyglot SDKs,
-  discovery exec/http-sd, per-type rate limiting, multi-datacenter routing, and
-  namespaces.
