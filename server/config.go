@@ -191,6 +191,18 @@ type APIConfig struct {
 	// only when another layer (a gateway, mTLS, or a private network) secures
 	// the API.
 	AllowUnauthenticated bool `koanf:"allow_unauthenticated"`
+	// Dashboard serves the embedded read+write operations console at the API
+	// root. It defaults on; set it false to expose the API without the UI
+	// (for example when hosting the dashboard separately).
+	Dashboard bool `koanf:"dashboard"`
+	// CORSOrigins lists browser origins permitted to call the API
+	// cross-origin, for hosting the dashboard on a different origin. Empty
+	// disables CORS entirely (the secure default); an entry of "*" allows any
+	// origin.
+	CORSOrigins []string `koanf:"cors_origins"`
+	// GrafanaURL, when set, is surfaced to the dashboard as a "Metrics" link to
+	// the operator's Grafana. Empty hides the link.
+	GrafanaURL string `koanf:"grafana_url"`
 }
 
 // ClusterConfig configures GoAkt clustering.
@@ -278,7 +290,7 @@ func DefaultConfig() *Config {
 	return &Config{
 		Mode:   ModeStandalone,
 		Broker: BrokerConfig{Driver: BrokerPostgres},
-		API:    APIConfig{Listen: defaultAPIListen},
+		API:    APIConfig{Listen: defaultAPIListen, Dashboard: true},
 		Cluster: ClusterConfig{
 			Discovery:     DiscoveryStatic,
 			BindAddr:      defaultBindAddr,

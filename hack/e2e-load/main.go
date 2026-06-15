@@ -119,6 +119,22 @@ func main() {
 		log.Fatalf("load: client: %v", err)
 	}
 
+	// Continuous mode (--total <= 0): produce forever so the dashboard shows
+	// live activity. The worker drains concurrently; the process runs until it
+	// is killed (Ctrl-C or pod deletion).
+	if *total <= 0 {
+		log.Printf("load: continuous mode — producing every %s (stop with Ctrl-C)", *produceInterval)
+
+		ticker := time.NewTicker(*produceInterval)
+		defer ticker.Stop()
+
+		for range ticker.C {
+			enqueue(client)
+		}
+
+		return
+	}
+
 	produced := produce(client, *total, *produceInterval)
 	log.Printf("load: produced %d tasks; waiting for completion", produced)
 

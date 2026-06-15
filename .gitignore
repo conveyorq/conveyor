@@ -18,3 +18,11 @@ gen/
 *coverage.*
 vendor
 gen.env
+# Dashboard frontend: ignore deps and the built bundle. dist/ is built in CI
+# and in the Docker image (Node stage), not committed. The .gitkeep keeps the
+# directory present so the Go //go:embed of dist/ still compiles on a fresh
+# checkout (the bundle is empty until built; see web/dashboard/README or
+# `make dashboard`).
+web/dashboard/node_modules/
+web/dashboard/dist/*
+!web/dashboard/dist/.gitkeep

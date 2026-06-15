@@ -55,6 +55,15 @@ auth:
   allowUnauthenticated: false
 
 api:
+  # dashboard serves the embedded operations console at the API root. On by
+  # default; set false to expose the API without the UI.
+  dashboard: true
+  # corsOrigins lists browser origins allowed to call the API cross-origin, for
+  # hosting the dashboard on a different origin. Empty disables CORS (secure
+  # default); "*" allows any origin.
+  corsOrigins: []
+  # grafanaUrl, when set, surfaces a "Metrics" link in the dashboard.
+  grafanaUrl: ""
   # tls optionally serves the API over TLS. certSecret must contain tls.crt
   # and tls.key (and ca.crt when verifying client certificates).
   tls:

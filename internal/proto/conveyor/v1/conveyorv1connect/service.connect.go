@@ -74,6 +74,9 @@ const (
 	// AdminServiceClusterInfoProcedure is the fully-qualified name of the AdminService's ClusterInfo
 	// RPC.
 	AdminServiceClusterInfoProcedure = "/conveyor.v1.AdminService/ClusterInfo"
+	// AdminServiceListWorkerSessionsProcedure is the fully-qualified name of the AdminService's
+	// ListWorkerSessions RPC.
+	AdminServiceListWorkerSessionsProcedure = "/conveyor.v1.AdminService/ListWorkerSessions"
 )
 
 // TaskServiceClient is a client for the conveyor.v1.TaskService service.
@@ -291,6 +294,9 @@ type AdminServiceClient interface {
 	ResumeCron(context.Context, *connect.Request[v1.ResumeCronRequest]) (*connect.Response[v1.ResumeCronResponse], error)
 	DeleteCron(context.Context, *connect.Request[v1.DeleteCronRequest]) (*connect.Response[v1.DeleteCronResponse], error)
 	ClusterInfo(context.Context, *connect.Request[v1.ClusterInfoRequest]) (*connect.Response[v1.ClusterInfoResponse], error)
+	// ListWorkerSessions lists the worker sessions connected to the node serving
+	// the request, for the operations dashboard's worker-topology view.
+	ListWorkerSessions(context.Context, *connect.Request[v1.ListWorkerSessionsRequest]) (*connect.Response[v1.ListWorkerSessionsResponse], error)
 }
 
 // NewAdminServiceClient constructs a client for the conveyor.v1.AdminService service. By default,
@@ -382,24 +388,31 @@ func NewAdminServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(adminServiceMethods.ByName("ClusterInfo")),
 			connect.WithClientOptions(opts...),
 		),
+		listWorkerSessions: connect.NewClient[v1.ListWorkerSessionsRequest, v1.ListWorkerSessionsResponse](
+			httpClient,
+			baseURL+AdminServiceListWorkerSessionsProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("ListWorkerSessions")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
 // adminServiceClient implements AdminServiceClient.
 type adminServiceClient struct {
-	listQueues  *connect.Client[v1.ListQueuesRequest, v1.ListQueuesResponse]
-	pauseQueue  *connect.Client[v1.PauseQueueRequest, v1.PauseQueueResponse]
-	resumeQueue *connect.Client[v1.ResumeQueueRequest, v1.ResumeQueueResponse]
-	listTasks   *connect.Client[v1.ListTasksRequest, v1.ListTasksResponse]
-	cancelTask  *connect.Client[v1.CancelTaskRequest, v1.CancelTaskResponse]
-	deleteTask  *connect.Client[v1.DeleteTaskRequest, v1.DeleteTaskResponse]
-	runTask     *connect.Client[v1.RunTaskRequest, v1.RunTaskResponse]
-	listCron    *connect.Client[v1.ListCronRequest, v1.ListCronResponse]
-	upsertCron  *connect.Client[v1.UpsertCronRequest, v1.UpsertCronResponse]
-	pauseCron   *connect.Client[v1.PauseCronRequest, v1.PauseCronResponse]
-	resumeCron  *connect.Client[v1.ResumeCronRequest, v1.ResumeCronResponse]
-	deleteCron  *connect.Client[v1.DeleteCronRequest, v1.DeleteCronResponse]
-	clusterInfo *connect.Client[v1.ClusterInfoRequest, v1.ClusterInfoResponse]
+	listQueues         *connect.Client[v1.ListQueuesRequest, v1.ListQueuesResponse]
+	pauseQueue         *connect.Client[v1.PauseQueueRequest, v1.PauseQueueResponse]
+	resumeQueue        *connect.Client[v1.ResumeQueueRequest, v1.ResumeQueueResponse]
+	listTasks          *connect.Client[v1.ListTasksRequest, v1.ListTasksResponse]
+	cancelTask         *connect.Client[v1.CancelTaskRequest, v1.CancelTaskResponse]
+	deleteTask         *connect.Client[v1.DeleteTaskRequest, v1.DeleteTaskResponse]
+	runTask            *connect.Client[v1.RunTaskRequest, v1.RunTaskResponse]
+	listCron           *connect.Client[v1.ListCronRequest, v1.ListCronResponse]
+	upsertCron         *connect.Client[v1.UpsertCronRequest, v1.UpsertCronResponse]
+	pauseCron          *connect.Client[v1.PauseCronRequest, v1.PauseCronResponse]
+	resumeCron         *connect.Client[v1.ResumeCronRequest, v1.ResumeCronResponse]
+	deleteCron         *connect.Client[v1.DeleteCronRequest, v1.DeleteCronResponse]
+	clusterInfo        *connect.Client[v1.ClusterInfoRequest, v1.ClusterInfoResponse]
+	listWorkerSessions *connect.Client[v1.ListWorkerSessionsRequest, v1.ListWorkerSessionsResponse]
 }
 
 // ListQueues calls conveyor.v1.AdminService.ListQueues.
@@ -467,6 +480,11 @@ func (c *adminServiceClient) ClusterInfo(ctx context.Context, req *connect.Reque
 	return c.clusterInfo.CallUnary(ctx, req)
 }
 
+// ListWorkerSessions calls conveyor.v1.AdminService.ListWorkerSessions.
+func (c *adminServiceClient) ListWorkerSessions(ctx context.Context, req *connect.Request[v1.ListWorkerSessionsRequest]) (*connect.Response[v1.ListWorkerSessionsResponse], error) {
+	return c.listWorkerSessions.CallUnary(ctx, req)
+}
+
 // AdminServiceHandler is an implementation of the conveyor.v1.AdminService service.
 type AdminServiceHandler interface {
 	ListQueues(context.Context, *connect.Request[v1.ListQueuesRequest]) (*connect.Response[v1.ListQueuesResponse], error)
@@ -482,6 +500,9 @@ type AdminServiceHandler interface {
 	ResumeCron(context.Context, *connect.Request[v1.ResumeCronRequest]) (*connect.Response[v1.ResumeCronResponse], error)
 	DeleteCron(context.Context, *connect.Request[v1.DeleteCronRequest]) (*connect.Response[v1.DeleteCronResponse], error)
 	ClusterInfo(context.Context, *connect.Request[v1.ClusterInfoRequest]) (*connect.Response[v1.ClusterInfoResponse], error)
+	// ListWorkerSessions lists the worker sessions connected to the node serving
+	// the request, for the operations dashboard's worker-topology view.
+	ListWorkerSessions(context.Context, *connect.Request[v1.ListWorkerSessionsRequest]) (*connect.Response[v1.ListWorkerSessionsResponse], error)
 }
 
 // NewAdminServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -569,6 +590,12 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(adminServiceMethods.ByName("ClusterInfo")),
 		connect.WithHandlerOptions(opts...),
 	)
+	adminServiceListWorkerSessionsHandler := connect.NewUnaryHandler(
+		AdminServiceListWorkerSessionsProcedure,
+		svc.ListWorkerSessions,
+		connect.WithSchema(adminServiceMethods.ByName("ListWorkerSessions")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/conveyor.v1.AdminService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case AdminServiceListQueuesProcedure:
@@ -597,6 +624,8 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 			adminServiceDeleteCronHandler.ServeHTTP(w, r)
 		case AdminServiceClusterInfoProcedure:
 			adminServiceClusterInfoHandler.ServeHTTP(w, r)
+		case AdminServiceListWorkerSessionsProcedure:
+			adminServiceListWorkerSessionsHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -656,4 +685,8 @@ func (UnimplementedAdminServiceHandler) DeleteCron(context.Context, *connect.Req
 
 func (UnimplementedAdminServiceHandler) ClusterInfo(context.Context, *connect.Request[v1.ClusterInfoRequest]) (*connect.Response[v1.ClusterInfoResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("conveyor.v1.AdminService.ClusterInfo is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) ListWorkerSessions(context.Context, *connect.Request[v1.ListWorkerSessionsRequest]) (*connect.Response[v1.ListWorkerSessionsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("conveyor.v1.AdminService.ListWorkerSessions is not implemented"))
 }

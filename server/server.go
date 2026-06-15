@@ -205,7 +205,7 @@ func (s *Server) Start(ctx context.Context) error {
 	protocols.SetUnencryptedHTTP2(true)
 
 	s.http.Protocols = protocols
-	s.http.Handler = s.buildMux()
+	s.http.Handler = withCORS(s.config.API.CORSOrigins, s.buildMux())
 
 	if s.config.AuthDisabled() {
 		s.logger.Warn("API authentication is DISABLED via api.allow_unauthenticated — acceptable for development or behind another security layer only; set api.auth_tokens to enable it")
@@ -345,11 +345,13 @@ func (s *Server) buildMux() *http.ServeMux {
 	taskService := api.NewTaskService(s.engine, s.taskLog, clock.System(), int32(s.config.Engine.DefaultMaxRetry))
 	mux.Handle(conveyorv1connect.NewTaskServiceHandler(taskService, options...))
 
-	s.workerService = api.NewWorkerService(s.engine, s.logger)
+	s.workerService = api.NewWorkerService(s.engine, s.logger, clock.System())
 	mux.Handle(conveyorv1connect.NewWorkerServiceHandler(s.workerService, options...))
 
-	adminService := api.NewAdminService(s.engine, s.taskLog, clock.System())
+	adminService := api.NewAdminService(s.engine, s.taskLog, clock.System(), s.workerService)
 	mux.Handle(conveyorv1connect.NewAdminServiceHandler(adminService, options...))
+
+	s.mountDashboard(mux)
 
 	return mux
 }

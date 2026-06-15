@@ -43,11 +43,17 @@ func newTestAdminService(t *testing.T) (*AdminService, *TaskService, broker.Brok
 	t.Helper()
 
 	engine, taskLog := startTestEngine(t)
-	admin := NewAdminService(engine, taskLog, clock.System())
+	admin := NewAdminService(engine, taskLog, clock.System(), stubSessions(nil))
 	tasks := NewTaskService(engine, taskLog, clock.System(), testDefaultMaxRetry)
 
 	return admin, tasks, taskLog
 }
+
+// stubSessions is a SessionLister returning a fixed snapshot set.
+type stubSessions []SessionSnapshot
+
+// Sessions implements SessionLister.
+func (s stubSessions) Sessions() []SessionSnapshot { return s }
 
 // mustEnqueueType enqueues one task through the TaskService and returns
 // its id.
@@ -288,4 +294,25 @@ func TestClusterInfoReportsSelf(t *testing.T) {
 	require.NotEmpty(t, nodes)
 	require.NotEmpty(t, nodes[0].GetAddress())
 	require.True(t, nodes[0].GetStartedAt().IsValid())
+}
+
+// TestListWorkerSessions maps the session lister's snapshots into the response.
+func TestListWorkerSessions(t *testing.T) {
+	engine, taskLog := startTestEngine(t)
+
+	connected := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	admin := NewAdminService(engine, taskLog, clock.System(), stubSessions{
+		{ID: "s1", Queues: []string{"default", "critical"}, Concurrency: 8, SDKVersion: "v1.2.3", ConnectedAt: connected},
+	})
+
+	resp, err := admin.ListWorkerSessions(context.Background(), connect.NewRequest(&conveyorv1.ListWorkerSessionsRequest{}))
+	require.NoError(t, err)
+
+	sessions := resp.Msg.GetSessions()
+	require.Len(t, sessions, 1)
+	require.Equal(t, "s1", sessions[0].GetId())
+	require.Equal(t, []string{"default", "critical"}, sessions[0].GetQueues())
+	require.EqualValues(t, 8, sessions[0].GetConcurrency())
+	require.Equal(t, "v1.2.3", sessions[0].GetSdkVersion())
+	require.True(t, sessions[0].GetConnectedAt().AsTime().Equal(connected))
 }

@@ -7,8 +7,17 @@
 #
 # It builds the image, loads it into a throwaway kind cluster, installs the
 # Helm chart, and asserts the StatefulSet rolls out, the three nodes form one
-# cluster, and the metrics endpoint serves. The cluster is always deleted on
-# exit, so developers can run it locally with `make e2e`.
+# cluster, the metrics endpoint serves, the dashboard is served, and the
+# cluster survives a rolling restart under load with zero task loss.
+#
+# Run it with `make e2e`. The cluster is torn down automatically on exit
+# (success or failure). To keep it afterwards for inspection, set KEEP=1
+# (KEEP=1 make e2e) and tear it down later with `make e2e-clean`.
+#
+# PLAYGROUND=1 (used by `make e2e-demo`) runs the same setup and health checks,
+# then starts a continuous producer/worker and opens the dashboard so live
+# activity can be watched, blocking until Ctrl-C instead of running the
+# rolling-restart assertions.
 #
 # Requires: docker, kind, kubectl, helm.
 set -euo pipefail
@@ -29,6 +38,16 @@ log() { printf '\n=== %s ===\n' "$*"; }
 
 cleanup() {
   [[ -n "${forward_pid}" ]] && kill "${forward_pid}" >/dev/null 2>&1 || true
+
+  if [[ -n "${KEEP:-}" ]]; then
+    log "KEEP set: leaving cluster ${CLUSTER} up for inspection"
+    printf '  dashboard:  make e2e-dashboard   (opens http://localhost:8080/, API token: %s)\n' "${TOKEN}"
+    printf '  inspect:    kubectl --context kind-%s -n %s get pods\n' "${CLUSTER}" "${NAMESPACE}"
+    printf '  teardown:   make e2e-clean\n'
+
+    return
+  fi
+
   log "tearing down kind cluster ${CLUSTER}"
   kind delete cluster --name "${CLUSTER}" >/dev/null 2>&1 || true
 }
@@ -131,16 +150,67 @@ metrics=$(curl -fsS "http://localhost:9464/metrics")
 echo "${metrics}" | grep -q "^conveyor_enqueued_total" || { echo "FAIL: missing conveyor metrics"; exit 1; }
 echo "${metrics}" | grep -q "^actor_" || { echo "FAIL: missing GoAkt actor metrics"; exit 1; }
 
+log "asserting the embedded dashboard is served at the API root"
+kubectl -n "${NAMESPACE}" port-forward "statefulset/${RELEASE}" 18080:8080 >/dev/null 2>&1 &
+dash_forward_pid=$!
+sleep 3
+curl -fsS "http://localhost:18080/" | grep -q 'id="root"' || { echo "FAIL: dashboard not served at /"; exit 1; }
+kill "${dash_forward_pid}" >/dev/null 2>&1 || true
+
+log "building workload driver image ${LOAD_IMAGE}"
+docker build -f "${ROOT}/hack/e2e-load.Dockerfile" -t "${LOAD_IMAGE}" "${ROOT}"
+kind load docker-image "${LOAD_IMAGE}" --name "${CLUSTER}"
+
+# ---------------------------------------------------------------------------
+# Playground mode (PLAYGROUND=1): run a *continuous* producer/worker and open
+# the dashboard so live activity can be watched, then block until Ctrl-C. This
+# is what `make e2e-demo` uses; the assertions above still run first, so the
+# cluster is verified healthy before going live.
+# ---------------------------------------------------------------------------
+if [[ -n "${PLAYGROUND:-}" ]]; then
+  kill "${forward_pid}" >/dev/null 2>&1 || true
+
+  log "starting a continuous workload (producer + worker)"
+  kubectl -n "${NAMESPACE}" apply -f - <<YAML
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: conveyor-load
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: conveyor-load }
+  template:
+    metadata:
+      labels: { app: conveyor-load }
+    spec:
+      containers:
+        - name: load
+          image: ${LOAD_IMAGE}
+          imagePullPolicy: Never
+          args: ["--total=0", "--interval=300ms"]
+          env:
+            - { name: CONVEYOR_ADDR, value: "http://${RELEASE}.${NAMESPACE}.svc:8080" }
+            - { name: CONVEYOR_TOKEN, value: "${TOKEN}" }
+YAML
+
+  log "opening the live dashboard"
+  kubectl -n "${NAMESPACE}" port-forward "svc/${RELEASE}" 8080:8080 >/dev/null 2>&1 &
+  forward_pid=$!
+  sleep 3
+  if command -v open >/dev/null 2>&1; then open http://localhost:8080/; elif command -v xdg-open >/dev/null 2>&1; then xdg-open http://localhost:8080/; fi
+  printf '\nDashboard live at http://localhost:8080/  (API token: %s)\n' "${TOKEN}"
+  printf 'Turn on "Auto-refresh" in the UI to watch tasks flow. Ctrl-C to stop.\n\n'
+  wait "${forward_pid}"
+  exit 0
+fi
+
 # ---------------------------------------------------------------------------
 # Rolling-restart under load: a workload driver runs in-cluster as producer and
 # worker against the load-balanced API Service while the StatefulSet is rolled
 # one pod at a time. The driver loses nothing and finishes every task, proving
 # clients keep processing across a server rolling upgrade.
 # ---------------------------------------------------------------------------
-log "building workload driver image ${LOAD_IMAGE}"
-docker build -f "${ROOT}/hack/e2e-load.Dockerfile" -t "${LOAD_IMAGE}" "${ROOT}"
-kind load docker-image "${LOAD_IMAGE}" --name "${CLUSTER}"
-
 log "starting the workload driver Job (producer + worker)"
 kubectl -n "${NAMESPACE}" apply -f - <<YAML
 apiVersion: batch/v1

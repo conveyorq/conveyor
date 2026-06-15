@@ -33,6 +33,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
 
+	"github.com/conveyorq/conveyor/internal/clock"
 	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 	"github.com/conveyorq/conveyor/internal/proto/conveyor/v1/conveyorv1connect"
 )
@@ -220,7 +221,7 @@ func TestSessionCloseReleasesInflight(t *testing.T) {
 // penalty, and rejects new sessions while draining.
 func TestSessionDrainOnShutdown(t *testing.T) {
 	engine, taskLog := startTestEngine(t)
-	workerService := NewWorkerService(engine, slog.New(slog.DiscardHandler))
+	workerService := NewWorkerService(engine, slog.New(slog.DiscardHandler), clock.System())
 
 	mux := http.NewServeMux()
 	mux.Handle(conveyorv1connect.NewWorkerServiceHandler(workerService))
@@ -249,6 +250,15 @@ func TestSessionDrainOnShutdown(t *testing.T) {
 	first, err := stream.Receive()
 	require.NoError(t, err)
 	require.NotNil(t, first.GetWelcome())
+
+	// The connected session is reported with its declared queues and concurrency.
+	require.Eventually(t, func() bool {
+		sessions := workerService.Sessions()
+
+		return len(sessions) == 1 &&
+			len(sessions[0].Queues) == 1 && sessions[0].Queues[0] == "default" &&
+			sessions[0].Concurrency == 1
+	}, 5*time.Second, 20*time.Millisecond, "the connected session must appear in Sessions()")
 
 	ctx := context.Background()
 

@@ -29,6 +29,7 @@ import (
 	"log/slog"
 	"maps"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -36,6 +37,7 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	"github.com/conveyorq/conveyor/internal/actors"
+	"github.com/conveyorq/conveyor/internal/clock"
 	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 	"github.com/conveyorq/conveyor/internal/proto/conveyor/v1/conveyorv1connect"
 )
@@ -60,6 +62,29 @@ var errSessionSetupFailed = errors.New("session setup failed")
 // another node.
 var errNodeDraining = errors.New("node is shutting down; reconnect to another node")
 
+// SessionSnapshot is the externally visible description of one connected
+// worker session, surfaced by the AdminService worker-topology view.
+type SessionSnapshot struct {
+	// ID is the server-assigned session id.
+	ID string
+	// Queues are the queue names the worker serves, sorted.
+	Queues []string
+	// Concurrency is the worker's declared concurrency.
+	Concurrency int32
+	// SDKVersion is the worker's reported SDK version.
+	SDKVersion string
+	// ConnectedAt is when the session's Hello was accepted.
+	ConnectedAt time.Time
+}
+
+// sessionEntry holds a live session's cancel function and its snapshot.
+type sessionEntry struct {
+	// cancel ends the session.
+	cancel context.CancelFunc
+	// snapshot describes the session for the topology view.
+	snapshot SessionSnapshot
+}
+
 // WorkerService serves the worker session protocol: one bidirectional
 // stream per worker process, bridged to a per-session gateway actor.
 type WorkerService struct {
@@ -67,10 +92,12 @@ type WorkerService struct {
 	engine *actors.Engine
 	// logger reports session lifecycle and failures.
 	logger *slog.Logger
+	// timeSource stamps session connection times.
+	timeSource clock.Clock
 	// sessionMutex guards sessions and draining.
 	sessionMutex sync.Mutex
-	// sessions maps live session ids to the cancel function ending them.
-	sessions map[string]context.CancelFunc
+	// sessions maps live session ids to their entry.
+	sessions map[string]*sessionEntry
 	// draining rejects new sessions once shutdown has begun.
 	draining bool
 }
@@ -79,11 +106,12 @@ type WorkerService struct {
 var _ conveyorv1connect.WorkerServiceHandler = (*WorkerService)(nil)
 
 // NewWorkerService assembles the worker session service.
-func NewWorkerService(engine *actors.Engine, logger *slog.Logger) *WorkerService {
+func NewWorkerService(engine *actors.Engine, logger *slog.Logger, timeSource clock.Clock) *WorkerService {
 	return &WorkerService{
-		engine:   engine,
-		logger:   logger,
-		sessions: make(map[string]context.CancelFunc),
+		engine:     engine,
+		logger:     logger,
+		timeSource: timeSource,
+		sessions:   make(map[string]*sessionEntry),
 	}
 }
 
@@ -93,6 +121,24 @@ func (s *WorkerService) ActiveSessions() int64 {
 	defer s.sessionMutex.Unlock()
 
 	return int64(len(s.sessions))
+}
+
+// Sessions returns a snapshot of the live worker sessions on this node,
+// sorted by session id for a stable ordering.
+func (s *WorkerService) Sessions() []SessionSnapshot {
+	s.sessionMutex.Lock()
+	defer s.sessionMutex.Unlock()
+
+	snapshots := make([]SessionSnapshot, 0, len(s.sessions))
+	for _, entry := range s.sessions {
+		snapshots = append(snapshots, entry.snapshot)
+	}
+
+	slices.SortFunc(snapshots, func(a, b SessionSnapshot) int {
+		return strings.Compare(a.ID, b.ID)
+	})
+
+	return snapshots
 }
 
 // DrainSessions ends every live worker session and rejects new ones, then
@@ -106,8 +152,8 @@ func (s *WorkerService) DrainSessions(ctx context.Context) error {
 	s.draining = true
 
 	cancels := make([]context.CancelFunc, 0, len(s.sessions))
-	for _, cancel := range s.sessions {
-		cancels = append(cancels, cancel)
+	for _, entry := range s.sessions {
+		cancels = append(cancels, entry.cancel)
 	}
 
 	s.sessionMutex.Unlock()
@@ -149,7 +195,7 @@ func (s *WorkerService) DrainSessions(ctx context.Context) error {
 
 // registerSession admits one accepted session into the registry, or
 // reports that the node is draining.
-func (s *WorkerService) registerSession(sessionID string, cancel context.CancelFunc) error {
+func (s *WorkerService) registerSession(snapshot SessionSnapshot, cancel context.CancelFunc) error {
 	s.sessionMutex.Lock()
 	defer s.sessionMutex.Unlock()
 
@@ -157,7 +203,7 @@ func (s *WorkerService) registerSession(sessionID string, cancel context.CancelF
 		return errNodeDraining
 	}
 
-	s.sessions[sessionID] = cancel
+	s.sessions[snapshot.ID] = &sessionEntry{cancel: cancel, snapshot: snapshot}
 
 	return nil
 }
@@ -220,7 +266,15 @@ func (s *WorkerService) Session(ctx context.Context, stream *connect.BidiStream[
 	sessionCtx, sessionCancel := context.WithCancel(ctx)
 	defer sessionCancel()
 
-	if err := s.registerSession(sessionID, sessionCancel); err != nil {
+	snapshot := SessionSnapshot{
+		ID:          sessionID,
+		Queues:      queues,
+		Concurrency: hello.GetConcurrency(),
+		SDKVersion:  hello.GetSdkVersion(),
+		ConnectedAt: s.timeSource.Now(),
+	}
+
+	if err := s.registerSession(snapshot, sessionCancel); err != nil {
 		return connect.NewError(connect.CodeUnavailable, err)
 	}
 

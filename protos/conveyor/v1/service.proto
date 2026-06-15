@@ -41,6 +41,9 @@ service AdminService {
   rpc ResumeCron(ResumeCronRequest) returns (ResumeCronResponse) {}
   rpc DeleteCron(DeleteCronRequest) returns (DeleteCronResponse) {}
   rpc ClusterInfo(ClusterInfoRequest) returns (ClusterInfoResponse) {}
+  // ListWorkerSessions lists the worker sessions connected to the node serving
+  // the request, for the operations dashboard's worker-topology view.
+  rpc ListWorkerSessions(ListWorkerSessionsRequest) returns (ListWorkerSessionsResponse) {}
 }
 
 // ---- TaskService messages ----
@@ -316,4 +319,20 @@ message ClusterInfoResponse {
 message NodeInfo {
   string address = 1;
   google.protobuf.Timestamp started_at = 2;
+}
+
+message ListWorkerSessionsRequest {}
+
+message ListWorkerSessionsResponse {
+  repeated WorkerSession sessions = 1;
+}
+
+// WorkerSession describes one connected worker process: the queues it serves,
+// its declared concurrency, its SDK version, and when it connected.
+message WorkerSession {
+  string id = 1;
+  repeated string queues = 2;
+  int32 concurrency = 3;
+  string sdk_version = 4;
+  google.protobuf.Timestamp connected_at = 5;
 }

@@ -25,7 +25,9 @@ DOCKER_RUN := docker run --rm \
 	-w $(WORKDIR) \
 	$(IMAGE)
 
-.PHONY: help all image build test lint proto proto-format proto-lint proto-breaking quickstart chaos e2e benchmark helm-lint release clean
+DASHBOARD_DIR := web/dashboard
+
+.PHONY: help all image build test lint proto proto-format proto-lint proto-breaking quickstart chaos e2e e2e-clean e2e-dashboard e2e-demo benchmark helm-lint release clean dashboard dashboard-gen dashboard-test
 
 help: ## Show available targets
 	@awk 'BEGIN{FS=":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -78,15 +80,46 @@ chaos: ## Run the 3-node chaos suite CHAOS_COUNT times (default 20) under -race
 	$(GO) test -race -run TestThreeNodeChaosLosesNothing -count=$(CHAOS_COUNT) ./internal/actors
 
 # kind-based end-to-end packaging test: build the image, install the chart on a
-# throwaway kind cluster, and assert rollout + cluster formation + metrics.
-e2e: ## Run the kind-based end-to-end deployment test (needs docker, kind, kubectl, helm)
+# throwaway kind cluster, and assert rollout + cluster formation + metrics +
+# dashboard + rolling-restart. The cluster is torn down on exit unless KEEP=1.
+e2e: ## Run the kind-based e2e test (needs docker, kind, kubectl, helm; KEEP=1 keeps the cluster)
 	./hack/e2e-kind.sh
+
+# These mirror the values in hack/e2e-kind.sh; keep them in sync.
+E2E_CLUSTER   ?= conveyor-e2e
+E2E_NAMESPACE ?= conveyor
+E2E_RELEASE   ?= conveyor
+E2E_TOKEN     ?= e2e-token
+e2e-clean: ## Delete a leftover e2e kind cluster (e.g. after KEEP=1 or an interrupted run)
+	kind delete cluster --name $(E2E_CLUSTER)
+
+e2e-dashboard: ## Open the e2e dashboard in a browser (run after KEEP=1 make e2e)
+	@echo "Dashboard: http://localhost:8080/   (API token: $(E2E_TOKEN))"; \
+	( sleep 2; \
+	  if command -v open >/dev/null 2>&1; then open http://localhost:8080/; \
+	  elif command -v xdg-open >/dev/null 2>&1; then xdg-open http://localhost:8080/; fi ) & \
+	kubectl -n $(E2E_NAMESPACE) port-forward svc/$(E2E_RELEASE) 8080:8080
+
+e2e-demo: ## One command: stand up a cluster with continuous load and open the live dashboard
+	PLAYGROUND=1 ./hack/e2e-kind.sh
 
 # Throughput/latency harness on the in-memory broker (no infra). See
 # benchmark/README.md for the Postgres invocation and the honesty notes.
 BENCH_TASKS ?= 20000
 benchmark: ## Run the throughput/latency benchmark (in-memory broker)
 	$(GO) run ./benchmark --tasks=$(BENCH_TASKS)
+
+# The dashboard SPA is built by Vite and its dist/ is committed, so `go build`
+# never needs Node. Run this to refresh the committed bundle after UI changes.
+dashboard: ## Rebuild the embedded dashboard bundle (needs Node) and commit dist/
+	cd $(DASHBOARD_DIR) && npm ci && npm run build
+
+dashboard-gen: ## Regenerate the dashboard's TypeScript Connect client from the protos
+	cd $(DASHBOARD_DIR) && npm ci
+	buf generate --template buf.gen.web.yaml
+
+dashboard-test: ## Run the dashboard frontend unit tests (needs Node)
+	cd $(DASHBOARD_DIR) && npm ci && npm test
 
 # Lint the chart and prove it renders with both standalone and clustered
 # value sets. Runs on the host helm (not the tools image).

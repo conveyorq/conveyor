@@ -26,6 +26,8 @@ broker, with no Redis and no polling.
   [embedded](#embedded-mode) in a Go process.
 - **Secure by default** — bearer-token auth that fails closed: outside `--dev`
   the server refuses to start unauthenticated unless you opt in explicitly.
+- **Built-in operations dashboard** — an embedded web console to inspect and
+  operate queues, tasks, cron, and connected workers; host it anywhere.
 - **Prometheus metrics** and **OpenTelemetry traces** out of the box.
 
 ## Quickstart
@@ -179,6 +181,26 @@ queues, scheduling, and lease recovery rebalance automatically when a node is
 lost, and no task is dropped. Scale by adding nodes; the broker is the only
 stateful dependency.
 
+## Dashboard
+
+`conveyord` embeds a web operations console, served at the API root and **enabled
+by default in every mode, production included** — open the server's API URL in a
+browser. In production it sits behind the same bearer-token auth as the API: you
+enter a token in the UI, which is kept client-side and sent on each call.
+`conveyord --dev` is just the local convenience — auth off, zero config.
+
+It is a full read **and write** console: inspect queues, drill into tasks by
+state with a detail view, manage cron, and see the worker sessions connected to
+each node — and act: run/cancel/delete tasks, pause/resume queues, edit cron.
+Auto-refresh keeps it live, and a configurable link deep-links to Grafana for
+time-series metrics.
+
+The UI is just an API client, so you can run the embedded copy, serve the same
+bundle from your own host/CDN, or front both behind one ingress. Set
+`api.dashboard: false` to disable the embedded copy, `api.cors_origins` to allow
+a different-origin UI, and `api.grafana_url` for the metrics link. See the
+[operations guide](docs/operations.md#dashboard).
+
 ## Documentation
 
 - [Operations guide](docs/operations.md) — deployment modes, configuration,
@@ -190,6 +212,8 @@ stateful dependency.
   harness (`make benchmark`) and its honesty notes.
 - Deployment artifacts live under [`deploy/`](deploy): Docker, Helm, systemd,
   Compose, and Grafana.
+- [Contributing](CONTRIBUTING.md) — build, test, conventions, and how to submit
+  changes.
 
 ## Development
 
@@ -199,7 +223,9 @@ make test        # race-enabled tests (Postgres tests need Docker)
 make lint        # golangci-lint via the pinned tools image
 make quickstart  # the scripted README quickstart
 make chaos       # 3-node kill test, repeated for the zero-loss gate (CHAOS_COUNT=20)
-make e2e         # kind-based end-to-end deployment test
+make e2e         # kind-based end-to-end deployment test (KEEP=1 keeps the cluster)
+make e2e-demo    # live playground: cluster + continuous load + dashboard
+make dashboard   # rebuild the embedded dashboard bundle (needs Node)
 ```
 
 ### End-to-end deployment test
@@ -213,5 +239,46 @@ rollout completes, the three nodes form one cluster, and the metrics endpoint
 serves. It then drives load through a **rolling restart** — an in-cluster
 producer/worker enqueues and processes tasks through the API Service while the
 StatefulSet is rolled one pod at a time — and asserts the cluster reforms and
-every task completes with zero loss, before deleting the cluster. It needs
-`docker`, `kind`, `kubectl`, and `helm`, and runs the same way locally and in CI.
+every task completes with zero loss. It needs `docker`, `kind`, `kubectl`, and
+`helm`, and runs the same way locally and in CI.
+
+The cluster is torn down automatically on exit. To watch it **live** instead —
+stand up the cluster, run a continuous producer/worker, and open the dashboard
+so you can see tasks flow — use the one-command playground:
+
+```sh
+make e2e-demo      # cluster + continuous load + live dashboard at http://localhost:8080/ (token: e2e-token)
+make e2e-clean     # tear the cluster down when finished
+```
+
+It runs the same health checks first, then goes live and blocks until Ctrl-C;
+turn on **Auto-refresh** in the UI to watch the queues, tasks, and workers
+update. The pieces are also available on their own: `KEEP=1 make e2e` (the
+assert-and-exit test, kept), `make e2e-dashboard` (port-forward + open an
+existing cluster's dashboard), and `make e2e-clean` (remove a cluster, including
+one left by an interrupted run).
+
+### Dashboard development
+
+The dashboard (`web/dashboard/`) is a React + TypeScript app built with Vite.
+Its built bundle (`dist/`) is **not committed** — it's built in CI and baked
+into the Docker image. `go build`/`go test` don't need Node (the dashboard
+tests skip when the bundle is absent, and the binary serves an empty dashboard
+until built). Build it locally with:
+
+```sh
+make dashboard       # build web/dashboard/dist (embedded by conveyord)
+make dashboard-test  # run the frontend unit tests (Vitest)
+make dashboard-gen   # regenerate the TypeScript API client from the protos
+```
+
+For a fast edit loop, run a dev server against a local `conveyord --dev`:
+
+```sh
+go run ./cmd/conveyord --dev                       # API + dashboard on :8080
+cd web/dashboard && npm install && npm run dev      # hot-reloading UI on :5173
+```
+
+Open the Vite dev server with `?api=http://localhost:8080` so it targets the
+running server. After changing the UI, run `make dashboard` to refresh the
+committed `dist/` that ships in the binary.

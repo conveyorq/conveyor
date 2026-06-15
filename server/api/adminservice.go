@@ -44,6 +44,13 @@ import (
 // slow or partitioned membership view must not stall admin polling.
 const peersLookupTimeout = 500 * time.Millisecond
 
+// SessionLister reports the worker sessions connected to this node. The
+// WorkerService implements it; AdminService surfaces it for the dashboard.
+type SessionLister interface {
+	// Sessions returns a snapshot of the live worker sessions.
+	Sessions() []SessionSnapshot
+}
+
 // AdminService serves the inspection and operations API.
 type AdminService struct {
 	// engine reaches the queue grains for pause, resume, and wake-ups.
@@ -52,17 +59,20 @@ type AdminService struct {
 	taskLog broker.Broker
 	// timeSource anchors derived instants such as node start times.
 	timeSource clock.Clock
+	// sessions lists the worker sessions connected to this node.
+	sessions SessionLister
 }
 
 // enforce interface compliance at compile time.
 var _ conveyorv1connect.AdminServiceHandler = (*AdminService)(nil)
 
 // NewAdminService assembles the admin API service.
-func NewAdminService(engine *actors.Engine, taskLog broker.Broker, timeSource clock.Clock) *AdminService {
+func NewAdminService(engine *actors.Engine, taskLog broker.Broker, timeSource clock.Clock, sessions SessionLister) *AdminService {
 	return &AdminService{
 		engine:     engine,
 		taskLog:    taskLog,
 		timeSource: timeSource,
+		sessions:   sessions,
 	}
 }
 
@@ -359,13 +369,39 @@ func (s *AdminService) ClusterInfo(ctx context.Context, _ *connect.Request[conve
 	peers, err := system.Peers(ctx, peersLookupTimeout)
 	if err == nil {
 		for _, peer := range peers {
-			nodes = append(nodes, &conveyorv1.NodeInfo{
-				Address: fmt.Sprintf("%s:%d", peer.Host, peer.PeersPort),
-			})
+			node := &conveyorv1.NodeInfo{Address: fmt.Sprintf("%s:%d", peer.Host, peer.PeersPort)}
+
+			// CreatedAt is the peer's discovery time in Unix nanoseconds; it is
+			// the join time visible from this node (peers do not report their
+			// own uptime). Zero means unknown.
+			if peer.CreatedAt > 0 {
+				node.StartedAt = timestamppb.New(time.Unix(0, peer.CreatedAt))
+			}
+
+			nodes = append(nodes, node)
 		}
 	}
 
 	return connect.NewResponse(&conveyorv1.ClusterInfoResponse{Nodes: nodes}), nil
+}
+
+// ListWorkerSessions reports the worker sessions connected to this node.
+func (s *AdminService) ListWorkerSessions(_ context.Context, _ *connect.Request[conveyorv1.ListWorkerSessionsRequest]) (*connect.Response[conveyorv1.ListWorkerSessionsResponse], error) {
+	snapshots := s.sessions.Sessions()
+
+	sessions := make([]*conveyorv1.WorkerSession, 0, len(snapshots))
+
+	for _, snapshot := range snapshots {
+		sessions = append(sessions, &conveyorv1.WorkerSession{
+			Id:          snapshot.ID,
+			Queues:      snapshot.Queues,
+			Concurrency: snapshot.Concurrency,
+			SdkVersion:  snapshot.SDKVersion,
+			ConnectedAt: timestamppb.New(snapshot.ConnectedAt),
+		})
+	}
+
+	return connect.NewResponse(&conveyorv1.ListWorkerSessionsResponse{Sessions: sessions}), nil
 }
 
 // setCronPaused validates the id and persists the entry pause flag.

@@ -45,6 +45,7 @@ jobs:
               - 'hack/e2e-kind.sh'
               - 'hack/e2e-load.Dockerfile'
               - 'hack/e2e-load/**'
+              - 'web/dashboard/**'
               - 'Makefile'
               - '.github/workflows/ci.yml'
 
@@ -98,10 +99,18 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-go-
       - name: Vendoring
-        run: go mod tidy && go mod vendor   
+        run: go mod tidy && go mod vendor
       - name: Download dependencies
         run: |
           go mod download
+      - uses: actions/setup-node@v4
+        name: Setup Node
+        with:
+          node-version: "22"
+      - name: Build dashboard
+        # dist/ is not committed; build it so the embedded UI is real for the
+        # lint typecheck and the dashboard tests.
+        run: make dashboard
       - name: Lint
         if: matrix.os == 'linux'
         uses: golangci/golangci-lint-action@v9

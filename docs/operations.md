@@ -95,6 +95,24 @@ within a queue, and per-queue weights bias a worker that serves several queues.
   the metrics port off the public API listener. Never expose the metrics port
   (`:9464`) publicly — it carries internal topology.
 
+## Dashboard
+
+`conveyord` embeds a read+write operations console, served at the API root.
+
+- **Enable/disable.** On by default (`api.dashboard: true`); set it `false` to
+  expose the API without the UI. The static shell is served unauthenticated (it
+  holds no secrets); the data calls it makes go through the bearer-token-
+  authenticated API, so with auth on, enter a token in the UI.
+- **Hosting models.** (1) *Embedded* — served by `conveyord`, same origin, no
+  CORS. (2) *Same-origin behind a proxy* — your own UI and the API behind one
+  ingress; no CORS. (3) *Different origin* — a separately hosted UI (CDN/your
+  host); set `api.cors_origins` to the UI's origin(s) (empty disables CORS; `*`
+  allows any). The same built bundle works in all three; it reads its API base
+  URL at runtime (defaults to same-origin, overridable via `?api=` or a global).
+- **Metrics link.** Set `api.grafana_url` to surface a "Metrics" link to your
+  Grafana; the dashboard owns task-level inspection and operations, Grafana owns
+  the time-series charts.
+
 ## Observability
 
 - **Health.** `/healthz` (liveness) and `/readyz` (readiness — broker reachable

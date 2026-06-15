@@ -1,0 +1,120 @@
+import { expect, test, vi } from "vitest";
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { createRouterTransport } from "@connectrpc/connect";
+import { create } from "@bufbuild/protobuf";
+import { AdminService, TaskInfoSchema } from "../gen/conveyor/v1/service_pb.ts";
+import { TaskState } from "../gen/conveyor/v1/task_pb.ts";
+import { ApiProvider, createApi } from "../api/context.tsx";
+import { Tasks } from "./Tasks.tsx";
+
+function task(id: string, state: TaskState) {
+  return create(TaskInfoSchema, { id, type: "email:welcome", queue: "default", state });
+}
+
+test("lists tasks and shows detail on row click", async () => {
+  const transport = createRouterTransport((router) => {
+    router.service(AdminService, {
+      listTasks: () => ({ tasks: [task("01ABC", TaskState.PENDING)], nextPageToken: "" }),
+    });
+  });
+
+  render(
+    <ApiProvider api={createApi(transport)}>
+      <Tasks />
+    </ApiProvider>,
+  );
+
+  await userEvent.click(await screen.findByText("01ABC"));
+  expect(screen.getByLabelText("Task detail")).toHaveTextContent("email:welcome");
+});
+
+test("refetches when the state filter changes", async () => {
+  const seen: TaskState[] = [];
+  const transport = createRouterTransport((router) => {
+    router.service(AdminService, {
+      listTasks: (req) => {
+        seen.push(req.state);
+        return { tasks: [], nextPageToken: "" };
+      },
+    });
+  });
+
+  render(
+    <ApiProvider api={createApi(transport)}>
+      <Tasks />
+    </ApiProvider>,
+  );
+
+  await screen.findByText("No tasks match.");
+  await userEvent.selectOptions(screen.getByLabelText("State filter"), String(TaskState.ARCHIVED));
+
+  await screen.findByText("No tasks match.");
+  expect(seen).toContain(TaskState.ARCHIVED);
+});
+
+test("pages forward and back", async () => {
+  const transport = createRouterTransport((router) => {
+    router.service(AdminService, {
+      listTasks: (req) =>
+        req.pageToken === ""
+          ? { tasks: [task("01A", TaskState.PENDING)], nextPageToken: "01A" }
+          : { tasks: [task("02B", TaskState.PENDING)], nextPageToken: "" },
+    });
+  });
+
+  render(
+    <ApiProvider api={createApi(transport)}>
+      <Tasks />
+    </ApiProvider>,
+  );
+
+  expect(await screen.findByText("01A")).toBeInTheDocument();
+
+  await userEvent.click(screen.getByRole("button", { name: "Next" }));
+  expect(await screen.findByText("02B")).toBeInTheDocument();
+
+  await userEvent.click(screen.getByRole("button", { name: "Previous" }));
+  expect(await screen.findByText("01A")).toBeInTheDocument();
+});
+
+test("hides Run for a completed task", async () => {
+  const transport = createRouterTransport((router) => {
+    router.service(AdminService, {
+      listTasks: () => ({ tasks: [task("01DONE", TaskState.COMPLETED)], nextPageToken: "" }),
+    });
+  });
+
+  render(
+    <ApiProvider api={createApi(transport)}>
+      <Tasks />
+    </ApiProvider>,
+  );
+
+  await userEvent.click(await screen.findByText("01DONE"));
+
+  expect(screen.queryByRole("button", { name: "Run now" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Delete" })).toBeInTheDocument();
+});
+
+test("runs a task from the detail panel", async () => {
+  const runTask = vi.fn().mockReturnValue({});
+  const transport = createRouterTransport((router) => {
+    router.service(AdminService, {
+      listTasks: () => ({ tasks: [task("01ABC", TaskState.RETRY)], nextPageToken: "" }),
+      runTask,
+    });
+  });
+
+  render(
+    <ApiProvider api={createApi(transport)}>
+      <Tasks />
+    </ApiProvider>,
+  );
+
+  await userEvent.click(await screen.findByText("01ABC"));
+  await userEvent.click(screen.getByRole("button", { name: "Run now" }));
+
+  expect(runTask).toHaveBeenCalledOnce();
+});

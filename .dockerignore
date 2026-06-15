@@ -7,6 +7,8 @@
 .gomodcache
 bin
 deploy/grafana
-web
+# The dashboard's Go package (embed.go) and its committed dist/ are needed to
+# build conveyord; only the frontend's node_modules is excluded.
+web/dashboard/node_modules
 *.md
 Dockerfile.tools
