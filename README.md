@@ -296,5 +296,7 @@ committed `dist/` that ships in the binary.
 
 ## License
 
-Conveyor is licensed under the [Apache License 2.0](LICENSE). Third-party
-dependency licenses are inventoried in [docs/licenses.md](docs/licenses.md).
+Conveyor is **fully open source** under the [Apache License 2.0](LICENSE) — the
+entire project, with no separate enterprise, commercial, or closed-source
+edition. Third-party dependency licenses are inventoried in
+[docs/licenses.md](docs/licenses.md).

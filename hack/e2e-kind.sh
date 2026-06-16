@@ -201,7 +201,12 @@ YAML
   if command -v open >/dev/null 2>&1; then open http://localhost:8080/; elif command -v xdg-open >/dev/null 2>&1; then xdg-open http://localhost:8080/; fi
   printf '\nDashboard live at http://localhost:8080/  (API token: %s)\n' "${TOKEN}"
   printf 'Turn on "Auto-refresh" in the UI to watch tasks flow. Ctrl-C to stop.\n\n'
-  wait "${forward_pid}"
+
+  # Ctrl-C is the documented way to stop the demo, so treat SIGINT/SIGTERM as a
+  # clean exit. The EXIT trap still tears the cluster down; without this, the
+  # signal would propagate as a non-zero status and make would report a failure.
+  trap 'exit 0' INT TERM
+  wait "${forward_pid}" || true
   exit 0
 fi
 
