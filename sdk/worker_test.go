@@ -1,24 +1,6 @@
-// MIT License
+// Copyright 2026 ConveyorQ
 //
-// Copyright (c) 2026 ConveyorQ
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// SPDX-License-Identifier: Apache-2.0
 
 package conveyor
 
@@ -445,10 +427,86 @@ func TestHandlerContextCarriesTaskValues(t *testing.T) {
 	require.NoError(t, <-runDone)
 }
 
-func TestOutcomeForError(t *testing.T) {
-	require.Equal(t, conveyorv1.TaskOutcome_TASK_OUTCOME_SUCCESS, outcomeForError(nil))
-	require.Equal(t, conveyorv1.TaskOutcome_TASK_OUTCOME_SKIP_RETRY, outcomeForError(SkipRetry(errors.New("bad"))))
-	require.Equal(t, conveyorv1.TaskOutcome_TASK_OUTCOME_RETRY, outcomeForError(errors.New("transient")))
+// TestWorkerDrainReleasesInflightTask proves the headline drain guarantee: a
+// task interrupted by a worker shutdown is handed back penalty-free — it
+// returns to pending with no retry consumed — rather than counting as a failure.
+func TestWorkerDrainReleasesInflightTask(t *testing.T) {
+	baseURL := startTestServer(t, nil)
+
+	client, err := NewClient(baseURL)
+	require.NoError(t, err)
+
+	worker, err := NewWorker(baseURL,
+		WithQueues(map[string]int{"default": 1}), WithConcurrency(1))
+	require.NoError(t, err)
+
+	started := make(chan struct{})
+
+	mux := NewMux()
+	mux.HandleFunc("test:block", func(ctx context.Context, _ *Task) error {
+		close(started)
+		<-ctx.Done()
+
+		return ctx.Err()
+	})
+
+	runCtx, stopWorker := context.WithCancel(context.Background())
+	runDone := make(chan error, 1)
+
+	go func() { runDone <- worker.Run(runCtx, mux) }()
+
+	info, err := client.Enqueue(context.Background(), NewTask("test:block", JSON("x")), Retention(time.Hour))
+	require.NoError(t, err)
+
+	select {
+	case <-started:
+	case <-time.After(30 * time.Second):
+		t.Fatal("handler never started")
+	}
+
+	// Drain the worker while the task is executing.
+	stopWorker()
+	require.NoError(t, <-runDone)
+
+	// The task is released, not retried: pending again with its retry budget intact.
+	awaitTaskState(t, client, info.ID, TaskStatePending)
+
+	got, err := client.GetTask(context.Background(), info.ID)
+	require.NoError(t, err)
+	require.Zero(t, got.Retried, "a drained task must not consume a retry")
+}
+
+func TestOutcomeFor(t *testing.T) {
+	background := context.Background()
+
+	// Without a cancellation cause, the outcome follows the handler error.
+	require.Equal(t, conveyorv1.TaskOutcome_TASK_OUTCOME_SUCCESS, outcomeFor(background, nil))
+	require.Equal(t, conveyorv1.TaskOutcome_TASK_OUTCOME_SKIP_RETRY, outcomeFor(background, SkipRetry(errors.New("bad"))))
+	require.Equal(t, conveyorv1.TaskOutcome_TASK_OUTCOME_RETRY, outcomeFor(background, errors.New("transient")))
+
+	// A drain-canceled task is RELEASED — handed back with no retry penalty —
+	// while the handler still observes a plain context.Canceled.
+	drainCtx, drainCancel := context.WithCancelCause(context.Background())
+	drainCancel(errDraining)
+	require.ErrorIs(t, drainCtx.Err(), context.Canceled)
+	require.Equal(t, conveyorv1.TaskOutcome_TASK_OUTCOME_RELEASED, outcomeFor(drainCtx, drainCtx.Err()))
+
+	// A task that completed just as the drain hit is still SUCCESS: finished
+	// work is never discarded.
+	require.Equal(t, conveyorv1.TaskOutcome_TASK_OUTCOME_SUCCESS, outcomeFor(drainCtx, nil))
+
+	// A server Cancel frame (admin cancel or lost lease) stays RETRY so the
+	// server applies its own policy.
+	cancelCtx, serverCancel := context.WithCancelCause(context.Background())
+	serverCancel(errServerCanceled)
+	require.Equal(t, conveyorv1.TaskOutcome_TASK_OUTCOME_RETRY, outcomeFor(cancelCtx, cancelCtx.Err()))
+
+	// A deadline is RETRY, not RELEASED. A fixed past instant makes the
+	// context expire immediately without reading the system clock.
+	deadlineCtx, stop := context.WithDeadline(context.Background(), time.Unix(0, 0))
+	defer stop()
+	require.ErrorIs(t, deadlineCtx.Err(), context.DeadlineExceeded)
+	require.Equal(t, conveyorv1.TaskOutcome_TASK_OUTCOME_RETRY, outcomeFor(deadlineCtx, deadlineCtx.Err()))
 }
 
 func TestSdkVersionIsNeverEmpty(t *testing.T) {

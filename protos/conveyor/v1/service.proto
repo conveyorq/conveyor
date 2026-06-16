@@ -168,9 +168,19 @@ message Hello {
   int32 concurrency = 2;
   map<string, string> labels = 3;
   string sdk_version = 4;
+  // min_server_version is the minimum conveyord version this worker requires,
+  // as a semver string (e.g. "v1.2.0"). Empty means no requirement; a
+  // non-semver value disables the check. The server rejects the session when
+  // its own version is older than this.
+  string min_server_version = 5;
 }
 
-// Credit opens n free execution slots to the server.
+// Credit optionally grants n additional dispatch slots beyond the worker's
+// declared Hello.concurrency. It is NOT required: the server seeds dispatch
+// credits equal to Hello.concurrency and refills one per Result, so a worker
+// that simply answers every Dispatch with a Result needs no Credit frame.
+// When sent, n must be in 1..concurrency; the server caps total credits at the
+// declared concurrency. See docs/protocol.md §5.5.
 message Credit {
   int32 n = 1;
 }
@@ -207,6 +217,13 @@ message Welcome {
   string session_id = 1;
   google.protobuf.Duration lease_ttl = 2;
   google.protobuf.Duration heartbeat_interval = 3;
+  // server_version is the conveyord build serving this session, as a semver
+  // string (or a non-semver dev marker). It lets a worker detect version skew.
+  string server_version = 4;
+  // min_sdk_version is the oldest worker SDK version this server admits, as a
+  // semver string. A worker older than this is rejected at Hello; the value is
+  // surfaced here so a worker can report the requirement clearly.
+  string min_sdk_version = 5;
 }
 
 // Dispatch delivers one leased task to the worker.

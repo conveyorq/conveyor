@@ -117,6 +117,9 @@ jobs:
         with:
           version: v2.12.2
           args: --timeout 10m --config .golangci.yml
+      - name: License headers
+        if: matrix.os == 'linux'
+        run: make license-check
       - name: Test (race)
         shell: bash
         run: |

@@ -136,6 +136,13 @@ within a queue, and per-queue weights bias a worker that serves several queues.
   `engine.shutdown_timeout`. On Kubernetes, `terminationGracePeriodSeconds` must
   exceed `shutdown_timeout` (the chart sets this) so the drain completes before
   SIGKILL.
+- **Worker deploys are free.** When a *worker* process shuts down (cancel its
+  `Run` context, e.g. on `SIGTERM`), any task it was running is handed back with
+  **no retry penalty and no backoff** — it becomes due immediately on another
+  worker rather than counting as a failed attempt. So rolling out a new worker
+  build does not eat into tasks' retry budgets or delay them. A genuine worker
+  *crash* is different: it is recovered by lease expiry and **does** count as a
+  retry, which bounds a task that repeatedly kills its worker.
 - **Rolling restart.** Because execution is **at-least-once**, redelivery during
   a restart is always safe — design handlers to be idempotent. The StatefulSet
   rolls one pod at a time; a PodDisruptionBudget keeps a quorum available.

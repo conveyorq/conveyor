@@ -1,24 +1,6 @@
-// MIT License
+// Copyright 2026 ConveyorQ
 //
-// Copyright (c) 2026 ConveyorQ
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// SPDX-License-Identifier: Apache-2.0
 
 package conveyor
 
@@ -53,6 +35,21 @@ const (
 	reconnectMaxDelay = 30 * time.Second
 )
 
+// Cancellation causes distinguish why a task's execution context was canceled,
+// which decides the outcome reported to the server. They are attached as the
+// context cause, not surfaced to handlers, which always observe context.Canceled.
+var (
+	// errDraining marks a task canceled because the worker is shutting down.
+	// Such a task is reported RELEASED: it returns to the queue with no retry
+	// penalty and no backoff, so a deploy or scale-down never costs a task an
+	// attempt.
+	errDraining = errors.New("conveyor: worker draining")
+	// errServerCanceled marks a task canceled by a server Cancel frame (an
+	// admin cancel or a lost lease). It is reported RETRY so the server applies
+	// its own policy — archiving an admin cancel, redelivering a lost lease.
+	errServerCanceled = errors.New("conveyor: canceled by server")
+)
+
 // Worker holds one session to a Conveyor server and executes dispatched
 // tasks through a Mux.
 type Worker struct {
@@ -62,6 +59,9 @@ type Worker struct {
 	queues map[string]int
 	// concurrency is the total concurrent execution slots.
 	concurrency int
+	// minServerVersion is the minimum server version the worker requires,
+	// sent in Hello; empty imposes no requirement.
+	minServerVersion string
 }
 
 // NewWorker builds a Worker for the Conveyor server at baseURL. WithQueues
@@ -96,9 +96,10 @@ func NewWorker(baseURL string, opts ...Option) (*Worker, error) {
 	}
 
 	return &Worker{
-		wire:        transport.New(baseURL, settings.token),
-		queues:      settings.queues,
-		concurrency: settings.concurrency,
+		wire:             transport.New(baseURL, settings.token),
+		queues:           settings.queues,
+		concurrency:      settings.concurrency,
+		minServerVersion: settings.minServerVersion,
 	}, nil
 }
 
@@ -179,9 +180,10 @@ func (w *Worker) runSession(ctx context.Context, mux *Mux) (bool, error) {
 	hello := &conveyorv1.WorkerMessage{
 		Frame: &conveyorv1.WorkerMessage_Hello{
 			Hello: &conveyorv1.Hello{
-				Queues:      queues,
-				Concurrency: int32(w.concurrency),
-				SdkVersion:  sdkVersion(),
+				Queues:           queues,
+				Concurrency:      int32(w.concurrency),
+				SdkVersion:       sdkVersion(),
+				MinServerVersion: w.minServerVersion,
 			},
 		},
 	}
@@ -204,7 +206,7 @@ func (w *Worker) runSession(ctx context.Context, mux *Mux) (bool, error) {
 		stream:     stream,
 		mux:        mux,
 		slots:      make(chan struct{}, w.concurrency),
-		cancels:    make(map[string]context.CancelFunc),
+		cancels:    make(map[string]context.CancelCauseFunc),
 		sessionID:  welcome.GetSessionId(),
 		runContext: ctx,
 	}
@@ -225,8 +227,9 @@ type workerSession struct {
 	// stateMutex guards cancels.
 	stateMutex sync.Mutex
 	// cancels maps every unresolved task id to its execution cancel; its
-	// keys are the heartbeat's active id set.
-	cancels map[string]context.CancelFunc
+	// keys are the heartbeat's active id set. The cause passed to the cancel
+	// decides the reported outcome (see errDraining, errServerCanceled).
+	cancels map[string]context.CancelCauseFunc
 	// sessionID is the server-assigned session id.
 	sessionID string
 	// runContext is the Run context; its cancellation ends the session.
@@ -234,9 +237,10 @@ type workerSession struct {
 }
 
 // run drives the receive loop and the heartbeat until the stream ends.
-// Executions still in flight are canceled on the way out: the server
-// releases their leases the moment the stream closes, so finishing them
-// here would only duplicate work the cluster is already redelivering.
+// Executions still in flight are canceled on the way out with the draining
+// cause, so each is reported RELEASED: a deploy or scale-down hands its tasks
+// back with no retry penalty. The server also releases the leases on stream
+// close, so an abrupt disconnect reaches the same penalty-free outcome.
 func (s *workerSession) run(heartbeatInterval time.Duration) error {
 	defer s.cancelAll()
 
@@ -311,32 +315,42 @@ func (s *workerSession) heartbeatLoop(interval time.Duration, done <-chan struct
 // dispatch registers a delivered task and starts its execution. The task
 // is tracked before a slot frees up, so heartbeats extend the lease of
 // queued work too.
+//
+// The execution context is rooted at context.Background, not runContext, so a
+// shutdown does not pre-empt it with a generic cause: cancellation is driven
+// explicitly (drain via cancelAll, an admin cancel via cancel) and the cause
+// it carries decides the reported outcome.
 func (s *workerSession) dispatch(dispatch *conveyorv1.Dispatch) {
 	task := dispatch.GetTask()
 
-	executionCtx, cancel := context.WithCancel(s.runContext)
+	executionCtx, cancel := context.WithCancelCause(context.Background())
+	release := func() { cancel(nil) }
 
 	if deadline := dispatch.GetDeadline(); deadline.IsValid() {
-		executionCtx, cancel = context.WithDeadline(s.runContext, deadline.AsTime())
+		var stopDeadline context.CancelFunc
+
+		executionCtx, stopDeadline = context.WithDeadline(executionCtx, deadline.AsTime())
+		release = func() { stopDeadline(); cancel(nil) }
 	}
 
 	s.stateMutex.Lock()
 	s.cancels[task.GetId()] = cancel
 	s.stateMutex.Unlock()
 
-	go s.execute(executionCtx, cancel, task)
+	go s.execute(executionCtx, release, task)
 }
 
-// execute waits for a slot, runs the handler, and reports the result.
-func (s *workerSession) execute(ctx context.Context, cancel context.CancelFunc, envelope *conveyorv1.TaskEnvelope) {
-	defer cancel()
+// execute waits for a slot, runs the handler, and reports the result. release
+// frees the execution context once the task is done.
+func (s *workerSession) execute(ctx context.Context, release func(), envelope *conveyorv1.TaskEnvelope) {
+	defer release()
 
 	select {
 	case s.slots <- struct{}{}:
 		defer func() { <-s.slots }()
 
 	case <-ctx.Done():
-		s.finish(envelope.GetId(), ctx.Err())
+		s.finish(ctx, envelope.GetId(), ctx.Err())
 
 		return
 	}
@@ -354,12 +368,12 @@ func (s *workerSession) execute(ctx context.Context, cancel context.CancelFunc, 
 
 	handler, ok := s.mux.handler(task.taskType)
 	if !ok {
-		s.finish(task.id, fmt.Errorf("no handler registered for task type %q", task.taskType))
+		s.finish(ctx, task.id, fmt.Errorf("no handler registered for task type %q", task.taskType))
 
 		return
 	}
 
-	s.finish(task.id, traced(withTaskValues(ctx, task), task, func(spanCtx context.Context) error {
+	s.finish(ctx, task.id, traced(withTaskValues(ctx, task), task, func(spanCtx context.Context) error {
 		return invoke(spanCtx, handler, task)
 	}))
 }
@@ -376,13 +390,15 @@ func invoke(ctx context.Context, handler HandlerFunc, task *Task) (err error) {
 	return handler(ctx, task)
 }
 
-// finish reports one execution outcome and forgets the task.
-func (s *workerSession) finish(taskID string, handlerErr error) {
+// finish reports one execution outcome and forgets the task. The execution
+// context is consulted for its cancellation cause, which distinguishes a
+// drain (RELEASED) from a server cancel or a genuine failure (RETRY).
+func (s *workerSession) finish(ctx context.Context, taskID string, handlerErr error) {
 	s.stateMutex.Lock()
 	delete(s.cancels, taskID)
 	s.stateMutex.Unlock()
 
-	result := &conveyorv1.Result{TaskId: taskID, Outcome: outcomeForError(handlerErr)}
+	result := &conveyorv1.Result{TaskId: taskID, Outcome: outcomeFor(ctx, handlerErr)}
 
 	if handlerErr != nil {
 		result.ErrorMsg = handlerErr.Error()
@@ -397,24 +413,26 @@ func (s *workerSession) finish(taskID string, handlerErr error) {
 	_ = s.send(frame)
 }
 
-// cancelAll aborts every execution still in flight.
+// cancelAll aborts every execution still in flight because the worker is
+// draining; each aborted task is reported RELEASED.
 func (s *workerSession) cancelAll() {
 	s.stateMutex.Lock()
 	defer s.stateMutex.Unlock()
 
 	for _, cancelFunc := range s.cancels {
-		cancelFunc()
+		cancelFunc(errDraining)
 	}
 }
 
-// cancel aborts the execution of one task, if it is still running.
+// cancel aborts the execution of one task in response to a server Cancel
+// frame, if it is still running; the task is reported RETRY.
 func (s *workerSession) cancel(taskID string) {
 	s.stateMutex.Lock()
 	cancelFunc, ok := s.cancels[taskID]
 	s.stateMutex.Unlock()
 
 	if ok {
-		cancelFunc()
+		cancelFunc(errServerCanceled)
 	}
 }
 
@@ -440,14 +458,21 @@ func (s *workerSession) send(message *conveyorv1.WorkerMessage) error {
 	return s.stream.Send(message)
 }
 
-// outcomeForError maps a handler error to its wire outcome.
-func outcomeForError(err error) conveyorv1.TaskOutcome {
+// outcomeFor maps a handler result to its wire outcome. A completed task is
+// SUCCESS even mid-drain (never discard finished work); an explicit SkipRetry
+// is honored next; a task canceled by the drain is RELEASED (no retry
+// penalty); everything else — genuine errors, deadlines, server cancels — is
+// RETRY, leaving the server to apply its policy.
+func outcomeFor(ctx context.Context, err error) conveyorv1.TaskOutcome {
 	switch {
 	case err == nil:
 		return conveyorv1.TaskOutcome_TASK_OUTCOME_SUCCESS
 
 	case IsSkipRetry(err):
 		return conveyorv1.TaskOutcome_TASK_OUTCOME_SKIP_RETRY
+
+	case errors.Is(context.Cause(ctx), errDraining):
+		return conveyorv1.TaskOutcome_TASK_OUTCOME_RELEASED
 
 	default:
 		return conveyorv1.TaskOutcome_TASK_OUTCOME_RETRY

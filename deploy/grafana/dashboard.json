@@ -65,7 +65,9 @@
         { "refId": "A", "expr": "sum(rate(conveyor_enqueued_total[$__rate_interval]))", "legendFormat": "enqueued" },
         { "refId": "B", "expr": "sum(rate(conveyor_dispatched_total[$__rate_interval]))", "legendFormat": "dispatched" },
         { "refId": "C", "expr": "sum(rate(conveyor_completed_total[$__rate_interval]))", "legendFormat": "completed" },
-        { "refId": "D", "expr": "sum(rate(conveyor_failed_total[$__rate_interval]))", "legendFormat": "failed" }
+        { "refId": "D", "expr": "sum(rate(conveyor_failed_total[$__rate_interval]))", "legendFormat": "failed" },
+        { "refId": "E", "expr": "sum(rate(conveyor_retried_total[$__rate_interval]))", "legendFormat": "retried" },
+        { "refId": "F", "expr": "sum(rate(conveyor_released_total[$__rate_interval]))", "legendFormat": "released (drains)" }
       ]
     },
     {

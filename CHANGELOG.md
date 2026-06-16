@@ -12,6 +12,13 @@ in-memory broker, with no Redis and no polling.
 
 ### Added
 
+- **Normative wire-protocol spec** (`docs/protocol.md`): the language-agnostic
+  contract for non-Go SDKs, covering transport, auth, the `content_type` codec
+  contract, flow control, the session frames, and a conformance checklist.
+- **Session version handshake**: workers may require a minimum server version
+  (`Hello.min_server_version`, `WithMinServerVersion`), and the server now
+  advertises its build and admitted SDK floor in `Welcome` (`server_version`,
+  `min_sdk_version`). All fields are additive and optional.
 - **Push-based dispatch** over a ConnectRPC worker-session protocol with
   credit-based flow control — the server streams work to ready workers; no
   poll interval to tune.
@@ -46,6 +53,15 @@ in-memory broker, with no Redis and no polling.
   on cluster remoting, and hardened container `securityContext` defaults.
 - **Deployment**: a multi-arch, cosign-signed image on GHCR, a Helm chart
   (StatefulSet), a Docker Compose quickstart, and a systemd unit.
+
+### Changed
+
+- **Deploys are free**: a worker draining on shutdown (SIGTERM) now hands its
+  in-flight tasks back with no retry penalty and no backoff — they become due
+  immediately on another worker instead of consuming a retry. The drain-induced
+  cancellation is reported as `RELEASED`, distinct from a genuine failure,
+  deadline, or server cancel (which still count as a retry). A crashed worker is
+  still recovered via lease expiry and does count, bounding poison tasks.
 
 ### Positioning
 

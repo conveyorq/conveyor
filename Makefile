@@ -27,7 +27,15 @@ DOCKER_RUN := docker run --rm \
 
 DASHBOARD_DIR := web/dashboard
 
-.PHONY: help all image build test lint proto proto-format proto-lint proto-breaking quickstart chaos e2e e2e-clean e2e-dashboard e2e-demo benchmark helm-lint release clean dashboard dashboard-gen dashboard-test
+# License-header tooling. addlicense is fetched on demand with GOFLAGS cleared,
+# so it resolves even when the build runs under -mod=vendor/-mod=readonly. The
+# Go sources are listed explicitly because addlicense does not expand globs.
+ADDLICENSE_VERSION := v1.2.0
+COPYRIGHT_HOLDER   := ConveyorQ
+GO_SOURCES         := $(shell find . -path ./vendor -prune -o -name '*.go' -print)
+ADDLICENSE         := GOFLAGS= $(GO) run github.com/google/addlicense@$(ADDLICENSE_VERSION) -l apache -s -c "$(COPYRIGHT_HOLDER)"
+
+.PHONY: help all image build test lint license-check license-fix licenses proto proto-format proto-lint proto-breaking quickstart chaos e2e e2e-clean e2e-dashboard e2e-demo benchmark helm-lint release clean dashboard dashboard-gen dashboard-test
 
 help: ## Show available targets
 	@awk 'BEGIN{FS=":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -49,6 +57,16 @@ test: ## Run all tests with the race detector (needs the host Docker daemon)
 
 lint: image ## Run golangci-lint in the tools image
 	$(DOCKER_RUN) golangci-lint run --timeout 10m
+
+license-check: ## Verify the Apache-2.0 SPDX header on every Go source file
+	$(ADDLICENSE) -check $(GO_SOURCES)
+
+license-fix: ## Add the Apache-2.0 SPDX header to any Go source file missing it
+	$(ADDLICENSE) $(GO_SOURCES)
+
+licenses: ## Print the dependency license report backing docs/licenses.md
+	$(GO) run github.com/google/go-licenses@latest report \
+		./cmd/conveyord ./cmd/conveyor ./sdk/... ./embedded
 
 # Generation goes through the gen/ staging directory: internal/proto is
 # replaced only after buf generate has succeeded, and nothing else under

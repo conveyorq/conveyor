@@ -14,6 +14,9 @@ broker, with no Redis and no polling.
   instant it exists, with credit-based flow control. No polling.
 - **At-least-once with crash safety** — tasks are persisted before dispatch and
   survive server and worker crashes; a dead worker's task is redelivered.
+- **Deploys are free** — a worker shutting down hands its in-flight tasks back
+  with no retry penalty and no backoff; they resume immediately elsewhere, so
+  rolling out a new build never burns a task's retry budget.
 - **Retries** with exponential backoff, **delayed** and **scheduled** tasks,
   per-task **timeouts/deadlines**, per-task **priorities** and weighted queues.
 - **Unique tasks**, **dead-letter/archive**, **retention**, per-queue
@@ -205,6 +208,8 @@ a different-origin UI, and `api.grafana_url` for the metrics link. See the
 
 - [Operations guide](docs/operations.md) — deployment modes, configuration,
   scaling, broker sizing, security, observability, and upgrades.
+- [Wire protocol](docs/protocol.md) — the normative protocol spec for SDK
+  authors building a Conveyor client or worker in another language.
 - [Migrating from asynq](docs/migrate-from-asynq.md) — side-by-side API mapping.
 - [Migrating from River](docs/migrate-from-river.md) — side-by-side API mapping,
   and the one trade-off to decide first (transactional enqueue).
@@ -283,3 +288,8 @@ cd web/dashboard && npm install && npm run dev      # hot-reloading UI on :5173
 Open the Vite dev server with `?api=http://localhost:8080` so it targets the
 running server. After changing the UI, run `make dashboard` to refresh the
 committed `dist/` that ships in the binary.
+
+## License
+
+Conveyor is licensed under the [Apache License 2.0](LICENSE). Third-party
+dependency licenses are inventoried in [docs/licenses.md](docs/licenses.md).

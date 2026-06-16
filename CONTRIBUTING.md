@@ -102,8 +102,9 @@ Do not commit `vendor/`.
   `if/else`; put a blank line around multi-line blocks.
 - **Surgical changes.** Touch only what your change requires; match the
   surrounding style; don't refactor unrelated code in the same PR.
-- **MIT license header.** Every `.go` file carries the standard MIT header (copy
-  it from any existing file).
+- **Apache-2.0 license header.** Every `.go` file carries the
+  `SPDX-License-Identifier: Apache-2.0` header; run `make license-fix` to add it
+  to new files (CI runs `make license-check`).
 
 ## Commits and pull requests
 
@@ -113,8 +114,26 @@ Do not commit `vendor/`.
   it.
 - Make sure `make test` and `make lint` pass, and that any protocol or
   deployment changes keep the relevant e2e green.
+- **Sign off every commit** (`git commit -s`) to certify the
+  [DCO](#developer-certificate-of-origin); CI enforces it.
 
-## License
+## Developer Certificate of Origin
 
-Conveyor is released under the [MIT License](LICENSE). By contributing, you agree
-that your contributions are licensed under it.
+Conveyor is released under the [Apache License 2.0](LICENSE). Contributions are
+accepted under the same license — there is no separate contributor agreement to
+sign. Instead, we use the [Developer Certificate of Origin](https://developercertificate.org)
+(DCO): a lightweight statement that you wrote the contribution, or otherwise have
+the right to submit it under the project's license.
+
+You certify the DCO by adding a `Signed-off-by` line to each commit, which `git`
+adds for you with the `-s` flag:
+
+    git commit -s -m "feat: add the thing"
+
+This produces a trailer using the name and email from your `git` config:
+
+    Signed-off-by: Jane Doe <jane@example.com>
+
+Use a real name and a reachable email. CI checks that every commit in a pull
+request is signed off; if you forget, amend with `git commit --amend -s` (or, for
+several commits, `git rebase --signoff`) and push again.

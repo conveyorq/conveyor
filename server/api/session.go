@@ -1,24 +1,6 @@
-// MIT License
+// Copyright 2026 ConveyorQ
 //
-// Copyright (c) 2026 ConveyorQ
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// SPDX-License-Identifier: Apache-2.0
 
 package api
 
@@ -114,13 +96,20 @@ func (s *sessionState) check(message *conveyorv1.WorkerMessage) error {
 	}
 }
 
-// validateHello checks the session-opening frame: a supported SDK
-// version, at least one validly named queue with a positive weight, and
-// positive concurrency.
+// validateHello checks the session-opening frame: a supported SDK version, a
+// server new enough for any version the worker requires, at least one validly
+// named queue with a positive weight, and positive concurrency.
 func validateHello(hello *conveyorv1.Hello) error {
 	version := hello.GetSdkVersion()
 	if semver.IsValid(version) && semver.Compare(version, minSDKVersion) < 0 {
 		return fmt.Errorf("sdk version %s is no longer supported, the minimum is %s; upgrade the worker SDK", version, minSDKVersion)
+	}
+
+	// The worker may demand a minimum server version. Enforce it only when both
+	// sides carry comparable semver, so dev builds (non-semver) never trip it.
+	required := hello.GetMinServerVersion()
+	if semver.IsValid(required) && semver.IsValid(serverVersion) && semver.Compare(serverVersion, required) < 0 {
+		return fmt.Errorf("server version %s is older than the worker's required minimum %s; upgrade the server", serverVersion, required)
 	}
 
 	if hello.GetConcurrency() <= 0 {

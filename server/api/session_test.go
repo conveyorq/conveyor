@@ -1,24 +1,6 @@
-// MIT License
+// Copyright 2026 ConveyorQ
 //
-// Copyright (c) 2026 ConveyorQ
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// SPDX-License-Identifier: Apache-2.0
 
 package api
 
@@ -228,4 +210,44 @@ func TestHelloRejectsOutdatedSDKVersion(t *testing.T) {
 
 		require.NoError(t, (&sessionState{}).check(hello), "version %q must be admitted", version)
 	}
+}
+
+func helloWithMinServer(minServer string) *conveyorv1.WorkerMessage {
+	return &conveyorv1.WorkerMessage{
+		Frame: &conveyorv1.WorkerMessage_Hello{
+			Hello: &conveyorv1.Hello{
+				Queues:           map[string]int32{"default": 1},
+				Concurrency:      1,
+				MinServerVersion: minServer,
+			},
+		},
+	}
+}
+
+func TestHelloRejectsServerOlderThanRequired(t *testing.T) {
+	previous := serverVersion
+	t.Cleanup(func() { serverVersion = previous })
+
+	serverVersion = "v1.0.0"
+
+	err := (&sessionState{}).check(helloWithMinServer("v2.0.0"))
+	require.ErrorContains(t, err, "upgrade the server")
+
+	// A requirement the server satisfies, an empty requirement, and a
+	// non-semver requirement are all admitted.
+	for _, required := range []string{"", "v1.0.0", "v0.9.0", "whenever"} {
+		require.NoError(t, (&sessionState{}).check(helloWithMinServer(required)),
+			"min_server_version %q must be admitted against server v1.0.0", required)
+	}
+}
+
+func TestHelloMinServerVersionIgnoredForDevServer(t *testing.T) {
+	previous := serverVersion
+	t.Cleanup(func() { serverVersion = previous })
+
+	// A non-semver server build cannot be compared, so the gate never fires
+	// even against a high requirement.
+	serverVersion = "devel"
+
+	require.NoError(t, (&sessionState{}).check(helloWithMinServer("v99.0.0")))
 }
