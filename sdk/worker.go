@@ -184,6 +184,7 @@ func (w *Worker) runSession(ctx context.Context, mux *Mux) (bool, error) {
 				Concurrency:      int32(w.concurrency),
 				SdkVersion:       sdkVersion(),
 				MinServerVersion: w.minServerVersion,
+				BatchTypes:       mux.batchTypes(),
 			},
 		},
 	}
@@ -278,6 +279,9 @@ func (s *workerSession) run(heartbeatInterval time.Duration) error {
 		case *conveyorv1.ServerMessage_Dispatch:
 			s.dispatch(frame.Dispatch)
 
+		case *conveyorv1.ServerMessage_BatchDispatch:
+			s.dispatchBatch(frame.BatchDispatch)
+
 		case *conveyorv1.ServerMessage_Cancel:
 			s.cancel(frame.Cancel.GetTaskId())
 
@@ -355,16 +359,7 @@ func (s *workerSession) execute(ctx context.Context, release func(), envelope *c
 		return
 	}
 
-	task := &Task{
-		id:          envelope.GetId(),
-		queue:       envelope.GetQueue(),
-		taskType:    envelope.GetType(),
-		payload:     envelope.GetPayload(),
-		contentType: envelope.GetContentType(),
-		metadata:    envelope.GetMetadata(),
-		retried:     int(envelope.GetRetried()),
-		maxRetry:    int(envelope.GetOptions().GetMaxRetry()),
-	}
+	task := newTaskFromEnvelope(envelope)
 
 	handler, ok := s.mux.handler(task.taskType)
 	if !ok {
@@ -376,6 +371,20 @@ func (s *workerSession) execute(ctx context.Context, release func(), envelope *c
 	s.finish(ctx, task.id, traced(withTaskValues(ctx, task), task, func(spanCtx context.Context) error {
 		return invoke(spanCtx, handler, task)
 	}))
+}
+
+// newTaskFromEnvelope builds the handler-facing Task from a dispatched envelope.
+func newTaskFromEnvelope(envelope *conveyorv1.TaskEnvelope) *Task {
+	return &Task{
+		id:          envelope.GetId(),
+		queue:       envelope.GetQueue(),
+		taskType:    envelope.GetType(),
+		payload:     envelope.GetPayload(),
+		contentType: envelope.GetContentType(),
+		metadata:    envelope.GetMetadata(),
+		retried:     int(envelope.GetRetried()),
+		maxRetry:    int(envelope.GetOptions().GetMaxRetry()),
+	}
 }
 
 // invoke runs one handler, converting a panic into a retryable error

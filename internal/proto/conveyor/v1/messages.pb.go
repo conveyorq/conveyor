@@ -129,7 +129,10 @@ type RegisterGateway struct {
 	// gateway_name is the gateway actor name used for TellActor dispatch.
 	GatewayName string `protobuf:"bytes,2,opt,name=gateway_name,json=gatewayName,proto3" json:"gateway_name,omitempty"`
 	// capacity is the worker's declared concurrency for this queue.
-	Capacity      int32 `protobuf:"varint,3,opt,name=capacity,proto3" json:"capacity,omitempty"`
+	Capacity int32 `protobuf:"varint,3,opt,name=capacity,proto3" json:"capacity,omitempty"`
+	// batch_types are the task types this gateway's worker handles as batches,
+	// so the grain dispatches a fired group only to a capable gateway.
+	BatchTypes    []string `protobuf:"bytes,4,rep,name=batch_types,json=batchTypes,proto3" json:"batch_types,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -183,6 +186,13 @@ func (x *RegisterGateway) GetCapacity() int32 {
 		return x.Capacity
 	}
 	return 0
+}
+
+func (x *RegisterGateway) GetBatchTypes() []string {
+	if x != nil {
+		return x.BatchTypes
+	}
+	return nil
 }
 
 // GatewayCredit grants dispatch credits from a gateway to a queue grain.
@@ -308,6 +318,233 @@ func (x *ExecuteTask) GetLeaseExpiresAt() *timestamppb.Timestamp {
 	return nil
 }
 
+// ExecuteBatch carries one durably leased aggregation group from a queue grain
+// to a gateway for batch dispatch. The members share one lease_id; the gateway
+// delivers them as a single BatchDispatch frame.
+type ExecuteBatch struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Tasks          []*TaskEnvelope        `protobuf:"bytes,1,rep,name=tasks,proto3" json:"tasks,omitempty"`
+	LeaseId        string                 `protobuf:"bytes,2,opt,name=lease_id,json=leaseId,proto3" json:"lease_id,omitempty"`
+	LeaseExpiresAt *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=lease_expires_at,json=leaseExpiresAt,proto3" json:"lease_expires_at,omitempty"`
+	Group          string                 `protobuf:"bytes,4,opt,name=group,proto3" json:"group,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *ExecuteBatch) Reset() {
+	*x = ExecuteBatch{}
+	mi := &file_conveyor_v1_messages_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ExecuteBatch) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ExecuteBatch) ProtoMessage() {}
+
+func (x *ExecuteBatch) ProtoReflect() protoreflect.Message {
+	mi := &file_conveyor_v1_messages_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ExecuteBatch.ProtoReflect.Descriptor instead.
+func (*ExecuteBatch) Descriptor() ([]byte, []int) {
+	return file_conveyor_v1_messages_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *ExecuteBatch) GetTasks() []*TaskEnvelope {
+	if x != nil {
+		return x.Tasks
+	}
+	return nil
+}
+
+func (x *ExecuteBatch) GetLeaseId() string {
+	if x != nil {
+		return x.LeaseId
+	}
+	return ""
+}
+
+func (x *ExecuteBatch) GetLeaseExpiresAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.LeaseExpiresAt
+	}
+	return nil
+}
+
+func (x *ExecuteBatch) GetGroup() string {
+	if x != nil {
+		return x.Group
+	}
+	return ""
+}
+
+// FireGroup tells a queue grain that an aggregation group is due: the grain
+// leases its members and batch-dispatches them. The group-sweeper singleton
+// sends it after a group's size, delay, or grace threshold trips.
+type FireGroup struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Queue string                 `protobuf:"bytes,1,opt,name=queue,proto3" json:"queue,omitempty"`
+	Group string                 `protobuf:"bytes,2,opt,name=group,proto3" json:"group,omitempty"`
+	// type is the group's task type (members are single-type), used to pick a
+	// batch-capable gateway before leasing.
+	Type          string `protobuf:"bytes,3,opt,name=type,proto3" json:"type,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FireGroup) Reset() {
+	*x = FireGroup{}
+	mi := &file_conveyor_v1_messages_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FireGroup) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FireGroup) ProtoMessage() {}
+
+func (x *FireGroup) ProtoReflect() protoreflect.Message {
+	mi := &file_conveyor_v1_messages_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FireGroup.ProtoReflect.Descriptor instead.
+func (*FireGroup) Descriptor() ([]byte, []int) {
+	return file_conveyor_v1_messages_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *FireGroup) GetQueue() string {
+	if x != nil {
+		return x.Queue
+	}
+	return ""
+}
+
+func (x *FireGroup) GetGroup() string {
+	if x != nil {
+		return x.Group
+	}
+	return ""
+}
+
+func (x *FireGroup) GetType() string {
+	if x != nil {
+		return x.Type
+	}
+	return ""
+}
+
+// GroupLeaseCompleted delivers the outcome of an asynchronous group lease back
+// to the queue grain that initiated it. Leasing runs off the grain turn through
+// PipeToSelf (broker I/O never blocks the grain), and the grain dispatches the
+// batch when this arrives. A failed lease carries the broker error message.
+type GroupLeaseCompleted struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Tasks          []*TaskEnvelope        `protobuf:"bytes,1,rep,name=tasks,proto3" json:"tasks,omitempty"`
+	LeaseId        string                 `protobuf:"bytes,2,opt,name=lease_id,json=leaseId,proto3" json:"lease_id,omitempty"`
+	LeaseExpiresAt *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=lease_expires_at,json=leaseExpiresAt,proto3" json:"lease_expires_at,omitempty"`
+	Group          string                 `protobuf:"bytes,4,opt,name=group,proto3" json:"group,omitempty"`
+	// type is the group's task type, used to re-pick a batch-capable gateway at
+	// dispatch time (a gateway may have changed since the lease began).
+	Type string `protobuf:"bytes,5,opt,name=type,proto3" json:"type,omitempty"`
+	// error is the broker failure message; empty when the lease succeeded.
+	Error         string `protobuf:"bytes,6,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GroupLeaseCompleted) Reset() {
+	*x = GroupLeaseCompleted{}
+	mi := &file_conveyor_v1_messages_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GroupLeaseCompleted) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GroupLeaseCompleted) ProtoMessage() {}
+
+func (x *GroupLeaseCompleted) ProtoReflect() protoreflect.Message {
+	mi := &file_conveyor_v1_messages_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GroupLeaseCompleted.ProtoReflect.Descriptor instead.
+func (*GroupLeaseCompleted) Descriptor() ([]byte, []int) {
+	return file_conveyor_v1_messages_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *GroupLeaseCompleted) GetTasks() []*TaskEnvelope {
+	if x != nil {
+		return x.Tasks
+	}
+	return nil
+}
+
+func (x *GroupLeaseCompleted) GetLeaseId() string {
+	if x != nil {
+		return x.LeaseId
+	}
+	return ""
+}
+
+func (x *GroupLeaseCompleted) GetLeaseExpiresAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.LeaseExpiresAt
+	}
+	return nil
+}
+
+func (x *GroupLeaseCompleted) GetGroup() string {
+	if x != nil {
+		return x.Group
+	}
+	return ""
+}
+
+func (x *GroupLeaseCompleted) GetType() string {
+	if x != nil {
+		return x.Type
+	}
+	return ""
+}
+
+func (x *GroupLeaseCompleted) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
 // TaskCompleted signals a finished execution back to the queue grain. It
 // is also the credit refill signal: the named gateway regains one dispatch
 // credit, which may start another lease cycle.
@@ -323,7 +560,7 @@ type TaskCompleted struct {
 
 func (x *TaskCompleted) Reset() {
 	*x = TaskCompleted{}
-	mi := &file_conveyor_v1_messages_proto_msgTypes[5]
+	mi := &file_conveyor_v1_messages_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -335,7 +572,7 @@ func (x *TaskCompleted) String() string {
 func (*TaskCompleted) ProtoMessage() {}
 
 func (x *TaskCompleted) ProtoReflect() protoreflect.Message {
-	mi := &file_conveyor_v1_messages_proto_msgTypes[5]
+	mi := &file_conveyor_v1_messages_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -348,7 +585,7 @@ func (x *TaskCompleted) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskCompleted.ProtoReflect.Descriptor instead.
 func (*TaskCompleted) Descriptor() ([]byte, []int) {
-	return file_conveyor_v1_messages_proto_rawDescGZIP(), []int{5}
+	return file_conveyor_v1_messages_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *TaskCompleted) GetTaskId() string {
@@ -379,6 +616,79 @@ func (x *TaskCompleted) GetGatewayName() string {
 	return ""
 }
 
+// BatchCompleted signals a finished batch execution back to the queue grain.
+// One batch consumes one dispatch credit regardless of member count, so it
+// refills exactly one credit; total and succeeded update the task counters.
+type BatchCompleted struct {
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Queue       string                 `protobuf:"bytes,1,opt,name=queue,proto3" json:"queue,omitempty"`
+	GatewayName string                 `protobuf:"bytes,2,opt,name=gateway_name,json=gatewayName,proto3" json:"gateway_name,omitempty"`
+	// total is the number of members in the batch.
+	Total int32 `protobuf:"varint,3,opt,name=total,proto3" json:"total,omitempty"`
+	// succeeded is how many members completed successfully.
+	Succeeded     int32 `protobuf:"varint,4,opt,name=succeeded,proto3" json:"succeeded,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BatchCompleted) Reset() {
+	*x = BatchCompleted{}
+	mi := &file_conveyor_v1_messages_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BatchCompleted) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BatchCompleted) ProtoMessage() {}
+
+func (x *BatchCompleted) ProtoReflect() protoreflect.Message {
+	mi := &file_conveyor_v1_messages_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BatchCompleted.ProtoReflect.Descriptor instead.
+func (*BatchCompleted) Descriptor() ([]byte, []int) {
+	return file_conveyor_v1_messages_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *BatchCompleted) GetQueue() string {
+	if x != nil {
+		return x.Queue
+	}
+	return ""
+}
+
+func (x *BatchCompleted) GetGatewayName() string {
+	if x != nil {
+		return x.GatewayName
+	}
+	return ""
+}
+
+func (x *BatchCompleted) GetTotal() int32 {
+	if x != nil {
+		return x.Total
+	}
+	return 0
+}
+
+func (x *BatchCompleted) GetSucceeded() int32 {
+	if x != nil {
+		return x.Succeeded
+	}
+	return 0
+}
+
 // DrainQueue pauses dispatch for a queue (persisted via the broker).
 type DrainQueue struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -389,7 +699,7 @@ type DrainQueue struct {
 
 func (x *DrainQueue) Reset() {
 	*x = DrainQueue{}
-	mi := &file_conveyor_v1_messages_proto_msgTypes[6]
+	mi := &file_conveyor_v1_messages_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -401,7 +711,7 @@ func (x *DrainQueue) String() string {
 func (*DrainQueue) ProtoMessage() {}
 
 func (x *DrainQueue) ProtoReflect() protoreflect.Message {
-	mi := &file_conveyor_v1_messages_proto_msgTypes[6]
+	mi := &file_conveyor_v1_messages_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -414,7 +724,7 @@ func (x *DrainQueue) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DrainQueue.ProtoReflect.Descriptor instead.
 func (*DrainQueue) Descriptor() ([]byte, []int) {
-	return file_conveyor_v1_messages_proto_rawDescGZIP(), []int{6}
+	return file_conveyor_v1_messages_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *DrainQueue) GetQueue() string {
@@ -434,7 +744,7 @@ type ResumeQueue struct {
 
 func (x *ResumeQueue) Reset() {
 	*x = ResumeQueue{}
-	mi := &file_conveyor_v1_messages_proto_msgTypes[7]
+	mi := &file_conveyor_v1_messages_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -446,7 +756,7 @@ func (x *ResumeQueue) String() string {
 func (*ResumeQueue) ProtoMessage() {}
 
 func (x *ResumeQueue) ProtoReflect() protoreflect.Message {
-	mi := &file_conveyor_v1_messages_proto_msgTypes[7]
+	mi := &file_conveyor_v1_messages_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -459,7 +769,7 @@ func (x *ResumeQueue) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResumeQueue.ProtoReflect.Descriptor instead.
 func (*ResumeQueue) Descriptor() ([]byte, []int) {
-	return file_conveyor_v1_messages_proto_rawDescGZIP(), []int{7}
+	return file_conveyor_v1_messages_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ResumeQueue) GetQueue() string {
@@ -480,7 +790,7 @@ type CancelActive struct {
 
 func (x *CancelActive) Reset() {
 	*x = CancelActive{}
-	mi := &file_conveyor_v1_messages_proto_msgTypes[8]
+	mi := &file_conveyor_v1_messages_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -492,7 +802,7 @@ func (x *CancelActive) String() string {
 func (*CancelActive) ProtoMessage() {}
 
 func (x *CancelActive) ProtoReflect() protoreflect.Message {
-	mi := &file_conveyor_v1_messages_proto_msgTypes[8]
+	mi := &file_conveyor_v1_messages_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -505,7 +815,7 @@ func (x *CancelActive) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CancelActive.ProtoReflect.Descriptor instead.
 func (*CancelActive) Descriptor() ([]byte, []int) {
-	return file_conveyor_v1_messages_proto_rawDescGZIP(), []int{8}
+	return file_conveyor_v1_messages_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *CancelActive) GetTaskId() string {
@@ -525,7 +835,7 @@ type FireCron struct {
 
 func (x *FireCron) Reset() {
 	*x = FireCron{}
-	mi := &file_conveyor_v1_messages_proto_msgTypes[9]
+	mi := &file_conveyor_v1_messages_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -537,7 +847,7 @@ func (x *FireCron) String() string {
 func (*FireCron) ProtoMessage() {}
 
 func (x *FireCron) ProtoReflect() protoreflect.Message {
-	mi := &file_conveyor_v1_messages_proto_msgTypes[9]
+	mi := &file_conveyor_v1_messages_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -550,7 +860,7 @@ func (x *FireCron) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FireCron.ProtoReflect.Descriptor instead.
 func (*FireCron) Descriptor() ([]byte, []int) {
-	return file_conveyor_v1_messages_proto_rawDescGZIP(), []int{9}
+	return file_conveyor_v1_messages_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *FireCron) GetEntryId() string {
@@ -570,7 +880,7 @@ type CronEntriesChanged struct {
 
 func (x *CronEntriesChanged) Reset() {
 	*x = CronEntriesChanged{}
-	mi := &file_conveyor_v1_messages_proto_msgTypes[10]
+	mi := &file_conveyor_v1_messages_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -582,7 +892,7 @@ func (x *CronEntriesChanged) String() string {
 func (*CronEntriesChanged) ProtoMessage() {}
 
 func (x *CronEntriesChanged) ProtoReflect() protoreflect.Message {
-	mi := &file_conveyor_v1_messages_proto_msgTypes[10]
+	mi := &file_conveyor_v1_messages_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -595,7 +905,7 @@ func (x *CronEntriesChanged) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CronEntriesChanged.ProtoReflect.Descriptor instead.
 func (*CronEntriesChanged) Descriptor() ([]byte, []int) {
-	return file_conveyor_v1_messages_proto_rawDescGZIP(), []int{10}
+	return file_conveyor_v1_messages_proto_rawDescGZIP(), []int{14}
 }
 
 // LeaseCycleCompleted delivers the outcome of an asynchronous lease cycle
@@ -614,7 +924,7 @@ type LeaseCycleCompleted struct {
 
 func (x *LeaseCycleCompleted) Reset() {
 	*x = LeaseCycleCompleted{}
-	mi := &file_conveyor_v1_messages_proto_msgTypes[11]
+	mi := &file_conveyor_v1_messages_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -626,7 +936,7 @@ func (x *LeaseCycleCompleted) String() string {
 func (*LeaseCycleCompleted) ProtoMessage() {}
 
 func (x *LeaseCycleCompleted) ProtoReflect() protoreflect.Message {
-	mi := &file_conveyor_v1_messages_proto_msgTypes[11]
+	mi := &file_conveyor_v1_messages_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -639,7 +949,7 @@ func (x *LeaseCycleCompleted) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LeaseCycleCompleted.ProtoReflect.Descriptor instead.
 func (*LeaseCycleCompleted) Descriptor() ([]byte, []int) {
-	return file_conveyor_v1_messages_proto_rawDescGZIP(), []int{11}
+	return file_conveyor_v1_messages_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *LeaseCycleCompleted) GetTasks() []*TaskEnvelope {
@@ -689,7 +999,7 @@ type LeasedTasksReleased struct {
 
 func (x *LeasedTasksReleased) Reset() {
 	*x = LeasedTasksReleased{}
-	mi := &file_conveyor_v1_messages_proto_msgTypes[12]
+	mi := &file_conveyor_v1_messages_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -701,7 +1011,7 @@ func (x *LeasedTasksReleased) String() string {
 func (*LeasedTasksReleased) ProtoMessage() {}
 
 func (x *LeasedTasksReleased) ProtoReflect() protoreflect.Message {
-	mi := &file_conveyor_v1_messages_proto_msgTypes[12]
+	mi := &file_conveyor_v1_messages_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -714,7 +1024,7 @@ func (x *LeasedTasksReleased) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LeasedTasksReleased.ProtoReflect.Descriptor instead.
 func (*LeasedTasksReleased) Descriptor() ([]byte, []int) {
-	return file_conveyor_v1_messages_proto_rawDescGZIP(), []int{12}
+	return file_conveyor_v1_messages_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *LeasedTasksReleased) GetReleased() int32 {
@@ -740,7 +1050,7 @@ type PromoteTick struct {
 
 func (x *PromoteTick) Reset() {
 	*x = PromoteTick{}
-	mi := &file_conveyor_v1_messages_proto_msgTypes[13]
+	mi := &file_conveyor_v1_messages_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -752,7 +1062,7 @@ func (x *PromoteTick) String() string {
 func (*PromoteTick) ProtoMessage() {}
 
 func (x *PromoteTick) ProtoReflect() protoreflect.Message {
-	mi := &file_conveyor_v1_messages_proto_msgTypes[13]
+	mi := &file_conveyor_v1_messages_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -765,7 +1075,7 @@ func (x *PromoteTick) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PromoteTick.ProtoReflect.Descriptor instead.
 func (*PromoteTick) Descriptor() ([]byte, []int) {
-	return file_conveyor_v1_messages_proto_rawDescGZIP(), []int{13}
+	return file_conveyor_v1_messages_proto_rawDescGZIP(), []int{17}
 }
 
 // ReapTick triggers one maintenance pass on the reaper.
@@ -777,7 +1087,7 @@ type ReapTick struct {
 
 func (x *ReapTick) Reset() {
 	*x = ReapTick{}
-	mi := &file_conveyor_v1_messages_proto_msgTypes[14]
+	mi := &file_conveyor_v1_messages_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -789,7 +1099,7 @@ func (x *ReapTick) String() string {
 func (*ReapTick) ProtoMessage() {}
 
 func (x *ReapTick) ProtoReflect() protoreflect.Message {
-	mi := &file_conveyor_v1_messages_proto_msgTypes[14]
+	mi := &file_conveyor_v1_messages_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -802,7 +1112,44 @@ func (x *ReapTick) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReapTick.ProtoReflect.Descriptor instead.
 func (*ReapTick) Descriptor() ([]byte, []int) {
-	return file_conveyor_v1_messages_proto_rawDescGZIP(), []int{14}
+	return file_conveyor_v1_messages_proto_rawDescGZIP(), []int{18}
+}
+
+// GroupSweepTick triggers one firing pass on the group-aggregation sweeper.
+type GroupSweepTick struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GroupSweepTick) Reset() {
+	*x = GroupSweepTick{}
+	mi := &file_conveyor_v1_messages_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GroupSweepTick) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GroupSweepTick) ProtoMessage() {}
+
+func (x *GroupSweepTick) ProtoReflect() protoreflect.Message {
+	mi := &file_conveyor_v1_messages_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GroupSweepTick.ProtoReflect.Descriptor instead.
+func (*GroupSweepTick) Descriptor() ([]byte, []int) {
+	return file_conveyor_v1_messages_proto_rawDescGZIP(), []int{19}
 }
 
 var File_conveyor_v1_messages_proto protoreflect.FileDescriptor
@@ -814,11 +1161,13 @@ const file_conveyor_v1_messages_proto_rawDesc = "" +
 	"\x05queue\x18\x01 \x01(\tR\x05queue\":\n" +
 	"\x0eTasksAvailable\x12\x14\n" +
 	"\x05queue\x18\x01 \x01(\tR\x05queue\x12\x12\n" +
-	"\x04hint\x18\x02 \x01(\x03R\x04hint\"f\n" +
+	"\x04hint\x18\x02 \x01(\x03R\x04hint\"\x87\x01\n" +
 	"\x0fRegisterGateway\x12\x14\n" +
 	"\x05queue\x18\x01 \x01(\tR\x05queue\x12!\n" +
 	"\fgateway_name\x18\x02 \x01(\tR\vgatewayName\x12\x1a\n" +
-	"\bcapacity\x18\x03 \x01(\x05R\bcapacity\"b\n" +
+	"\bcapacity\x18\x03 \x01(\x05R\bcapacity\x12\x1f\n" +
+	"\vbatch_types\x18\x04 \x03(\tR\n" +
+	"batchTypes\"b\n" +
 	"\rGatewayCredit\x12\x14\n" +
 	"\x05queue\x18\x01 \x01(\tR\x05queue\x12!\n" +
 	"\fgateway_name\x18\x02 \x01(\tR\vgatewayName\x12\x18\n" +
@@ -826,12 +1175,33 @@ const file_conveyor_v1_messages_proto_rawDesc = "" +
 	"\vExecuteTask\x12-\n" +
 	"\x04task\x18\x01 \x01(\v2\x19.conveyor.v1.TaskEnvelopeR\x04task\x12\x19\n" +
 	"\blease_id\x18\x02 \x01(\tR\aleaseId\x12D\n" +
-	"\x10lease_expires_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\x0eleaseExpiresAt\"{\n" +
+	"\x10lease_expires_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\x0eleaseExpiresAt\"\xb6\x01\n" +
+	"\fExecuteBatch\x12/\n" +
+	"\x05tasks\x18\x01 \x03(\v2\x19.conveyor.v1.TaskEnvelopeR\x05tasks\x12\x19\n" +
+	"\blease_id\x18\x02 \x01(\tR\aleaseId\x12D\n" +
+	"\x10lease_expires_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\x0eleaseExpiresAt\x12\x14\n" +
+	"\x05group\x18\x04 \x01(\tR\x05group\"K\n" +
+	"\tFireGroup\x12\x14\n" +
+	"\x05queue\x18\x01 \x01(\tR\x05queue\x12\x14\n" +
+	"\x05group\x18\x02 \x01(\tR\x05group\x12\x12\n" +
+	"\x04type\x18\x03 \x01(\tR\x04type\"\xe7\x01\n" +
+	"\x13GroupLeaseCompleted\x12/\n" +
+	"\x05tasks\x18\x01 \x03(\v2\x19.conveyor.v1.TaskEnvelopeR\x05tasks\x12\x19\n" +
+	"\blease_id\x18\x02 \x01(\tR\aleaseId\x12D\n" +
+	"\x10lease_expires_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\x0eleaseExpiresAt\x12\x14\n" +
+	"\x05group\x18\x04 \x01(\tR\x05group\x12\x12\n" +
+	"\x04type\x18\x05 \x01(\tR\x04type\x12\x14\n" +
+	"\x05error\x18\x06 \x01(\tR\x05error\"{\n" +
 	"\rTaskCompleted\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x14\n" +
 	"\x05queue\x18\x02 \x01(\tR\x05queue\x12\x18\n" +
 	"\asuccess\x18\x03 \x01(\bR\asuccess\x12!\n" +
-	"\fgateway_name\x18\x04 \x01(\tR\vgatewayName\"\"\n" +
+	"\fgateway_name\x18\x04 \x01(\tR\vgatewayName\"}\n" +
+	"\x0eBatchCompleted\x12\x14\n" +
+	"\x05queue\x18\x01 \x01(\tR\x05queue\x12!\n" +
+	"\fgateway_name\x18\x02 \x01(\tR\vgatewayName\x12\x14\n" +
+	"\x05total\x18\x03 \x01(\x05R\x05total\x12\x1c\n" +
+	"\tsucceeded\x18\x04 \x01(\x05R\tsucceeded\"\"\n" +
 	"\n" +
 	"DrainQueue\x12\x14\n" +
 	"\x05queue\x18\x01 \x01(\tR\x05queue\"#\n" +
@@ -852,7 +1222,8 @@ const file_conveyor_v1_messages_proto_rawDesc = "" +
 	"\x06failed\x18\x02 \x01(\x05R\x06failed\"\r\n" +
 	"\vPromoteTick\"\n" +
 	"\n" +
-	"\bReapTickB\xb2\x01\n" +
+	"\bReapTick\"\x10\n" +
+	"\x0eGroupSweepTickB\xb2\x01\n" +
 	"\x0fcom.conveyor.v1B\rMessagesProtoP\x01ZCgithub.com/conveyorq/conveyor/internal/proto/conveyor/v1;conveyorv1\xa2\x02\x03CXX\xaa\x02\vConveyor.V1\xca\x02\vConveyor\\V1\xe2\x02\x17Conveyor\\V1\\GPBMetadata\xea\x02\fConveyor::V1b\x06proto3"
 
 var (
@@ -867,36 +1238,45 @@ func file_conveyor_v1_messages_proto_rawDescGZIP() []byte {
 	return file_conveyor_v1_messages_proto_rawDescData
 }
 
-var file_conveyor_v1_messages_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
+var file_conveyor_v1_messages_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
 var file_conveyor_v1_messages_proto_goTypes = []any{
 	(*TaskEnqueued)(nil),          // 0: conveyor.v1.TaskEnqueued
 	(*TasksAvailable)(nil),        // 1: conveyor.v1.TasksAvailable
 	(*RegisterGateway)(nil),       // 2: conveyor.v1.RegisterGateway
 	(*GatewayCredit)(nil),         // 3: conveyor.v1.GatewayCredit
 	(*ExecuteTask)(nil),           // 4: conveyor.v1.ExecuteTask
-	(*TaskCompleted)(nil),         // 5: conveyor.v1.TaskCompleted
-	(*DrainQueue)(nil),            // 6: conveyor.v1.DrainQueue
-	(*ResumeQueue)(nil),           // 7: conveyor.v1.ResumeQueue
-	(*CancelActive)(nil),          // 8: conveyor.v1.CancelActive
-	(*FireCron)(nil),              // 9: conveyor.v1.FireCron
-	(*CronEntriesChanged)(nil),    // 10: conveyor.v1.CronEntriesChanged
-	(*LeaseCycleCompleted)(nil),   // 11: conveyor.v1.LeaseCycleCompleted
-	(*LeasedTasksReleased)(nil),   // 12: conveyor.v1.LeasedTasksReleased
-	(*PromoteTick)(nil),           // 13: conveyor.v1.PromoteTick
-	(*ReapTick)(nil),              // 14: conveyor.v1.ReapTick
-	(*TaskEnvelope)(nil),          // 15: conveyor.v1.TaskEnvelope
-	(*timestamppb.Timestamp)(nil), // 16: google.protobuf.Timestamp
+	(*ExecuteBatch)(nil),          // 5: conveyor.v1.ExecuteBatch
+	(*FireGroup)(nil),             // 6: conveyor.v1.FireGroup
+	(*GroupLeaseCompleted)(nil),   // 7: conveyor.v1.GroupLeaseCompleted
+	(*TaskCompleted)(nil),         // 8: conveyor.v1.TaskCompleted
+	(*BatchCompleted)(nil),        // 9: conveyor.v1.BatchCompleted
+	(*DrainQueue)(nil),            // 10: conveyor.v1.DrainQueue
+	(*ResumeQueue)(nil),           // 11: conveyor.v1.ResumeQueue
+	(*CancelActive)(nil),          // 12: conveyor.v1.CancelActive
+	(*FireCron)(nil),              // 13: conveyor.v1.FireCron
+	(*CronEntriesChanged)(nil),    // 14: conveyor.v1.CronEntriesChanged
+	(*LeaseCycleCompleted)(nil),   // 15: conveyor.v1.LeaseCycleCompleted
+	(*LeasedTasksReleased)(nil),   // 16: conveyor.v1.LeasedTasksReleased
+	(*PromoteTick)(nil),           // 17: conveyor.v1.PromoteTick
+	(*ReapTick)(nil),              // 18: conveyor.v1.ReapTick
+	(*GroupSweepTick)(nil),        // 19: conveyor.v1.GroupSweepTick
+	(*TaskEnvelope)(nil),          // 20: conveyor.v1.TaskEnvelope
+	(*timestamppb.Timestamp)(nil), // 21: google.protobuf.Timestamp
 }
 var file_conveyor_v1_messages_proto_depIdxs = []int32{
-	15, // 0: conveyor.v1.ExecuteTask.task:type_name -> conveyor.v1.TaskEnvelope
-	16, // 1: conveyor.v1.ExecuteTask.lease_expires_at:type_name -> google.protobuf.Timestamp
-	15, // 2: conveyor.v1.LeaseCycleCompleted.tasks:type_name -> conveyor.v1.TaskEnvelope
-	16, // 3: conveyor.v1.LeaseCycleCompleted.lease_expires_at:type_name -> google.protobuf.Timestamp
-	4,  // [4:4] is the sub-list for method output_type
-	4,  // [4:4] is the sub-list for method input_type
-	4,  // [4:4] is the sub-list for extension type_name
-	4,  // [4:4] is the sub-list for extension extendee
-	0,  // [0:4] is the sub-list for field type_name
+	20, // 0: conveyor.v1.ExecuteTask.task:type_name -> conveyor.v1.TaskEnvelope
+	21, // 1: conveyor.v1.ExecuteTask.lease_expires_at:type_name -> google.protobuf.Timestamp
+	20, // 2: conveyor.v1.ExecuteBatch.tasks:type_name -> conveyor.v1.TaskEnvelope
+	21, // 3: conveyor.v1.ExecuteBatch.lease_expires_at:type_name -> google.protobuf.Timestamp
+	20, // 4: conveyor.v1.GroupLeaseCompleted.tasks:type_name -> conveyor.v1.TaskEnvelope
+	21, // 5: conveyor.v1.GroupLeaseCompleted.lease_expires_at:type_name -> google.protobuf.Timestamp
+	20, // 6: conveyor.v1.LeaseCycleCompleted.tasks:type_name -> conveyor.v1.TaskEnvelope
+	21, // 7: conveyor.v1.LeaseCycleCompleted.lease_expires_at:type_name -> google.protobuf.Timestamp
+	8,  // [8:8] is the sub-list for method output_type
+	8,  // [8:8] is the sub-list for method input_type
+	8,  // [8:8] is the sub-list for extension type_name
+	8,  // [8:8] is the sub-list for extension extendee
+	0,  // [0:8] is the sub-list for field type_name
 }
 
 func init() { file_conveyor_v1_messages_proto_init() }
@@ -911,7 +1291,7 @@ func file_conveyor_v1_messages_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_conveyor_v1_messages_proto_rawDesc), len(file_conveyor_v1_messages_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   15,
+			NumMessages:   20,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

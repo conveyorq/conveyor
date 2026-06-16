@@ -95,6 +95,10 @@ const (
 	defaultPassivateAfter    = 5 * time.Minute
 	defaultMaxRetry          = 25
 	defaultShutdownTimeout   = 30 * time.Second
+	defaultGroupMaxSize      = 100
+	defaultGroupMaxDelay     = time.Minute
+	defaultGroupGracePeriod  = 10 * time.Second
+	defaultGroupSweep        = time.Second
 	defaultOtelServiceName   = "conveyord"
 	// defaultMetricsListen is the OpenTelemetry Prometheus exporter's
 	// conventional port; metrics bind here, kept off the public API listener.
@@ -253,6 +257,15 @@ type EngineConfig struct {
 	DefaultMaxRetry int `koanf:"default_max_retry"`
 	// ShutdownTimeout bounds graceful shutdown of the whole node.
 	ShutdownTimeout time.Duration `koanf:"shutdown_timeout"`
+	// GroupMaxSize fires an aggregation group once this many members
+	// accumulate.
+	GroupMaxSize int `koanf:"group_max_size"`
+	// GroupMaxDelay fires a group this long after its first member.
+	GroupMaxDelay time.Duration `koanf:"group_max_delay"`
+	// GroupGracePeriod fires a group this long after its most recent member.
+	GroupGracePeriod time.Duration `koanf:"group_grace_period"`
+	// GroupSweepInterval is the cadence of the group-aggregation sweep.
+	GroupSweepInterval time.Duration `koanf:"group_sweep_interval"`
 }
 
 // LogConfig configures structured logging.
@@ -291,13 +304,17 @@ func DefaultConfig() *Config {
 			},
 		},
 		Engine: EngineConfig{
-			LeaseTTL:        defaultLeaseTTL,
-			LeaseBatchMax:   defaultLeaseBatchMax,
-			ReapInterval:    defaultReapInterval,
-			PromoteInterval: defaultPromoteInterval,
-			PassivateAfter:  defaultPassivateAfter,
-			DefaultMaxRetry: defaultMaxRetry,
-			ShutdownTimeout: defaultShutdownTimeout,
+			LeaseTTL:           defaultLeaseTTL,
+			LeaseBatchMax:      defaultLeaseBatchMax,
+			ReapInterval:       defaultReapInterval,
+			PromoteInterval:    defaultPromoteInterval,
+			PassivateAfter:     defaultPassivateAfter,
+			DefaultMaxRetry:    defaultMaxRetry,
+			ShutdownTimeout:    defaultShutdownTimeout,
+			GroupMaxSize:       defaultGroupMaxSize,
+			GroupMaxDelay:      defaultGroupMaxDelay,
+			GroupGracePeriod:   defaultGroupGracePeriod,
+			GroupSweepInterval: defaultGroupSweep,
 		},
 		Log:     LogConfig{Level: LogLevelInfo, Format: LogFormatJSON},
 		Otel:    OtelConfig{ServiceName: defaultOtelServiceName},
@@ -466,11 +483,14 @@ func (c *Config) Validate() error {
 	}
 
 	durations := map[string]time.Duration{
-		"engine.lease_ttl":        c.Engine.LeaseTTL,
-		"engine.reap_interval":    c.Engine.ReapInterval,
-		"engine.promote_interval": c.Engine.PromoteInterval,
-		"engine.passivate_after":  c.Engine.PassivateAfter,
-		"engine.shutdown_timeout": c.Engine.ShutdownTimeout,
+		"engine.lease_ttl":            c.Engine.LeaseTTL,
+		"engine.reap_interval":        c.Engine.ReapInterval,
+		"engine.promote_interval":     c.Engine.PromoteInterval,
+		"engine.passivate_after":      c.Engine.PassivateAfter,
+		"engine.shutdown_timeout":     c.Engine.ShutdownTimeout,
+		"engine.group_max_delay":      c.Engine.GroupMaxDelay,
+		"engine.group_grace_period":   c.Engine.GroupGracePeriod,
+		"engine.group_sweep_interval": c.Engine.GroupSweepInterval,
 	}
 
 	for key, d := range durations {
@@ -481,6 +501,10 @@ func (c *Config) Validate() error {
 
 	if c.Engine.LeaseBatchMax <= 0 {
 		return fmt.Errorf("engine.lease_batch_max: must be positive, got %d", c.Engine.LeaseBatchMax)
+	}
+
+	if c.Engine.GroupMaxSize <= 0 {
+		return fmt.Errorf("engine.group_max_size: must be positive, got %d", c.Engine.GroupMaxSize)
 	}
 
 	if c.Engine.DefaultMaxRetry < 0 {

@@ -70,14 +70,15 @@ func (s *AdminService) ListQueues(ctx context.Context, _ *connect.Request[convey
 
 	for _, stat := range stats {
 		queues = append(queues, &conveyorv1.QueueInfo{
-			Name:      stat.Queue,
-			Paused:    stat.Paused,
-			Scheduled: stat.Scheduled,
-			Pending:   stat.Pending,
-			Active:    stat.Active,
-			Retry:     stat.Retry,
-			Completed: stat.Completed,
-			Archived:  stat.Archived,
+			Name:        stat.Queue,
+			Paused:      stat.Paused,
+			Scheduled:   stat.Scheduled,
+			Pending:     stat.Pending,
+			Active:      stat.Active,
+			Retry:       stat.Retry,
+			Completed:   stat.Completed,
+			Archived:    stat.Archived,
+			Aggregating: stat.Aggregating,
 		})
 	}
 

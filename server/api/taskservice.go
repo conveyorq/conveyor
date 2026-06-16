@@ -175,6 +175,10 @@ func (s *TaskService) envelopeFromRequest(request *conveyorv1.EnqueueRequest) (*
 		return nil, errors.New("process_at and process_in are mutually exclusive")
 	}
 
+	if request.GetGroup() != "" && (request.GetProcessAt().IsValid() || request.GetProcessIn().IsValid()) {
+		return nil, errors.New("group and process_at/process_in are mutually exclusive")
+	}
+
 	if request.GetMaxRetry() < 0 {
 		return nil, fmt.Errorf("max_retry must not be negative, got %d", request.GetMaxRetry())
 	}
@@ -220,12 +224,17 @@ func (s *TaskService) envelopeFromRequest(request *conveyorv1.EnqueueRequest) (*
 			UniqueTtl: request.GetUniqueTtl(),
 			Retention: request.GetRetention(),
 			Priority:  priority,
+			Group:     request.GetGroup(),
 		},
 	}, nil
 }
 
 // initialState reports the state a freshly committed task starts in.
 func (s *TaskService) initialState(envelope *conveyorv1.TaskEnvelope) conveyorv1.TaskState {
+	if envelope.GetOptions().GetGroup() != "" {
+		return conveyorv1.TaskState_TASK_STATE_AGGREGATING
+	}
+
 	processAt := envelope.GetOptions().GetProcessAt()
 
 	if processAt.IsValid() && processAt.AsTime().After(s.timeSource.Now()) {

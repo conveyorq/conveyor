@@ -128,8 +128,8 @@ A worker holds exactly one `Session` stream:
 `rpc Session(stream WorkerMessage) returns (stream ServerMessage)`.
 
 ```
-WorkerMessage.frame = { Hello | Credit | Result | Heartbeat }
-ServerMessage.frame = { Welcome | Dispatch | Cancel | Ping }
+WorkerMessage.frame = { Hello | Credit | Result | Heartbeat | BatchResult }
+ServerMessage.frame = { Welcome | Dispatch | Cancel | Ping | BatchDispatch }
 ```
 
 ### 5.1 Lifecycle
@@ -159,6 +159,7 @@ the stream with `invalid_argument`.
 | `labels` (`map<string,string>`) | OPTIONAL, informational. May be empty.                                                                                                                                                         |
 | `sdk_version` (`string`)        | SHOULD be set (see §8). May be any string; an empty or non-semver value is accepted.                                                                                                           |
 | `min_server_version` (`string`) | OPTIONAL. The minimum server version this worker requires, as semver (e.g. `"v1.2.0"`). Empty imposes no requirement; a non-semver value is ignored. The server fails the session with `invalid_argument` when its own version is older. See §8. |
+| `batch_types` (`repeated string`) | OPTIONAL. Task types this worker handles as **batches** (aggregation groups). The server delivers a fired group's members as one `BatchDispatch` only to a worker that advertised the group's type here; a worker advertising none never receives a batch. See §5.11. |
 
 A Hello that violates any MUST fails the stream with `invalid_argument`.
 
@@ -316,6 +317,38 @@ genuinely *crashed* worker, by contrast, is detected by lease expiry, and that
 redelivery **does** count as a retry (it is indistinguishable from a task that
 hangs the worker — the poison-pill bound).
 
+### 5.11 Batch delivery (aggregation groups)
+
+A producer MAY tag a task with a **group** (`TaskOptions.group`, §6.1). Tasks
+sharing a `(queue, group)` accumulate server-side (state `aggregating`, not
+dispatched) until the group **fires** — by size, by max-delay since the first
+member, or by grace period since the last (server-configured). A fired group is
+delivered to one worker as a single batch:
+
+- **`BatchDispatch` (server → worker):** `{ repeated TaskEnvelope tasks; Timestamp
+  deadline; string group }`. All members share one lease; `deadline` is the
+  tightest bound across members. The server only sends a `BatchDispatch` to a
+  worker that advertised the group's type in `Hello.batch_types`.
+- **`BatchResult` (worker → server):** `{ repeated Result results }`. The worker
+  runs all members in **one** handler call and reports one `Result` per member.
+  A member **omitted** from `results` is treated as `RELEASED` (redelivered, no
+  penalty) — the same safety net as a dropped single `Result`.
+
+Rules an SDK MUST follow:
+
+- A batch is **one concurrency slot**: it consumes a single dispatch credit
+  regardless of member count, refunded once when the `BatchResult` is sent.
+- **Heartbeats** MUST list every in-flight batch member's id (each member's lease
+  is extended individually).
+- A group is **single-type** (all members share a task type), so one handler
+  serves the batch.
+- A member returning `RETRY`/`RELEASED` redelivers **individually** (a plain
+  `Dispatch`), not re-aggregated; an SDK SHOULD therefore let a batch handler
+  also serve a single delivery (e.g. as a batch of one).
+
+A worker that advertises no `batch_types` is unaffected: it never receives a
+`BatchDispatch`, so grouping is fully back-compatible.
+
 ---
 
 ## 6. TaskService (enqueue side)
@@ -341,6 +374,7 @@ Unary RPCs. All inputs validated server-side; violations return
 | `unique_key` / `unique_ttl` | OPTIONAL uniqueness claim among incomplete tasks; a conflicting enqueue returns `already_exists`.                                        |
 | `priority`                  | `0` → default (**4**). Explicit range **1..9** (1 lowest, 9 highest). Out of `0..9` → error.                                             |
 | `retention`                 | OPTIONAL how long to keep the completed row before purge.                                                                                |
+| `group`                     | OPTIONAL aggregation group key (§5.11). The task accumulates as `aggregating` and is batch-delivered when its group fires. **Mutually exclusive** with `process_at`/`process_in`. |
 
 - `EnqueueResponse.task` is a `TaskInfo` reflecting the committed task and its
   initial state (`SCHEDULED` if delayed, else `PENDING`).

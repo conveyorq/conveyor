@@ -101,6 +101,9 @@ type GatewaySession struct {
 	// Concurrency is the worker's declared total execution slots; it is
 	// the dispatch capacity granted to each declared queue.
 	Concurrency int32
+	// BatchTypes are the task types this worker handles as batches, advertised
+	// to queue grains so a fired group dispatches only to a capable gateway.
+	BatchTypes []string
 }
 
 // inflightTask is the gateway's record of one dispatched, unresolved task.
@@ -151,6 +154,9 @@ type Gateway struct {
 	identities map[string]*goakt.GrainIdentity
 	// inflight tracks dispatched tasks by id until their result arrives.
 	inflight map[string]*inflightTask
+	// batches maps a batch lease id to its member task ids, so a BatchResult
+	// can resolve the whole group (and release members the worker omitted).
+	batches map[string][]string
 	// breakers holds the per-task-type circuit breakers.
 	breakers map[string]*breaker.CircuitBreaker
 }
@@ -176,6 +182,7 @@ func (g *Gateway) PreStart(ctx *goakt.Context) error {
 	g.strategy = backoff.New(backoff.DefaultBase, backoff.DefaultCap)
 	g.identities = make(map[string]*goakt.GrainIdentity, len(g.session.Queues))
 	g.inflight = make(map[string]*inflightTask)
+	g.batches = make(map[string][]string)
 	g.breakers = make(map[string]*breaker.CircuitBreaker)
 
 	return nil
@@ -198,8 +205,14 @@ func (g *Gateway) Receive(ctx *goakt.ReceiveContext) {
 	case *conveyorv1.ExecuteTask:
 		g.dispatch(message)
 
+	case *conveyorv1.ExecuteBatch:
+		g.dispatchBatch(message)
+
 	case *conveyorv1.Result:
 		g.result(ctx, message)
+
+	case *conveyorv1.BatchResult:
+		g.batchResult(ctx, message)
 
 	case *conveyorv1.Heartbeat:
 		g.heartbeat(message)
@@ -246,6 +259,7 @@ func (g *Gateway) drain(ctx *goakt.ReceiveContext) {
 	}
 
 	g.inflight = make(map[string]*inflightTask)
+	g.batches = make(map[string][]string)
 	g.runtime.Logger().Debug("gateway drained", "gateway", g.name, "session_id", g.session.SessionID)
 }
 
@@ -271,6 +285,7 @@ func (g *Gateway) register(ctx *goakt.ReceiveContext) {
 			Queue:       queue,
 			GatewayName: g.name,
 			Capacity:    g.session.Concurrency,
+			BatchTypes:  g.session.BatchTypes,
 		})
 		if err != nil {
 			g.runtime.Logger().Warn("gateway registration failed; next tick retries", "queue", queue, "error", err)
@@ -359,13 +374,28 @@ func (g *Gateway) result(ctx *goakt.ReceiveContext, message *conveyorv1.Result) 
 
 	delete(g.inflight, message.GetTaskId())
 
-	goCtx := ctx.Context()
+	success := g.applyOutcome(ctx.Context(), entry, message)
+
+	if g.breakerFor(entry.taskType).State() == breaker.Open {
+		g.runtime.Metrics().BreakerOpen(context.Background())
+		g.deferCompletion(ctx, entry.queue, message.GetTaskId(), success)
+
+		return
+	}
+
+	g.reportCompletion(ctx, entry.queue, message.GetTaskId(), success)
+}
+
+// applyOutcome performs the durable transition for one finished delivery and
+// records its process-duration and breaker sample. It returns whether the
+// delivery succeeded. It does not report completion or refill credit: the
+// caller does that — per task for a single Result, once for a whole batch.
+func (g *Gateway) applyOutcome(goCtx context.Context, entry *inflightTask, message *conveyorv1.Result) bool {
 	taskLog := g.runtime.Broker()
+	counters := g.runtime.Counters()
 	taskID := message.GetTaskId()
 
 	var err error
-
-	counters := g.runtime.Counters()
 
 	switch message.GetOutcome() {
 	case conveyorv1.TaskOutcome_TASK_OUTCOME_SUCCESS:
@@ -422,22 +452,13 @@ func (g *Gateway) result(ctx *goakt.ReceiveContext, message *conveyorv1.Result) 
 		}
 	}
 
-	success := message.GetOutcome() == conveyorv1.TaskOutcome_TASK_OUTCOME_SUCCESS && err == nil
-
 	// Process duration: how long the execution took from dispatch to result.
 	g.runtime.Metrics().RecordProcessDuration(context.Background(),
 		g.runtime.Clock().Now().Sub(entry.dispatchedAt).Seconds(), entry.queue)
 
 	g.recordOutcome(entry.taskType, message.GetOutcome())
 
-	if g.breakerFor(entry.taskType).State() == breaker.Open {
-		g.runtime.Metrics().BreakerOpen(context.Background())
-		g.deferCompletion(ctx, entry.queue, taskID, success)
-
-		return
-	}
-
-	g.reportCompletion(ctx, entry.queue, taskID, success)
+	return message.GetOutcome() == conveyorv1.TaskOutcome_TASK_OUTCOME_SUCCESS && err == nil
 }
 
 // breakerFor returns the task type's circuit breaker, creating it on

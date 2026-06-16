@@ -87,6 +87,10 @@ message EnqueueRequest {
   // explicit priorities are 1 (lowest) to 9 (highest).
   int32 priority = 14;
   google.protobuf.Duration retention = 15;
+  // group, when set, makes the task a member of the named aggregation group
+  // within its queue: members accumulate and are delivered to a worker as one
+  // batch when the group fires. Mutually exclusive with process_at/process_in.
+  string group = 16;
 }
 
 message EnqueueResponse {
@@ -148,6 +152,7 @@ message WorkerMessage {
     Credit credit = 2;
     Result result = 3;
     Heartbeat heartbeat = 4;
+    BatchResult batch_result = 5;
   }
 }
 
@@ -158,6 +163,7 @@ message ServerMessage {
     Dispatch dispatch = 2;
     Cancel cancel = 3;
     Ping ping = 4;
+    BatchDispatch batch_dispatch = 5;
   }
 }
 
@@ -173,6 +179,11 @@ message Hello {
   // non-semver value disables the check. The server rejects the session when
   // its own version is older than this.
   string min_server_version = 5;
+  // batch_types lists the task types this worker handles as batches (one
+  // handler call per fired aggregation group). The server delivers a group's
+  // members as a single BatchDispatch only to a worker that advertised the
+  // group's type here; workers that advertise none never receive a batch.
+  repeated string batch_types = 6;
 }
 
 // Credit optionally grants n additional dispatch slots beyond the worker's
@@ -234,6 +245,26 @@ message Dispatch {
   google.protobuf.Timestamp deadline = 2;
 }
 
+// BatchDispatch delivers one fired aggregation group to the worker as a single
+// batch — all members run in one handler call. The members share one lease, so
+// one BatchResult acknowledges the whole batch.
+message BatchDispatch {
+  // tasks are the group's members, all of the same type.
+  repeated TaskEnvelope tasks = 1;
+  // deadline is the effective execution deadline for the batch: the tightest
+  // bound across members (min task deadline, lease expiry, task timeout).
+  google.protobuf.Timestamp deadline = 2;
+  // group is the aggregation group key the batch was fired from.
+  string group = 3;
+}
+
+// BatchResult reports the per-member outcome of one dispatched batch. A member
+// omitted from results is treated as RELEASED (redelivered, no retry penalty),
+// the same safety net as a dropped single Result.
+message BatchResult {
+  repeated Result results = 1;
+}
+
 // Cancel asks the worker to cancel a running task (best effort).
 message Cancel {
   string task_id = 1;
@@ -260,6 +291,8 @@ message QueueInfo {
   int64 retry = 6;
   int64 completed = 7;
   int64 archived = 8;
+  // aggregating counts group members accumulating before their group fires.
+  int64 aggregating = 9;
 }
 
 message PauseQueueRequest {

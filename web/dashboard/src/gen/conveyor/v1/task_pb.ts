@@ -12,7 +12,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file conveyor/v1/task.proto.
  */
 export const file_conveyor_v1_task: GenFile = /*@__PURE__*/
-  fileDesc("ChZjb252ZXlvci92MS90YXNrLnByb3RvEgtjb252ZXlvci52MSKtAwoMVGFza0VudmVsb3BlEgoKAmlkGAEgASgJEg0KBXF1ZXVlGAIgASgJEgwKBHR5cGUYAyABKAkSDwoHcGF5bG9hZBgEIAEoDBIUCgxjb250ZW50X3R5cGUYBSABKAkSOQoIbWV0YWRhdGEYBiADKAsyJy5jb252ZXlvci52MS5UYXNrRW52ZWxvcGUuTWV0YWRhdGFFbnRyeRIpCgdvcHRpb25zGAcgASgLMhguY29udmV5b3IudjEuVGFza09wdGlvbnMSDwoHcmV0cmllZBgIIAEoBRISCgpsYXN0X2Vycm9yGAkgASgJEi8KC2VucXVldWVkX2F0GAogASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIuCgpzdGFydGVkX2F0GAsgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIwCgxjb21wbGV0ZWRfYXQYDCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wGi8KDU1ldGFkYXRhRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASKzAgoLVGFza09wdGlvbnMSEQoJbWF4X3JldHJ5GAEgASgFEioKB3RpbWVvdXQYAiABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24SLAoIZGVhZGxpbmUYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi4KCnByb2Nlc3NfYXQYBCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhIKCnVuaXF1ZV9rZXkYBSABKAkSLQoKdW5pcXVlX3R0bBgGIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbhIsCglyZXRlbnRpb24YByABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24SEAoIcHJpb3JpdHkYCCABKAVKBAgJEBAq0gEKCVRhc2tTdGF0ZRIaChZUQVNLX1NUQVRFX1VOU1BFQ0lGSUVEEAASGAoUVEFTS19TVEFURV9TQ0hFRFVMRUQQARIWChJUQVNLX1NUQVRFX1BFTkRJTkcQAhIVChFUQVNLX1NUQVRFX0FDVElWRRADEhQKEFRBU0tfU1RBVEVfUkVUUlkQBBIYChRUQVNLX1NUQVRFX0NPTVBMRVRFRBAFEhcKE1RBU0tfU1RBVEVfQVJDSElWRUQQBhIXChNUQVNLX1NUQVRFX0NBTkNFTEVEEAdiBnByb3RvMw", [file_google_protobuf_duration, file_google_protobuf_timestamp]);
+  fileDesc("ChZjb252ZXlvci92MS90YXNrLnByb3RvEgtjb252ZXlvci52MSKtAwoMVGFza0VudmVsb3BlEgoKAmlkGAEgASgJEg0KBXF1ZXVlGAIgASgJEgwKBHR5cGUYAyABKAkSDwoHcGF5bG9hZBgEIAEoDBIUCgxjb250ZW50X3R5cGUYBSABKAkSOQoIbWV0YWRhdGEYBiADKAsyJy5jb252ZXlvci52MS5UYXNrRW52ZWxvcGUuTWV0YWRhdGFFbnRyeRIpCgdvcHRpb25zGAcgASgLMhguY29udmV5b3IudjEuVGFza09wdGlvbnMSDwoHcmV0cmllZBgIIAEoBRISCgpsYXN0X2Vycm9yGAkgASgJEi8KC2VucXVldWVkX2F0GAogASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIuCgpzdGFydGVkX2F0GAsgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIwCgxjb21wbGV0ZWRfYXQYDCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wGi8KDU1ldGFkYXRhRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASLCAgoLVGFza09wdGlvbnMSEQoJbWF4X3JldHJ5GAEgASgFEioKB3RpbWVvdXQYAiABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24SLAoIZGVhZGxpbmUYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi4KCnByb2Nlc3NfYXQYBCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhIKCnVuaXF1ZV9rZXkYBSABKAkSLQoKdW5pcXVlX3R0bBgGIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbhIsCglyZXRlbnRpb24YByABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24SEAoIcHJpb3JpdHkYCCABKAUSDQoFZ3JvdXAYCSABKAlKBAgKEBAq7gEKCVRhc2tTdGF0ZRIaChZUQVNLX1NUQVRFX1VOU1BFQ0lGSUVEEAASGAoUVEFTS19TVEFURV9TQ0hFRFVMRUQQARIWChJUQVNLX1NUQVRFX1BFTkRJTkcQAhIVChFUQVNLX1NUQVRFX0FDVElWRRADEhQKEFRBU0tfU1RBVEVfUkVUUlkQBBIYChRUQVNLX1NUQVRFX0NPTVBMRVRFRBAFEhcKE1RBU0tfU1RBVEVfQVJDSElWRUQQBhIXChNUQVNLX1NUQVRFX0NBTkNFTEVEEAcSGgoWVEFTS19TVEFURV9BR0dSRUdBVElORxAIYgZwcm90bzM", [file_google_protobuf_duration, file_google_protobuf_timestamp]);
 
 /**
  * TaskEnvelope is the internal, durable representation of a task.
@@ -181,6 +181,16 @@ export type TaskOptions = Message<"conveyor.v1.TaskOptions"> & {
    * @generated from field: int32 priority = 8;
    */
   priority: number;
+
+  /**
+   * group, when set, makes the task a member of the named aggregation group
+   * within its queue. Members accumulate in the aggregating state and are
+   * delivered to a worker as one batch when the group fires. A group is
+   * single-type: every member shares the task's type.
+   *
+   * @generated from field: string group = 9;
+   */
+  group: string;
 };
 
 /**
@@ -252,6 +262,15 @@ export enum TaskState {
    * @generated from enum value: TASK_STATE_CANCELED = 7;
    */
   CANCELED = 7,
+
+  /**
+   * TASK_STATE_AGGREGATING is a group member accumulating in the broker until
+   * its group fires (by size, delay, or grace period), at which point the
+   * group's members are leased together and delivered to a worker as one batch.
+   *
+   * @generated from enum value: TASK_STATE_AGGREGATING = 8;
+   */
+  AGGREGATING = 8,
 }
 
 /**

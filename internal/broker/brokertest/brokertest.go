@@ -77,6 +77,10 @@ func Run(t *testing.T, factory Factory) {
 		{"ListTasks", testListTasks},
 		{"Info", testInfo},
 		{"ConcurrentLeaseNoDoubleDelivery", testConcurrentLeaseNoDoubleDelivery},
+		{"GroupedEnqueueAggregates", testGroupedEnqueueAggregates},
+		{"GroupedScheduleRejected", testGroupedScheduleRejected},
+		{"GroupStatsReportsMembers", testGroupStatsReportsMembers},
+		{"LeaseGroupClaimsBatch", testLeaseGroupClaimsBatch},
 	}
 
 	for _, entry := range suite {
@@ -133,6 +137,21 @@ func withMaxRetry(maxRetry int32) taskOption {
 func withQueue(queue string) taskOption {
 	return func(task *conveyorv1.TaskEnvelope) {
 		task.Queue = queue
+	}
+}
+
+// withGroup makes the task a member of the named aggregation group.
+func withGroup(group string) taskOption {
+	return func(task *conveyorv1.TaskEnvelope) {
+		task.Options.Group = group
+	}
+}
+
+// withEnqueuedAt overrides the committed enqueue time, ordering group members
+// and setting the group's oldest/newest thresholds.
+func withEnqueuedAt(at time.Time) taskOption {
+	return func(task *conveyorv1.TaskEnvelope) {
+		task.EnqueuedAt = timestamppb.New(at)
 	}
 }
 
@@ -1073,5 +1092,90 @@ func testConcurrentLeaseNoDoubleDelivery(t *testing.T, b broker.Broker, _ *clock
 
 	if len(seen) != taskCount {
 		t.Fatalf("leased %d distinct tasks, want %d", len(seen), taskCount)
+	}
+}
+
+// testGroupedEnqueueAggregates verifies a grouped task lands aggregating and
+// stays off the singleton lease path, while an ungrouped task is unaffected.
+func testGroupedEnqueueAggregates(t *testing.T, b broker.Broker, _ *clock.Fake) {
+	mustEnqueue(t, b, newTask("task-001", withGroup("digest")))
+	mustEnqueue(t, b, newTask("task-002"))
+
+	mustState(t, b, "task-001", conveyorv1.TaskState_TASK_STATE_AGGREGATING)
+	mustState(t, b, "task-002", conveyorv1.TaskState_TASK_STATE_PENDING)
+
+	leased := mustLease(t, b, queueName, 10, "lease-1")
+	if ids := leasedIDs(leased); !slices.Equal(ids, []string{"task-002"}) {
+		t.Fatalf("Lease returned %v, want only the ungrouped task-002", ids)
+	}
+}
+
+// testGroupedScheduleRejected verifies group + future process_at is rejected.
+func testGroupedScheduleRejected(t *testing.T, b broker.Broker, _ *clock.Fake) {
+	err := b.Enqueue(context.Background(),
+		newTask("task-001", withGroup("digest"), withProcessAt(start.Add(time.Hour))))
+	if !errors.Is(err, broker.ErrGroupedSchedule) {
+		t.Fatalf("Enqueue(group+process_at) error = %v, want ErrGroupedSchedule", err)
+	}
+}
+
+// testGroupStatsReportsMembers verifies GroupStats reports per-group count and
+// the oldest/newest member times, scoped to aggregating members.
+func testGroupStatsReportsMembers(t *testing.T, b broker.Broker, _ *clock.Fake) {
+	late := start.Add(2 * time.Second)
+	mid := start.Add(time.Second)
+
+	mustEnqueue(t, b, newTask("task-001", withGroup("a"), withEnqueuedAt(start)))
+	mustEnqueue(t, b, newTask("task-002", withGroup("a"), withEnqueuedAt(late)))
+	mustEnqueue(t, b, newTask("task-003", withGroup("a"), withEnqueuedAt(mid)))
+	mustEnqueue(t, b, newTask("task-004", withGroup("b")))
+	mustEnqueue(t, b, newTask("task-005"))
+
+	stats, err := b.GroupStats(context.Background())
+	if err != nil {
+		t.Fatalf("GroupStats: %v", err)
+	}
+
+	if len(stats) != 2 {
+		t.Fatalf("GroupStats returned %d groups, want 2 (a, b)", len(stats))
+	}
+
+	groupA := stats[0]
+	if groupA.Group != "a" || groupA.Count != 3 {
+		t.Fatalf("group a = %+v, want group=a count=3", groupA)
+	}
+
+	if !groupA.Oldest.Equal(start) || !groupA.Newest.Equal(late) {
+		t.Fatalf("group a oldest=%s newest=%s, want %s / %s", groupA.Oldest, groupA.Newest, start, late)
+	}
+}
+
+// testLeaseGroupClaimsBatch verifies LeaseGroup leases one group's members as a
+// batch under a single lease, honors the limit, orders by (enqueued_at, id),
+// and leaves other groups and over-limit members aggregating.
+func testLeaseGroupClaimsBatch(t *testing.T, b broker.Broker, _ *clock.Fake) {
+	for _, id := range []string{"task-001", "task-002", "task-003"} {
+		mustEnqueue(t, b, newTask(id, withGroup("a"), withEnqueuedAt(start)))
+	}
+
+	mustEnqueue(t, b, newTask("task-004", withGroup("b")))
+
+	leased, err := b.LeaseGroup(context.Background(), queueName, "a", 2, leaseTTL, "batch-1")
+	if err != nil {
+		t.Fatalf("LeaseGroup: %v", err)
+	}
+
+	if ids := leasedIDs(leased); !slices.Equal(ids, []string{"task-001", "task-002"}) {
+		t.Fatalf("LeaseGroup returned %v, want [task-001 task-002]", ids)
+	}
+
+	mustState(t, b, "task-001", conveyorv1.TaskState_TASK_STATE_ACTIVE)
+	mustState(t, b, "task-002", conveyorv1.TaskState_TASK_STATE_ACTIVE)
+	mustState(t, b, "task-003", conveyorv1.TaskState_TASK_STATE_AGGREGATING)
+	mustState(t, b, "task-004", conveyorv1.TaskState_TASK_STATE_AGGREGATING)
+
+	// The batch shares one lease id: each member acks under it.
+	if err := b.Ack(context.Background(), "task-001", "batch-1", nil); err != nil {
+		t.Fatalf("Ack member under batch lease: %v", err)
 	}
 }

@@ -12,6 +12,11 @@ in-memory broker, with no Redis and no polling.
 
 ### Added
 
+- **Group aggregation**: tag tasks with `conveyor.Group(...)` to accumulate them
+  by `(queue, group)` and deliver the whole group to a worker as one batch via
+  `Mux.HandleBatch`. Fires on size, max-delay, or grace period (server-configured);
+  one slot and one lease per batch; per-member outcomes via `BatchError`. Members
+  show as the `aggregating` state in the dashboard. See `docs/grouping.md`.
 - **Normative wire-protocol spec** (`docs/protocol.md`): the language-agnostic
   contract for non-Go SDKs, covering transport, auth, the `content_type` codec
   contract, flow control, the session frames, and a conformance checklist.

@@ -13,3 +13,10 @@ lint:
 breaking:
   use:
     - WIRE_JSON
+  except:
+    # Reserved field ranges in these protos are forward-reservations for planned
+    # features (e.g. TaskOptions 9-15, "for groups, rate limits"), never
+    # tombstones of deleted fields. Consuming a reserved number is the intended
+    # workflow and is wire-safe — the number was never on the wire — so shrinking
+    # a reserved range to claim a field must not count as a breaking change.
+    - RESERVED_MESSAGE_NO_DELETE

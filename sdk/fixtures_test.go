@@ -48,6 +48,8 @@ func startTestServer(t *testing.T, tokens []string) string {
 	config.Engine.LeaseTTL = 2 * time.Second
 	config.Engine.ReapInterval = 200 * time.Millisecond
 	config.Engine.PromoteInterval = 100 * time.Millisecond
+	config.Engine.GroupGracePeriod = 100 * time.Millisecond
+	config.Engine.GroupSweepInterval = 50 * time.Millisecond
 
 	node, err := server.New(config, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)

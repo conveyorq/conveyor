@@ -59,6 +59,11 @@ type taskRow struct {
 	uniqueExpiresAt time.Time
 	// maxRetry caps retries before the reaper archives the task.
 	maxRetry int32
+	// group is the aggregation group key, empty for ungrouped tasks.
+	group string
+	// enqueuedAt is when the task was committed; orders group members and
+	// drives the group's oldest/newest firing thresholds.
+	enqueuedAt time.Time
 }
 
 // Broker is the in-memory broker.Broker implementation.
@@ -110,8 +115,22 @@ func (b *Broker) Enqueue(_ context.Context, task *conveyorv1.TaskEnvelope) error
 		processAt = options.GetProcessAt().AsTime()
 	}
 
+	group := options.GetGroup()
+	if group != "" && processAt.After(now) {
+		return broker.ErrGroupedSchedule
+	}
+
+	enqueuedAt := now
+	if task.GetEnqueuedAt() != nil {
+		enqueuedAt = task.GetEnqueuedAt().AsTime()
+	}
+
 	state := conveyorv1.TaskState_TASK_STATE_PENDING
-	if processAt.After(now) {
+
+	switch {
+	case group != "":
+		state = conveyorv1.TaskState_TASK_STATE_AGGREGATING
+	case processAt.After(now):
 		state = conveyorv1.TaskState_TASK_STATE_SCHEDULED
 	}
 
@@ -131,6 +150,8 @@ func (b *Broker) Enqueue(_ context.Context, task *conveyorv1.TaskEnvelope) error
 		uniqueKey:       uniqueKey,
 		uniqueExpiresAt: uniqueExpiresAt,
 		maxRetry:        options.GetMaxRetry(),
+		group:           group,
+		enqueuedAt:      enqueuedAt,
 	}
 
 	return nil
@@ -158,7 +179,8 @@ func incomplete(state conveyorv1.TaskState) bool {
 	case conveyorv1.TaskState_TASK_STATE_SCHEDULED,
 		conveyorv1.TaskState_TASK_STATE_PENDING,
 		conveyorv1.TaskState_TASK_STATE_ACTIVE,
-		conveyorv1.TaskState_TASK_STATE_RETRY:
+		conveyorv1.TaskState_TASK_STATE_RETRY,
+		conveyorv1.TaskState_TASK_STATE_AGGREGATING:
 		return true
 	default:
 		return false
@@ -211,6 +233,109 @@ func (b *Broker) Lease(_ context.Context, queue string, limit int, ttl time.Dura
 	}
 
 	return leased, nil
+}
+
+// LeaseGroup claims a group's aggregating members as one batch; see broker.Broker.
+func (b *Broker) LeaseGroup(_ context.Context, queue, group string, limit int, ttl time.Duration, leaseID string) ([]*conveyorv1.TaskEnvelope, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	now := b.clock.Now()
+
+	var members []*taskRow
+
+	for _, row := range b.tasks {
+		if row.state == conveyorv1.TaskState_TASK_STATE_AGGREGATING && row.envelope.GetQueue() == queue && row.group == group {
+			members = append(members, row)
+		}
+	}
+
+	slices.SortFunc(members, func(a, other *taskRow) int {
+		if !a.enqueuedAt.Equal(other.enqueuedAt) {
+			return a.enqueuedAt.Compare(other.enqueuedAt)
+		}
+
+		return strings.Compare(a.envelope.GetId(), other.envelope.GetId())
+	})
+
+	if len(members) > limit {
+		members = members[:limit]
+	}
+
+	leased := make([]*conveyorv1.TaskEnvelope, 0, len(members))
+
+	for _, row := range members {
+		row.state = conveyorv1.TaskState_TASK_STATE_ACTIVE
+		row.leaseID = leaseID
+		row.leaseExpiresAt = now.Add(ttl)
+		row.startedAt = now
+		leased = append(leased, overlay(row))
+	}
+
+	return leased, nil
+}
+
+// GroupStats summarizes the aggregating groups across all queues; see
+// broker.Broker.
+func (b *Broker) GroupStats(_ context.Context) ([]broker.GroupStat, error) {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	type groupKey struct {
+		queue string
+		group string
+	}
+
+	stats := make(map[groupKey]*broker.GroupStat)
+
+	for _, row := range b.tasks {
+		if row.state != conveyorv1.TaskState_TASK_STATE_AGGREGATING {
+			continue
+		}
+
+		key := groupKey{queue: row.envelope.GetQueue(), group: row.group}
+
+		stat, ok := stats[key]
+		if !ok {
+			stat = &broker.GroupStat{
+				Queue:  key.queue,
+				Group:  key.group,
+				Type:   row.envelope.GetType(),
+				Oldest: row.enqueuedAt,
+				Newest: row.enqueuedAt,
+			}
+			stats[key] = stat
+		}
+
+		stat.Count++
+
+		if row.enqueuedAt.Before(stat.Oldest) {
+			stat.Oldest = row.enqueuedAt
+		}
+
+		if row.enqueuedAt.After(stat.Newest) {
+			stat.Newest = row.enqueuedAt
+		}
+	}
+
+	result := make([]broker.GroupStat, 0, len(stats))
+	for _, stat := range stats {
+		result = append(result, *stat)
+	}
+
+	slices.SortFunc(result, func(a, other broker.GroupStat) int {
+		if a.Queue != other.Queue {
+			return strings.Compare(a.Queue, other.Queue)
+		}
+
+		return strings.Compare(a.Group, other.Group)
+	})
+
+	return result, nil
 }
 
 // dispatchable reports whether the state is eligible for leasing.
@@ -515,6 +640,8 @@ func (b *Broker) QueueStats(_ context.Context) ([]broker.QueueStat, error) {
 			stat.Completed++
 		case conveyorv1.TaskState_TASK_STATE_ARCHIVED:
 			stat.Archived++
+		case conveyorv1.TaskState_TASK_STATE_AGGREGATING:
+			stat.Aggregating++
 		}
 	}
 
@@ -630,7 +757,8 @@ func (b *Broker) CancelTask(_ context.Context, id string) error {
 	switch row.state {
 	case conveyorv1.TaskState_TASK_STATE_SCHEDULED,
 		conveyorv1.TaskState_TASK_STATE_PENDING,
-		conveyorv1.TaskState_TASK_STATE_RETRY:
+		conveyorv1.TaskState_TASK_STATE_RETRY,
+		conveyorv1.TaskState_TASK_STATE_AGGREGATING:
 		row.state = conveyorv1.TaskState_TASK_STATE_CANCELED
 		row.completedAt = b.clock.Now()
 

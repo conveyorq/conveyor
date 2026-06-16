@@ -34,13 +34,14 @@ import (
 
 // Task state column values, mirroring conveyor.v1.TaskState.
 const (
-	stateScheduled = int16(conveyorv1.TaskState_TASK_STATE_SCHEDULED)
-	statePending   = int16(conveyorv1.TaskState_TASK_STATE_PENDING)
-	stateActive    = int16(conveyorv1.TaskState_TASK_STATE_ACTIVE)
-	stateRetry     = int16(conveyorv1.TaskState_TASK_STATE_RETRY)
-	stateCompleted = int16(conveyorv1.TaskState_TASK_STATE_COMPLETED)
-	stateArchived  = int16(conveyorv1.TaskState_TASK_STATE_ARCHIVED)
-	stateCanceled  = int16(conveyorv1.TaskState_TASK_STATE_CANCELED)
+	stateScheduled   = int16(conveyorv1.TaskState_TASK_STATE_SCHEDULED)
+	statePending     = int16(conveyorv1.TaskState_TASK_STATE_PENDING)
+	stateActive      = int16(conveyorv1.TaskState_TASK_STATE_ACTIVE)
+	stateRetry       = int16(conveyorv1.TaskState_TASK_STATE_RETRY)
+	stateCompleted   = int16(conveyorv1.TaskState_TASK_STATE_COMPLETED)
+	stateArchived    = int16(conveyorv1.TaskState_TASK_STATE_ARCHIVED)
+	stateCanceled    = int16(conveyorv1.TaskState_TASK_STATE_CANCELED)
+	stateAggregating = int16(conveyorv1.TaskState_TASK_STATE_AGGREGATING)
 )
 
 // uniqueIndexName is the partial unique index enforcing task uniqueness;
@@ -106,8 +107,8 @@ RETURNING t.queue`,
 const insertTaskQuery = `INSERT INTO conveyor_tasks (
   id, queue, type, state, priority, payload, unique_key, unique_expires_at,
   process_at, deadline, max_retry, retried, last_error, retention,
-  enqueued_at, updated_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+  enqueued_at, updated_at, group_key
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 ON CONFLICT (id) DO NOTHING`
 
 // releaseLapsedUniqueQuery frees a unique-key claim whose TTL has lapsed
@@ -154,8 +155,8 @@ var archiveAnyQuery = fmt.Sprintf(`UPDATE conveyor_tasks
 // cancelTaskQuery cancels a task that is not yet running.
 var cancelTaskQuery = fmt.Sprintf(`UPDATE conveyor_tasks
   SET state = %d, completed_at = $2, updated_at = $2
-  WHERE id = $1 AND state IN (%d, %d, %d)`,
-	stateCanceled, stateScheduled, statePending, stateRetry)
+  WHERE id = $1 AND state IN (%d, %d, %d, %d)`,
+	stateCanceled, stateScheduled, statePending, stateRetry, stateAggregating)
 
 // deleteTaskQuery removes a task unless it is actively executing.
 var deleteTaskQuery = fmt.Sprintf(
@@ -233,8 +234,17 @@ func (b *Broker) Enqueue(ctx context.Context, task *conveyorv1.TaskEnvelope) err
 		processAt = options.GetProcessAt().AsTime()
 	}
 
+	group := options.GetGroup()
+	if group != "" && processAt.After(now) {
+		return broker.ErrGroupedSchedule
+	}
+
 	state := statePending
-	if processAt.After(now) {
+
+	switch {
+	case group != "":
+		state = stateAggregating
+	case processAt.After(now):
 		state = stateScheduled
 	}
 
@@ -263,7 +273,7 @@ func (b *Broker) Enqueue(ctx context.Context, task *conveyorv1.TaskEnvelope) err
 		task.GetId(), task.GetQueue(), task.GetType(), state, options.GetPriority(),
 		payload, uniqueKey, uniqueExpiresAt, processAt, protoTime(options.GetDeadline()),
 		options.GetMaxRetry(), task.GetRetried(), task.GetLastError(),
-		pgInterval(options.GetRetention().AsDuration()), enqueuedAt, now,
+		pgInterval(options.GetRetention().AsDuration()), enqueuedAt, now, group,
 	}
 
 	if uniqueKey == nil {
@@ -320,6 +330,93 @@ func (b *Broker) Lease(ctx context.Context, queue string, limit int, ttl time.Du
 	defer rows.Close()
 
 	return scanEnvelopes(rows)
+}
+
+// leaseGroupQuery claims a (queue, group)'s aggregating members as one batch,
+// ordered by enqueue time then id; it mirrors leaseQuery's CTE pattern.
+var leaseGroupQuery = fmt.Sprintf(`WITH due AS (
+  SELECT id, enqueued_at FROM conveyor_tasks
+  WHERE queue = $1 AND group_key = $2 AND state = %d
+  ORDER BY enqueued_at, id
+  LIMIT $3
+  FOR UPDATE SKIP LOCKED
+), claimed AS (
+  UPDATE conveyor_tasks t
+  SET state = %d, lease_id = $4, lease_expires_at = $6, started_at = $5, updated_at = $5
+  FROM due WHERE t.id = due.id
+  RETURNING t.id, t.payload, t.retried, t.last_error
+)
+SELECT c.payload, c.retried, c.last_error
+FROM claimed c JOIN due d ON d.id = c.id
+ORDER BY d.enqueued_at, d.id`, stateAggregating, stateActive)
+
+// LeaseGroup claims a group's aggregating members as one batch; see broker.Broker.
+func (b *Broker) LeaseGroup(ctx context.Context, queue, group string, limit int, ttl time.Duration, leaseID string) ([]*conveyorv1.TaskEnvelope, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+
+	now := b.clock.Now()
+
+	rows, err := b.pool.Query(ctx, leaseGroupQuery, queue, group, limit, leaseID, now, now.Add(ttl))
+	if err != nil {
+		return nil, fmt.Errorf("postgres: lease group: %w", err)
+	}
+	defer rows.Close()
+
+	return scanEnvelopes(rows)
+}
+
+// groupStatsQuery summarizes the aggregating members per (queue, group) across
+// all queues. The WHERE state filter rides the partial aggregating index, so it
+// scans only aggregating rows. MIN(type) names the group's task type; groups
+// are single-type, so any member's type is the batch's handler routing key.
+var groupStatsQuery = fmt.Sprintf(`SELECT queue, group_key, MIN(type), COUNT(*), MIN(enqueued_at), MAX(enqueued_at)
+  FROM conveyor_tasks
+  WHERE state = %d
+  GROUP BY queue, group_key
+  ORDER BY queue, group_key`, stateAggregating)
+
+// GroupStats summarizes the aggregating groups across all queues; see
+// broker.Broker.
+func (b *Broker) GroupStats(ctx context.Context) ([]broker.GroupStat, error) {
+	rows, err := b.pool.Query(ctx, groupStatsQuery)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: group stats: %w", err)
+	}
+	defer rows.Close()
+
+	var stats []broker.GroupStat
+
+	for rows.Next() {
+		var (
+			queue    string
+			group    string
+			taskType string
+			count    pgtype.Int8
+			oldest   pgtype.Timestamptz
+			newest   pgtype.Timestamptz
+		)
+
+		if err = rows.Scan(&queue, &group, &taskType, &count, &oldest, &newest); err != nil {
+			return nil, fmt.Errorf("postgres: scan group stats: %w", err)
+		}
+
+		stats = append(stats, broker.GroupStat{
+			Queue:  queue,
+			Group:  group,
+			Type:   taskType,
+			Count:  count.Int64,
+			Oldest: oldest.Time,
+			Newest: newest.Time,
+		})
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres: group stats: %w", err)
+	}
+
+	return stats, nil
 }
 
 // ExtendLease pushes the lease expiry forward; see broker.Broker.
@@ -575,6 +672,8 @@ func (b *Broker) QueueStats(ctx context.Context) ([]broker.QueueStat, error) {
 			stat.Completed = taskCount.Int64
 		case conveyorv1.TaskState_TASK_STATE_ARCHIVED:
 			stat.Archived = taskCount.Int64
+		case conveyorv1.TaskState_TASK_STATE_AGGREGATING:
+			stat.Aggregating = taskCount.Int64
 		}
 	}
 

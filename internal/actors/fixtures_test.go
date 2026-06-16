@@ -42,21 +42,29 @@ const gatewayHeartbeat = 500 * time.Millisecond
 
 // testSettings are fast engine settings for single-node tests.
 var testSettings = Settings{
-	LeaseTTL:        30 * time.Second,
-	LeaseBatchMax:   100,
-	ReapInterval:    200 * time.Millisecond,
-	PromoteInterval: 100 * time.Millisecond,
-	PassivateAfter:  5 * time.Minute,
+	LeaseTTL:           30 * time.Second,
+	LeaseBatchMax:      100,
+	ReapInterval:       200 * time.Millisecond,
+	PromoteInterval:    100 * time.Millisecond,
+	PassivateAfter:     5 * time.Minute,
+	GroupMaxSize:       100,
+	GroupMaxDelay:      time.Minute,
+	GroupGracePeriod:   10 * time.Second,
+	GroupSweepInterval: 100 * time.Millisecond,
 }
 
 // recoverySettings shorten the lease TTL and maintenance cadence so
 // re-delivery after a node death happens within test time.
 var recoverySettings = Settings{
-	LeaseTTL:        2 * time.Second,
-	LeaseBatchMax:   100,
-	ReapInterval:    300 * time.Millisecond,
-	PromoteInterval: 100 * time.Millisecond,
-	PassivateAfter:  5 * time.Minute,
+	LeaseTTL:           2 * time.Second,
+	LeaseBatchMax:      100,
+	ReapInterval:       300 * time.Millisecond,
+	PromoteInterval:    100 * time.Millisecond,
+	PassivateAfter:     5 * time.Minute,
+	GroupMaxSize:       100,
+	GroupMaxDelay:      time.Minute,
+	GroupGracePeriod:   10 * time.Second,
+	GroupSweepInterval: 100 * time.Millisecond,
 }
 
 // freePorts reserves n distinct free loopback ports.

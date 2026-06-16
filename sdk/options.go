@@ -76,6 +76,8 @@ type enqueueOptions struct {
 	uniqueKey string
 	// uniqueTTL bounds how long the uniqueness claim is held.
 	uniqueTTL time.Duration
+	// group makes the task an aggregation-group member.
+	group string
 }
 
 // TaskID assigns a client-chosen task id, making Enqueue retries

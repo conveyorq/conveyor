@@ -39,6 +39,8 @@ const (
 	TaskStateArchived TaskState = "archived"
 	// TaskStateCanceled is a task canceled before completion.
 	TaskStateCanceled TaskState = "canceled"
+	// TaskStateAggregating is a group member accumulating until its group fires.
+	TaskStateAggregating TaskState = "aggregating"
 	// TaskStateUnknown reports a state this SDK version does not know.
 	TaskStateUnknown TaskState = "unknown"
 )
@@ -128,6 +130,7 @@ func (c *Client) Enqueue(ctx context.Context, task *Task, opts ...EnqueueOption)
 		MaxRetry:    int32(settings.maxRetry),
 		Priority:    int32(settings.priority),
 		UniqueKey:   uniqueKey,
+		Group:       settings.group,
 	}
 
 	if settings.timeout > 0 {
@@ -243,6 +246,8 @@ func taskStateFromProto(state conveyorv1.TaskState) TaskState {
 		return TaskStateArchived
 	case conveyorv1.TaskState_TASK_STATE_CANCELED:
 		return TaskStateCanceled
+	case conveyorv1.TaskState_TASK_STATE_AGGREGATING:
+		return TaskStateAggregating
 	default:
 		return TaskStateUnknown
 	}

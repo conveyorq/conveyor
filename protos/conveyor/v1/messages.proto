@@ -31,6 +31,9 @@ message RegisterGateway {
   string gateway_name = 2;
   // capacity is the worker's declared concurrency for this queue.
   int32 capacity = 3;
+  // batch_types are the task types this gateway's worker handles as batches,
+  // so the grain dispatches a fired group only to a capable gateway.
+  repeated string batch_types = 4;
 }
 
 // GatewayCredit grants dispatch credits from a gateway to a queue grain.
@@ -48,6 +51,43 @@ message ExecuteTask {
   google.protobuf.Timestamp lease_expires_at = 3;
 }
 
+// ExecuteBatch carries one durably leased aggregation group from a queue grain
+// to a gateway for batch dispatch. The members share one lease_id; the gateway
+// delivers them as a single BatchDispatch frame.
+message ExecuteBatch {
+  repeated conveyor.v1.TaskEnvelope tasks = 1;
+  string lease_id = 2;
+  google.protobuf.Timestamp lease_expires_at = 3;
+  string group = 4;
+}
+
+// FireGroup tells a queue grain that an aggregation group is due: the grain
+// leases its members and batch-dispatches them. The group-sweeper singleton
+// sends it after a group's size, delay, or grace threshold trips.
+message FireGroup {
+  string queue = 1;
+  string group = 2;
+  // type is the group's task type (members are single-type), used to pick a
+  // batch-capable gateway before leasing.
+  string type = 3;
+}
+
+// GroupLeaseCompleted delivers the outcome of an asynchronous group lease back
+// to the queue grain that initiated it. Leasing runs off the grain turn through
+// PipeToSelf (broker I/O never blocks the grain), and the grain dispatches the
+// batch when this arrives. A failed lease carries the broker error message.
+message GroupLeaseCompleted {
+  repeated conveyor.v1.TaskEnvelope tasks = 1;
+  string lease_id = 2;
+  google.protobuf.Timestamp lease_expires_at = 3;
+  string group = 4;
+  // type is the group's task type, used to re-pick a batch-capable gateway at
+  // dispatch time (a gateway may have changed since the lease began).
+  string type = 5;
+  // error is the broker failure message; empty when the lease succeeded.
+  string error = 6;
+}
+
 // TaskCompleted signals a finished execution back to the queue grain. It
 // is also the credit refill signal: the named gateway regains one dispatch
 // credit, which may start another lease cycle.
@@ -56,6 +96,18 @@ message TaskCompleted {
   string queue = 2;
   bool success = 3;
   string gateway_name = 4;
+}
+
+// BatchCompleted signals a finished batch execution back to the queue grain.
+// One batch consumes one dispatch credit regardless of member count, so it
+// refills exactly one credit; total and succeeded update the task counters.
+message BatchCompleted {
+  string queue = 1;
+  string gateway_name = 2;
+  // total is the number of members in the batch.
+  int32 total = 3;
+  // succeeded is how many members completed successfully.
+  int32 succeeded = 4;
 }
 
 // DrainQueue pauses dispatch for a queue (persisted via the broker).
@@ -113,3 +165,6 @@ message PromoteTick {}
 
 // ReapTick triggers one maintenance pass on the reaper.
 message ReapTick {}
+
+// GroupSweepTick triggers one firing pass on the group-aggregation sweeper.
+message GroupSweepTick {}

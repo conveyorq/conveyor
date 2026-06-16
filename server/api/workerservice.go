@@ -243,6 +243,7 @@ func (s *WorkerService) Session(ctx context.Context, stream *connect.BidiStream[
 		SessionID:   sessionID,
 		Queues:      queues,
 		Concurrency: hello.GetConcurrency(),
+		BatchTypes:  hello.GetBatchTypes(),
 	}
 
 	sessionCtx, sessionCancel := context.WithCancel(ctx)
@@ -398,6 +399,9 @@ func (s *WorkerService) forward(ctx context.Context, handle *actors.GatewayHandl
 
 	case *conveyorv1.WorkerMessage_Result:
 		return handle.Tell(ctx, frame.Result)
+
+	case *conveyorv1.WorkerMessage_BatchResult:
+		return handle.Tell(ctx, frame.BatchResult)
 
 	case *conveyorv1.WorkerMessage_Heartbeat:
 		return handle.Tell(ctx, frame.Heartbeat)

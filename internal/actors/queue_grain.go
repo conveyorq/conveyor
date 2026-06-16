@@ -39,6 +39,9 @@ type gatewayCredits struct {
 	capacity int32
 	// credits is the number of tasks the grain may still dispatch to it.
 	credits int32
+	// batchTypes are the task types this gateway's worker handles as batches;
+	// a fired group dispatches only to a gateway advertising the group's type.
+	batchTypes []string
 }
 
 // QueueGrain is the per-queue dispatcher: a virtual actor with exactly one
@@ -102,6 +105,19 @@ func (x *QueueGrain) OnReceive(ctx *goakt.GrainContext) {
 	case *conveyorv1.TaskCompleted:
 		x.recordCompletion(message)
 		x.maybeLease(ctx)
+		ctx.NoErr()
+
+	case *conveyorv1.BatchCompleted:
+		x.recordBatchCompletion(message)
+		x.maybeLease(ctx)
+		ctx.NoErr()
+
+	case *conveyorv1.FireGroup:
+		x.fireGroup(ctx, message)
+		ctx.NoErr()
+
+	case *conveyorv1.GroupLeaseCompleted:
+		x.finishGroupLease(ctx, message)
 		ctx.NoErr()
 
 	case *conveyorv1.RegisterGateway:
@@ -185,15 +201,17 @@ func (x *QueueGrain) registerGateway(message *conveyorv1.RegisterGateway) {
 	for _, gateway := range x.gateways {
 		if gateway.name == message.GetGatewayName() {
 			gateway.capacity = message.GetCapacity()
+			gateway.batchTypes = message.GetBatchTypes()
 
 			return
 		}
 	}
 
 	x.gateways = append(x.gateways, &gatewayCredits{
-		name:     message.GetGatewayName(),
-		capacity: message.GetCapacity(),
-		credits:  message.GetCapacity(),
+		name:       message.GetGatewayName(),
+		capacity:   message.GetCapacity(),
+		credits:    message.GetCapacity(),
+		batchTypes: message.GetBatchTypes(),
 	})
 
 	x.runtime.Logger().Debug("gateway registered", "queue", x.queue, "gateway", message.GetGatewayName(), "capacity", message.GetCapacity())

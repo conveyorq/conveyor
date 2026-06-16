@@ -33,6 +33,11 @@ var (
 	// ErrInvalidState is returned when an admin operation is not legal in
 	// the task's current state, e.g. canceling an active task.
 	ErrInvalidState = errors.New("broker: operation invalid in current task state")
+
+	// ErrGroupedSchedule is returned by Enqueue when a task carries both a
+	// group and a future process_at: aggregation and scheduling are mutually
+	// exclusive in v1.
+	ErrGroupedSchedule = errors.New("broker: a grouped task cannot be scheduled")
 )
 
 // ListTasks pagination bounds.
@@ -118,6 +123,27 @@ type QueueStat struct {
 	Completed int64
 	// Archived counts dead-lettered tasks.
 	Archived int64
+	// Aggregating counts group members accumulating before their group fires.
+	Aggregating int64
+}
+
+// GroupStat summarizes one aggregation group's accumulating members. It is the
+// firing input the queue's group sweep reads: the count and the oldest/newest
+// member timestamps decide whether a size, max-delay, or grace threshold trips.
+type GroupStat struct {
+	// Queue is the queue the group belongs to.
+	Queue string
+	// Group is the aggregation group key.
+	Group string
+	// Type is the members' task type; a group is single-type, so this is the
+	// handler routing key the fired batch dispatches to.
+	Type string
+	// Count is the number of members currently aggregating.
+	Count int64
+	// Oldest is the enqueue time of the earliest member (drives max-delay).
+	Oldest time.Time
+	// Newest is the enqueue time of the latest member (drives grace period).
+	Newest time.Time
 }
 
 // TaskRecord pairs a task envelope with its current lifecycle state in
@@ -165,6 +191,21 @@ type Broker interface {
 	// until the TTL elapses. Concurrent calls never claim the same task.
 	// A non-positive limit claims nothing.
 	Lease(ctx context.Context, queue string, limit int, ttl time.Duration, leaseID string) ([]*conveyorv1.TaskEnvelope, error)
+
+	// LeaseGroup atomically claims up to limit aggregating members of a single
+	// (queue, group), ordered by enqueue time then id, leasing them together as
+	// one batch: they become active under leaseID until the TTL elapses. It is
+	// how a fired group is dispatched — members never pass through pending, so
+	// grouped work never reaches the singleton lease path. A non-positive limit
+	// claims nothing.
+	LeaseGroup(ctx context.Context, queue, group string, limit int, ttl time.Duration, leaseID string) ([]*conveyorv1.TaskEnvelope, error)
+
+	// GroupStats reports one entry per aggregation group, across all queues,
+	// that has members accumulating: the member count, the group's task type,
+	// and the oldest/newest member enqueue times. It is the firing input for the
+	// group sweep and scans only aggregating rows (a partial index), so it stays
+	// cheap regardless of total task volume. Groups with no members are omitted.
+	GroupStats(ctx context.Context) ([]GroupStat, error)
 
 	// ExtendLease pushes the lease expiry to now+ttl. It returns
 	// ErrLeaseLost when the task is not active under leaseID.

@@ -33,6 +33,7 @@ import (
 const (
 	schedulerActorName = "conveyor-scheduler"
 	reaperActorName    = "conveyor-reaper"
+	sweeperActorName   = "conveyor-group-sweeper"
 )
 
 // Config wires one engine node. Clustering is always on: a node with no
@@ -116,7 +117,7 @@ func (e *Engine) Start(ctx context.Context) error {
 			WithPeersPort(e.config.PeersPort).
 			WithMinimumPeersQuorum(1).
 			WithReplicaCount(1).
-			WithKinds(NewScheduler(), NewReaper()).
+			WithKinds(NewScheduler(), NewReaper(), NewGroupSweeper()).
 			WithGrains(new(QueueGrain))),
 	}
 
@@ -145,6 +146,10 @@ func (e *Engine) Start(ctx context.Context) error {
 
 	if err = spawnSingleton(ctx, system, reaperActorName, NewReaper()); err != nil {
 		return fmt.Errorf("spawning reaper singleton: %w", err)
+	}
+
+	if err = spawnSingleton(ctx, system, sweeperActorName, NewGroupSweeper()); err != nil {
+		return fmt.Errorf("spawning group sweeper singleton: %w", err)
 	}
 
 	e.runtime.Logger().Info("engine started", "system", e.config.Name, "bind", e.config.BindAddr, "discovery", e.config.Provider.ID())

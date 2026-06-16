@@ -14,7 +14,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file conveyor/v1/messages.proto.
  */
 export const file_conveyor_v1_messages: GenFile = /*@__PURE__*/
-  fileDesc("Chpjb252ZXlvci92MS9tZXNzYWdlcy5wcm90bxILY29udmV5b3IudjEiHQoMVGFza0VucXVldWVkEg0KBXF1ZXVlGAEgASgJIi0KDlRhc2tzQXZhaWxhYmxlEg0KBXF1ZXVlGAEgASgJEgwKBGhpbnQYAiABKAMiSAoPUmVnaXN0ZXJHYXRld2F5Eg0KBXF1ZXVlGAEgASgJEhQKDGdhdGV3YXlfbmFtZRgCIAEoCRIQCghjYXBhY2l0eRgDIAEoBSJFCg1HYXRld2F5Q3JlZGl0Eg0KBXF1ZXVlGAEgASgJEhQKDGdhdGV3YXlfbmFtZRgCIAEoCRIPCgdjcmVkaXRzGAMgASgFIn4KC0V4ZWN1dGVUYXNrEicKBHRhc2sYASABKAsyGS5jb252ZXlvci52MS5UYXNrRW52ZWxvcGUSEAoIbGVhc2VfaWQYAiABKAkSNAoQbGVhc2VfZXhwaXJlc19hdBgDIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAiVgoNVGFza0NvbXBsZXRlZBIPCgd0YXNrX2lkGAEgASgJEg0KBXF1ZXVlGAIgASgJEg8KB3N1Y2Nlc3MYAyABKAgSFAoMZ2F0ZXdheV9uYW1lGAQgASgJIhsKCkRyYWluUXVldWUSDQoFcXVldWUYASABKAkiHAoLUmVzdW1lUXVldWUSDQoFcXVldWUYASABKAkiHwoMQ2FuY2VsQWN0aXZlEg8KB3Rhc2tfaWQYASABKAkiHAoIRmlyZUNyb24SEAoIZW50cnlfaWQYASABKAkiFAoSQ3JvbkVudHJpZXNDaGFuZ2VkIpYBChNMZWFzZUN5Y2xlQ29tcGxldGVkEigKBXRhc2tzGAEgAygLMhkuY29udmV5b3IudjEuVGFza0VudmVsb3BlEhAKCGxlYXNlX2lkGAIgASgJEjQKEGxlYXNlX2V4cGlyZXNfYXQYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEg0KBWVycm9yGAQgASgJIjcKE0xlYXNlZFRhc2tzUmVsZWFzZWQSEAoIcmVsZWFzZWQYASABKAUSDgoGZmFpbGVkGAIgASgFIg0KC1Byb21vdGVUaWNrIgoKCFJlYXBUaWNrYgZwcm90bzM", [file_conveyor_v1_task, file_google_protobuf_timestamp]);
+  fileDesc("Chpjb252ZXlvci92MS9tZXNzYWdlcy5wcm90bxILY29udmV5b3IudjEiHQoMVGFza0VucXVldWVkEg0KBXF1ZXVlGAEgASgJIi0KDlRhc2tzQXZhaWxhYmxlEg0KBXF1ZXVlGAEgASgJEgwKBGhpbnQYAiABKAMiXQoPUmVnaXN0ZXJHYXRld2F5Eg0KBXF1ZXVlGAEgASgJEhQKDGdhdGV3YXlfbmFtZRgCIAEoCRIQCghjYXBhY2l0eRgDIAEoBRITCgtiYXRjaF90eXBlcxgEIAMoCSJFCg1HYXRld2F5Q3JlZGl0Eg0KBXF1ZXVlGAEgASgJEhQKDGdhdGV3YXlfbmFtZRgCIAEoCRIPCgdjcmVkaXRzGAMgASgFIn4KC0V4ZWN1dGVUYXNrEicKBHRhc2sYASABKAsyGS5jb252ZXlvci52MS5UYXNrRW52ZWxvcGUSEAoIbGVhc2VfaWQYAiABKAkSNAoQbGVhc2VfZXhwaXJlc19hdBgDIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAijwEKDEV4ZWN1dGVCYXRjaBIoCgV0YXNrcxgBIAMoCzIZLmNvbnZleW9yLnYxLlRhc2tFbnZlbG9wZRIQCghsZWFzZV9pZBgCIAEoCRI0ChBsZWFzZV9leHBpcmVzX2F0GAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBINCgVncm91cBgEIAEoCSI3CglGaXJlR3JvdXASDQoFcXVldWUYASABKAkSDQoFZ3JvdXAYAiABKAkSDAoEdHlwZRgDIAEoCSKzAQoTR3JvdXBMZWFzZUNvbXBsZXRlZBIoCgV0YXNrcxgBIAMoCzIZLmNvbnZleW9yLnYxLlRhc2tFbnZlbG9wZRIQCghsZWFzZV9pZBgCIAEoCRI0ChBsZWFzZV9leHBpcmVzX2F0GAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBINCgVncm91cBgEIAEoCRIMCgR0eXBlGAUgASgJEg0KBWVycm9yGAYgASgJIlYKDVRhc2tDb21wbGV0ZWQSDwoHdGFza19pZBgBIAEoCRINCgVxdWV1ZRgCIAEoCRIPCgdzdWNjZXNzGAMgASgIEhQKDGdhdGV3YXlfbmFtZRgEIAEoCSJXCg5CYXRjaENvbXBsZXRlZBINCgVxdWV1ZRgBIAEoCRIUCgxnYXRld2F5X25hbWUYAiABKAkSDQoFdG90YWwYAyABKAUSEQoJc3VjY2VlZGVkGAQgASgFIhsKCkRyYWluUXVldWUSDQoFcXVldWUYASABKAkiHAoLUmVzdW1lUXVldWUSDQoFcXVldWUYASABKAkiHwoMQ2FuY2VsQWN0aXZlEg8KB3Rhc2tfaWQYASABKAkiHAoIRmlyZUNyb24SEAoIZW50cnlfaWQYASABKAkiFAoSQ3JvbkVudHJpZXNDaGFuZ2VkIpYBChNMZWFzZUN5Y2xlQ29tcGxldGVkEigKBXRhc2tzGAEgAygLMhkuY29udmV5b3IudjEuVGFza0VudmVsb3BlEhAKCGxlYXNlX2lkGAIgASgJEjQKEGxlYXNlX2V4cGlyZXNfYXQYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEg0KBWVycm9yGAQgASgJIjcKE0xlYXNlZFRhc2tzUmVsZWFzZWQSEAoIcmVsZWFzZWQYASABKAUSDgoGZmFpbGVkGAIgASgFIg0KC1Byb21vdGVUaWNrIgoKCFJlYXBUaWNrIhAKDkdyb3VwU3dlZXBUaWNrYgZwcm90bzM", [file_conveyor_v1_task, file_google_protobuf_timestamp]);
 
 /**
  * TaskEnqueued tells a queue grain that one new task was committed.
@@ -86,6 +86,14 @@ export type RegisterGateway = Message<"conveyor.v1.RegisterGateway"> & {
    * @generated from field: int32 capacity = 3;
    */
   capacity: number;
+
+  /**
+   * batch_types are the task types this gateway's worker handles as batches,
+   * so the grain dispatches a fired group only to a capable gateway.
+   *
+   * @generated from field: repeated string batch_types = 4;
+   */
+  batchTypes: string[];
 };
 
 /**
@@ -155,6 +163,128 @@ export const ExecuteTaskSchema: GenMessage<ExecuteTask> = /*@__PURE__*/
   messageDesc(file_conveyor_v1_messages, 4);
 
 /**
+ * ExecuteBatch carries one durably leased aggregation group from a queue grain
+ * to a gateway for batch dispatch. The members share one lease_id; the gateway
+ * delivers them as a single BatchDispatch frame.
+ *
+ * @generated from message conveyor.v1.ExecuteBatch
+ */
+export type ExecuteBatch = Message<"conveyor.v1.ExecuteBatch"> & {
+  /**
+   * @generated from field: repeated conveyor.v1.TaskEnvelope tasks = 1;
+   */
+  tasks: TaskEnvelope[];
+
+  /**
+   * @generated from field: string lease_id = 2;
+   */
+  leaseId: string;
+
+  /**
+   * @generated from field: google.protobuf.Timestamp lease_expires_at = 3;
+   */
+  leaseExpiresAt?: Timestamp | undefined;
+
+  /**
+   * @generated from field: string group = 4;
+   */
+  group: string;
+};
+
+/**
+ * Describes the message conveyor.v1.ExecuteBatch.
+ * Use `create(ExecuteBatchSchema)` to create a new message.
+ */
+export const ExecuteBatchSchema: GenMessage<ExecuteBatch> = /*@__PURE__*/
+  messageDesc(file_conveyor_v1_messages, 5);
+
+/**
+ * FireGroup tells a queue grain that an aggregation group is due: the grain
+ * leases its members and batch-dispatches them. The group-sweeper singleton
+ * sends it after a group's size, delay, or grace threshold trips.
+ *
+ * @generated from message conveyor.v1.FireGroup
+ */
+export type FireGroup = Message<"conveyor.v1.FireGroup"> & {
+  /**
+   * @generated from field: string queue = 1;
+   */
+  queue: string;
+
+  /**
+   * @generated from field: string group = 2;
+   */
+  group: string;
+
+  /**
+   * type is the group's task type (members are single-type), used to pick a
+   * batch-capable gateway before leasing.
+   *
+   * @generated from field: string type = 3;
+   */
+  type: string;
+};
+
+/**
+ * Describes the message conveyor.v1.FireGroup.
+ * Use `create(FireGroupSchema)` to create a new message.
+ */
+export const FireGroupSchema: GenMessage<FireGroup> = /*@__PURE__*/
+  messageDesc(file_conveyor_v1_messages, 6);
+
+/**
+ * GroupLeaseCompleted delivers the outcome of an asynchronous group lease back
+ * to the queue grain that initiated it. Leasing runs off the grain turn through
+ * PipeToSelf (broker I/O never blocks the grain), and the grain dispatches the
+ * batch when this arrives. A failed lease carries the broker error message.
+ *
+ * @generated from message conveyor.v1.GroupLeaseCompleted
+ */
+export type GroupLeaseCompleted = Message<"conveyor.v1.GroupLeaseCompleted"> & {
+  /**
+   * @generated from field: repeated conveyor.v1.TaskEnvelope tasks = 1;
+   */
+  tasks: TaskEnvelope[];
+
+  /**
+   * @generated from field: string lease_id = 2;
+   */
+  leaseId: string;
+
+  /**
+   * @generated from field: google.protobuf.Timestamp lease_expires_at = 3;
+   */
+  leaseExpiresAt?: Timestamp | undefined;
+
+  /**
+   * @generated from field: string group = 4;
+   */
+  group: string;
+
+  /**
+   * type is the group's task type, used to re-pick a batch-capable gateway at
+   * dispatch time (a gateway may have changed since the lease began).
+   *
+   * @generated from field: string type = 5;
+   */
+  type: string;
+
+  /**
+   * error is the broker failure message; empty when the lease succeeded.
+   *
+   * @generated from field: string error = 6;
+   */
+  error: string;
+};
+
+/**
+ * Describes the message conveyor.v1.GroupLeaseCompleted.
+ * Use `create(GroupLeaseCompletedSchema)` to create a new message.
+ */
+export const GroupLeaseCompletedSchema: GenMessage<GroupLeaseCompleted> = /*@__PURE__*/
+  messageDesc(file_conveyor_v1_messages, 7);
+
+/**
  * TaskCompleted signals a finished execution back to the queue grain. It
  * is also the credit refill signal: the named gateway regains one dispatch
  * credit, which may start another lease cycle.
@@ -188,7 +318,47 @@ export type TaskCompleted = Message<"conveyor.v1.TaskCompleted"> & {
  * Use `create(TaskCompletedSchema)` to create a new message.
  */
 export const TaskCompletedSchema: GenMessage<TaskCompleted> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_messages, 5);
+  messageDesc(file_conveyor_v1_messages, 8);
+
+/**
+ * BatchCompleted signals a finished batch execution back to the queue grain.
+ * One batch consumes one dispatch credit regardless of member count, so it
+ * refills exactly one credit; total and succeeded update the task counters.
+ *
+ * @generated from message conveyor.v1.BatchCompleted
+ */
+export type BatchCompleted = Message<"conveyor.v1.BatchCompleted"> & {
+  /**
+   * @generated from field: string queue = 1;
+   */
+  queue: string;
+
+  /**
+   * @generated from field: string gateway_name = 2;
+   */
+  gatewayName: string;
+
+  /**
+   * total is the number of members in the batch.
+   *
+   * @generated from field: int32 total = 3;
+   */
+  total: number;
+
+  /**
+   * succeeded is how many members completed successfully.
+   *
+   * @generated from field: int32 succeeded = 4;
+   */
+  succeeded: number;
+};
+
+/**
+ * Describes the message conveyor.v1.BatchCompleted.
+ * Use `create(BatchCompletedSchema)` to create a new message.
+ */
+export const BatchCompletedSchema: GenMessage<BatchCompleted> = /*@__PURE__*/
+  messageDesc(file_conveyor_v1_messages, 9);
 
 /**
  * DrainQueue pauses dispatch for a queue (persisted via the broker).
@@ -207,7 +377,7 @@ export type DrainQueue = Message<"conveyor.v1.DrainQueue"> & {
  * Use `create(DrainQueueSchema)` to create a new message.
  */
 export const DrainQueueSchema: GenMessage<DrainQueue> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_messages, 6);
+  messageDesc(file_conveyor_v1_messages, 10);
 
 /**
  * ResumeQueue resumes dispatch for a paused queue.
@@ -226,7 +396,7 @@ export type ResumeQueue = Message<"conveyor.v1.ResumeQueue"> & {
  * Use `create(ResumeQueueSchema)` to create a new message.
  */
 export const ResumeQueueSchema: GenMessage<ResumeQueue> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_messages, 7);
+  messageDesc(file_conveyor_v1_messages, 11);
 
 /**
  * CancelActive asks the gateway executing a task to send a Cancel frame to
@@ -246,7 +416,7 @@ export type CancelActive = Message<"conveyor.v1.CancelActive"> & {
  * Use `create(CancelActiveSchema)` to create a new message.
  */
 export const CancelActiveSchema: GenMessage<CancelActive> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_messages, 8);
+  messageDesc(file_conveyor_v1_messages, 12);
 
 /**
  * FireCron tells the scheduler singleton that a cron entry is due.
@@ -265,7 +435,7 @@ export type FireCron = Message<"conveyor.v1.FireCron"> & {
  * Use `create(FireCronSchema)` to create a new message.
  */
 export const FireCronSchema: GenMessage<FireCron> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_messages, 9);
+  messageDesc(file_conveyor_v1_messages, 13);
 
 /**
  * CronEntriesChanged tells the scheduler singleton to reload cron entries
@@ -281,7 +451,7 @@ export type CronEntriesChanged = Message<"conveyor.v1.CronEntriesChanged"> & {
  * Use `create(CronEntriesChangedSchema)` to create a new message.
  */
 export const CronEntriesChangedSchema: GenMessage<CronEntriesChanged> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_messages, 10);
+  messageDesc(file_conveyor_v1_messages, 14);
 
 /**
  * LeaseCycleCompleted delivers the outcome of an asynchronous lease cycle
@@ -319,7 +489,7 @@ export type LeaseCycleCompleted = Message<"conveyor.v1.LeaseCycleCompleted"> & {
  * Use `create(LeaseCycleCompletedSchema)` to create a new message.
  */
 export const LeaseCycleCompletedSchema: GenMessage<LeaseCycleCompleted> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_messages, 11);
+  messageDesc(file_conveyor_v1_messages, 15);
 
 /**
  * LeasedTasksReleased delivers the outcome of an asynchronous release back
@@ -353,7 +523,7 @@ export type LeasedTasksReleased = Message<"conveyor.v1.LeasedTasksReleased"> & {
  * Use `create(LeasedTasksReleasedSchema)` to create a new message.
  */
 export const LeasedTasksReleasedSchema: GenMessage<LeasedTasksReleased> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_messages, 12);
+  messageDesc(file_conveyor_v1_messages, 16);
 
 /**
  * PromoteTick triggers one scheduled-task promotion pass on the scheduler.
@@ -368,7 +538,7 @@ export type PromoteTick = Message<"conveyor.v1.PromoteTick"> & {
  * Use `create(PromoteTickSchema)` to create a new message.
  */
 export const PromoteTickSchema: GenMessage<PromoteTick> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_messages, 13);
+  messageDesc(file_conveyor_v1_messages, 17);
 
 /**
  * ReapTick triggers one maintenance pass on the reaper.
@@ -383,5 +553,20 @@ export type ReapTick = Message<"conveyor.v1.ReapTick"> & {
  * Use `create(ReapTickSchema)` to create a new message.
  */
 export const ReapTickSchema: GenMessage<ReapTick> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_messages, 14);
+  messageDesc(file_conveyor_v1_messages, 18);
+
+/**
+ * GroupSweepTick triggers one firing pass on the group-aggregation sweeper.
+ *
+ * @generated from message conveyor.v1.GroupSweepTick
+ */
+export type GroupSweepTick = Message<"conveyor.v1.GroupSweepTick"> & {
+};
+
+/**
+ * Describes the message conveyor.v1.GroupSweepTick.
+ * Use `create(GroupSweepTickSchema)` to create a new message.
+ */
+export const GroupSweepTickSchema: GenMessage<GroupSweepTick> = /*@__PURE__*/
+  messageDesc(file_conveyor_v1_messages, 19);
 

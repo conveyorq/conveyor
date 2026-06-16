@@ -42,6 +42,18 @@ type Settings struct {
 	PromoteInterval time.Duration
 	// PassivateAfter is the idle time before a queue grain deactivates.
 	PassivateAfter time.Duration
+	// GroupMaxSize fires an aggregation group once this many members
+	// accumulate.
+	GroupMaxSize int
+	// GroupMaxDelay fires a group this long after its first member, capping
+	// aggregation latency.
+	GroupMaxDelay time.Duration
+	// GroupGracePeriod fires a group this long after its most recent member,
+	// coalescing a burst once it goes quiet.
+	GroupGracePeriod time.Duration
+	// GroupSweepInterval is the cadence of the group-aggregation sweep that
+	// fires groups whose delay or grace threshold has elapsed.
+	GroupSweepInterval time.Duration
 }
 
 // Counters are the core engine counters, safe for concurrent use. OTel

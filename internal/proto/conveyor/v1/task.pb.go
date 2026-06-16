@@ -45,6 +45,10 @@ const (
 	TaskState_TASK_STATE_ARCHIVED TaskState = 6
 	// TASK_STATE_CANCELED is a task canceled via the Admin API before completion.
 	TaskState_TASK_STATE_CANCELED TaskState = 7
+	// TASK_STATE_AGGREGATING is a group member accumulating in the broker until
+	// its group fires (by size, delay, or grace period), at which point the
+	// group's members are leased together and delivered to a worker as one batch.
+	TaskState_TASK_STATE_AGGREGATING TaskState = 8
 )
 
 // Enum value maps for TaskState.
@@ -58,6 +62,7 @@ var (
 		5: "TASK_STATE_COMPLETED",
 		6: "TASK_STATE_ARCHIVED",
 		7: "TASK_STATE_CANCELED",
+		8: "TASK_STATE_AGGREGATING",
 	}
 	TaskState_value = map[string]int32{
 		"TASK_STATE_UNSPECIFIED": 0,
@@ -68,6 +73,7 @@ var (
 		"TASK_STATE_COMPLETED":   5,
 		"TASK_STATE_ARCHIVED":    6,
 		"TASK_STATE_CANCELED":    7,
+		"TASK_STATE_AGGREGATING": 8,
 	}
 )
 
@@ -269,7 +275,12 @@ type TaskOptions struct {
 	// retention keeps the completed task row for inspection before purge.
 	Retention *durationpb.Duration `protobuf:"bytes,7,opt,name=retention,proto3" json:"retention,omitempty"`
 	// priority orders dispatch within a queue, 0..9. Default 4.
-	Priority      int32 `protobuf:"varint,8,opt,name=priority,proto3" json:"priority,omitempty"`
+	Priority int32 `protobuf:"varint,8,opt,name=priority,proto3" json:"priority,omitempty"`
+	// group, when set, makes the task a member of the named aggregation group
+	// within its queue. Members accumulate in the aggregating state and are
+	// delivered to a worker as one batch when the group fires. A group is
+	// single-type: every member shares the task's type.
+	Group         string `protobuf:"bytes,9,opt,name=group,proto3" json:"group,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -360,6 +371,13 @@ func (x *TaskOptions) GetPriority() int32 {
 	return 0
 }
 
+func (x *TaskOptions) GetGroup() string {
+	if x != nil {
+		return x.Group
+	}
+	return ""
+}
+
 var File_conveyor_v1_task_proto protoreflect.FileDescriptor
 
 const file_conveyor_v1_task_proto_rawDesc = "" +
@@ -384,7 +402,7 @@ const file_conveyor_v1_task_proto_rawDesc = "" +
 	"\fcompleted_at\x18\f \x01(\v2\x1a.google.protobuf.TimestampR\vcompletedAt\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x86\x03\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x9c\x03\n" +
 	"\vTaskOptions\x12\x1b\n" +
 	"\tmax_retry\x18\x01 \x01(\x05R\bmaxRetry\x123\n" +
 	"\atimeout\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\atimeout\x126\n" +
@@ -396,7 +414,9 @@ const file_conveyor_v1_task_proto_rawDesc = "" +
 	"\n" +
 	"unique_ttl\x18\x06 \x01(\v2\x19.google.protobuf.DurationR\tuniqueTtl\x127\n" +
 	"\tretention\x18\a \x01(\v2\x19.google.protobuf.DurationR\tretention\x12\x1a\n" +
-	"\bpriority\x18\b \x01(\x05R\bpriorityJ\x04\b\t\x10\x10*\xd2\x01\n" +
+	"\bpriority\x18\b \x01(\x05R\bpriority\x12\x14\n" +
+	"\x05group\x18\t \x01(\tR\x05groupJ\x04\b\n" +
+	"\x10\x10*\xee\x01\n" +
 	"\tTaskState\x12\x1a\n" +
 	"\x16TASK_STATE_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14TASK_STATE_SCHEDULED\x10\x01\x12\x16\n" +
@@ -405,7 +425,8 @@ const file_conveyor_v1_task_proto_rawDesc = "" +
 	"\x10TASK_STATE_RETRY\x10\x04\x12\x18\n" +
 	"\x14TASK_STATE_COMPLETED\x10\x05\x12\x17\n" +
 	"\x13TASK_STATE_ARCHIVED\x10\x06\x12\x17\n" +
-	"\x13TASK_STATE_CANCELED\x10\aB\xae\x01\n" +
+	"\x13TASK_STATE_CANCELED\x10\a\x12\x1a\n" +
+	"\x16TASK_STATE_AGGREGATING\x10\bB\xae\x01\n" +
 	"\x0fcom.conveyor.v1B\tTaskProtoP\x01ZCgithub.com/conveyorq/conveyor/internal/proto/conveyor/v1;conveyorv1\xa2\x02\x03CXX\xaa\x02\vConveyor.V1\xca\x02\vConveyor\\V1\xe2\x02\x17Conveyor\\V1\\GPBMetadata\xea\x02\fConveyor::V1b\x06proto3"
 
 var (

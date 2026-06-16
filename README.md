@@ -21,6 +21,9 @@ broker, with no Redis and no polling.
   per-task **timeouts/deadlines**, per-task **priorities** and weighted queues.
 - **Unique tasks**, **dead-letter/archive**, **retention**, per-queue
   **pause/resume**, and a per-task-type **circuit breaker**.
+- **Group aggregation** — coalesce many tasks into one batch and process them in
+  a single handler call (debounce/digest, or bulk processing); fires on size,
+  delay, or grace period.
 - **Cron** — server-persisted schedules that survive restarts and failover,
   pausable at runtime.
 - **Built-in clustering / HA** — multi-node by default; a lost node's work
@@ -208,6 +211,8 @@ a different-origin UI, and `api.grafana_url` for the metrics link. See the
 
 - [Operations guide](docs/operations.md) — deployment modes, configuration,
   scaling, broker sizing, security, observability, and upgrades.
+- [Group aggregation](docs/grouping.md) — how to enqueue grouped tasks, write
+  batch handlers, and tune the firing policy.
 - [Wire protocol](docs/protocol.md) — the normative protocol spec for SDK
   authors building a Conveyor client or worker in another language.
 - [Migrating from asynq](docs/migrate-from-asynq.md) — side-by-side API mapping.

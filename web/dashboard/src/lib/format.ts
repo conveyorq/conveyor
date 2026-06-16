@@ -20,6 +20,8 @@ export function taskStateLabel(state: TaskState): string {
       return "archived";
     case TaskState.CANCELED:
       return "canceled";
+    case TaskState.AGGREGATING:
+      return "aggregating";
     default:
       return "unknown";
   }
@@ -40,6 +42,8 @@ export function taskStateTone(state: TaskState): Tone {
       return "emerald";
     case TaskState.ARCHIVED:
       return "rose";
+    case TaskState.AGGREGATING:
+      return "indigo";
     default:
       return "zinc";
   }

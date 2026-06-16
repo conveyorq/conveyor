@@ -138,11 +138,15 @@ func (s *Server) Start(ctx context.Context) error {
 		Provider:      provider,
 		TLS:           clusterTLS,
 		Settings: actors.Settings{
-			LeaseTTL:        s.config.Engine.LeaseTTL,
-			LeaseBatchMax:   s.config.Engine.LeaseBatchMax,
-			ReapInterval:    s.config.Engine.ReapInterval,
-			PromoteInterval: s.config.Engine.PromoteInterval,
-			PassivateAfter:  s.config.Engine.PassivateAfter,
+			LeaseTTL:           s.config.Engine.LeaseTTL,
+			LeaseBatchMax:      s.config.Engine.LeaseBatchMax,
+			ReapInterval:       s.config.Engine.ReapInterval,
+			PromoteInterval:    s.config.Engine.PromoteInterval,
+			PassivateAfter:     s.config.Engine.PassivateAfter,
+			GroupMaxSize:       s.config.Engine.GroupMaxSize,
+			GroupMaxDelay:      s.config.Engine.GroupMaxDelay,
+			GroupGracePeriod:   s.config.Engine.GroupGracePeriod,
+			GroupSweepInterval: s.config.Engine.GroupSweepInterval,
 		},
 	})
 

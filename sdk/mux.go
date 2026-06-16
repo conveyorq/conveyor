@@ -21,15 +21,20 @@ type MiddlewareFunc func(next HandlerFunc) HandlerFunc
 
 // Mux routes dispatched tasks to handlers by task type.
 type Mux struct {
-	// handlers maps task type to its handler.
+	// handlers maps task type to its single-task handler.
 	handlers map[string]HandlerFunc
-	// middleware decorates every handler, outermost first.
+	// batchHandlers maps task type to its batch handler.
+	batchHandlers map[string]BatchHandlerFunc
+	// middleware decorates every single-task handler, outermost first.
 	middleware []MiddlewareFunc
 }
 
 // NewMux builds an empty task router.
 func NewMux() *Mux {
-	return &Mux{handlers: make(map[string]HandlerFunc)}
+	return &Mux{
+		handlers:      make(map[string]HandlerFunc),
+		batchHandlers: make(map[string]BatchHandlerFunc),
+	}
 }
 
 // Use appends middleware applied to every handler of this Mux, regardless
@@ -58,19 +63,39 @@ func (m *Mux) HandleFunc(taskType string, handler HandlerFunc) {
 		panic("conveyor: HandleFunc with nil handler")
 	}
 
-	if _, exists := m.handlers[taskType]; exists {
-		panic(fmt.Sprintf("conveyor: duplicate handler for task type %q", taskType))
-	}
+	m.requireUnregistered(taskType)
 
 	m.handlers[taskType] = handler
 }
 
-// handler returns the handler registered for a task type, wrapped in the
-// registered middleware.
+// requireUnregistered panics if the task type already has a single or batch
+// handler. Routing tables are wired at startup, where failing fast beats
+// failing on first dispatch.
+func (m *Mux) requireUnregistered(taskType string) {
+	if _, exists := m.handlers[taskType]; exists {
+		panic(fmt.Sprintf("conveyor: duplicate handler for task type %q", taskType))
+	}
+
+	if _, exists := m.batchHandlers[taskType]; exists {
+		panic(fmt.Sprintf("conveyor: duplicate handler for task type %q", taskType))
+	}
+}
+
+// handler returns the handler for a single-task delivery of taskType, wrapped
+// in the registered middleware. A type registered with HandleBatch is served as
+// a batch of one, so a retried or released group member still runs.
 func (m *Mux) handler(taskType string) (HandlerFunc, bool) {
 	handler, ok := m.handlers[taskType]
+
 	if !ok {
-		return nil, false
+		batch, batchOK := m.batchHandlers[taskType]
+		if !batchOK {
+			return nil, false
+		}
+
+		handler = func(ctx context.Context, task *Task) error {
+			return batch(ctx, []*Task{task})
+		}
 	}
 
 	for i := len(m.middleware) - 1; i >= 0; i-- {

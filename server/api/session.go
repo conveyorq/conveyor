@@ -80,6 +80,13 @@ func (s *sessionState) check(message *conveyorv1.WorkerMessage) error {
 
 		return validateResult(frame.Result)
 
+	case *conveyorv1.WorkerMessage_BatchResult:
+		if !s.helloSeen {
+			return errFrameBeforeHello
+		}
+
+		return validateBatchResult(frame.BatchResult)
+
 	case *conveyorv1.WorkerMessage_Heartbeat:
 		if !s.helloSeen {
 			return errFrameBeforeHello
@@ -142,6 +149,18 @@ func (s *sessionState) validateCredit(credit *conveyorv1.Credit) error {
 
 	if credit.GetN() > s.concurrency {
 		return fmt.Errorf("protocol violation: credit %d exceeds declared concurrency %d", credit.GetN(), s.concurrency)
+	}
+
+	return nil
+}
+
+// validateBatchResult checks a batch result frame: every member result must
+// carry a task id and a defined outcome.
+func validateBatchResult(batch *conveyorv1.BatchResult) error {
+	for _, result := range batch.GetResults() {
+		if err := validateResult(result); err != nil {
+			return err
+		}
 	}
 
 	return nil
