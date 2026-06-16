@@ -36,6 +36,84 @@ func TestMuxHandleBatch(t *testing.T) {
 	require.Panics(t, func() { mux.HandleBatch("x", nil) })
 }
 
+// TestMuxUseBatchWrapsHandlersInOrder mirrors TestMuxUseWrapsHandlersInOrder
+// for the batch path: the first middleware registered runs outermost, and
+// UseBatch after HandleBatch still applies.
+func TestMuxUseBatchWrapsHandlersInOrder(t *testing.T) {
+	var calls []string
+
+	record := func(name string) BatchMiddlewareFunc {
+		return func(next BatchHandlerFunc) BatchHandlerFunc {
+			return func(ctx context.Context, batch []*Task) error {
+				calls = append(calls, name)
+
+				return next(ctx, batch)
+			}
+		}
+	}
+
+	mux := NewMux()
+	mux.UseBatch(record("first"))
+
+	mux.HandleBatch("digest", func(context.Context, []*Task) error {
+		calls = append(calls, "handler")
+
+		return nil
+	})
+
+	mux.UseBatch(record("second"))
+
+	handler, ok := mux.batchHandler("digest")
+	require.True(t, ok)
+	require.NoError(t, handler(context.Background(), []*Task{}))
+	require.Equal(t, []string{"first", "second", "handler"}, calls)
+}
+
+func TestMuxUseBatchPanicsOnNilMiddleware(t *testing.T) {
+	require.PanicsWithValue(t, "conveyor: UseBatch with nil middleware", func() {
+		NewMux().UseBatch(nil)
+	})
+}
+
+// TestMuxUseBatchOnlyWrapsBatchDelivery verifies the boundary rule: batch
+// middleware decorates a multi-member delivery, while a group member redelivered
+// as a batch of one travels the single-task path and runs MiddlewareFunc only.
+func TestMuxUseBatchOnlyWrapsBatchDelivery(t *testing.T) {
+	var calls []string
+
+	mux := NewMux()
+
+	mux.Use(func(next HandlerFunc) HandlerFunc {
+		return func(ctx context.Context, task *Task) error {
+			calls = append(calls, "single-mw")
+
+			return next(ctx, task)
+		}
+	})
+
+	mux.UseBatch(func(next BatchHandlerFunc) BatchHandlerFunc {
+		return func(ctx context.Context, batch []*Task) error {
+			calls = append(calls, "batch-mw")
+
+			return next(ctx, batch)
+		}
+	})
+
+	mux.HandleBatch("t", func(context.Context, []*Task) error { return nil })
+
+	batch, ok := mux.batchHandler("t")
+	require.True(t, ok)
+	require.NoError(t, batch(context.Background(), []*Task{{}, {}}))
+	require.Equal(t, []string{"batch-mw"}, calls)
+
+	calls = nil
+
+	single, ok := mux.handler("t")
+	require.True(t, ok)
+	require.NoError(t, single(context.Background(), &Task{}))
+	require.Equal(t, []string{"single-mw"}, calls)
+}
+
 // TestMuxBatchHandlerServesSingleDelivery verifies a retried or released group
 // member (delivered as a single task) runs through the batch handler as a batch
 // of one.

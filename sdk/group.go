@@ -19,6 +19,14 @@ import (
 // member. Handlers must be idempotent and should honor ctx cancellation.
 type BatchHandlerFunc func(ctx context.Context, batch []*Task) error
 
+// BatchMiddlewareFunc decorates a BatchHandlerFunc, e.g. with logging or
+// metrics over a whole fired group. The returned handler must call next to
+// keep the batch flowing. It is the batch counterpart of MiddlewareFunc:
+// UseBatch wires it onto multi-member deliveries, whereas a group member
+// redelivered as a batch of one travels the single-task path and so runs the
+// MiddlewareFunc chain instead.
+type BatchMiddlewareFunc func(next BatchHandlerFunc) BatchHandlerFunc
+
 // HandleBatch registers a batch handler for one task type: a fired aggregation
 // group of that type is delivered to it as one call. Registering a nil handler,
 // an empty type, or a type already registered (as either a batch or single
@@ -39,11 +47,34 @@ func (m *Mux) HandleBatch(taskType string, handler BatchHandlerFunc) {
 	m.batchHandlers[taskType] = handler
 }
 
-// batchHandler returns the batch handler registered for a task type.
+// UseBatch appends middleware applied to every batch handler of this Mux,
+// regardless of registration order relative to HandleBatch. The first
+// middleware registered runs outermost. Registering a nil middleware panics.
+// It is the batch counterpart of Use.
+func (m *Mux) UseBatch(middleware ...BatchMiddlewareFunc) {
+	for _, wrap := range middleware {
+		if wrap == nil {
+			panic("conveyor: UseBatch with nil middleware")
+		}
+
+		m.batchMiddleware = append(m.batchMiddleware, wrap)
+	}
+}
+
+// batchHandler returns the batch handler registered for a task type, wrapped in
+// the registered batch middleware (outermost first).
 func (m *Mux) batchHandler(taskType string) (BatchHandlerFunc, bool) {
 	handler, ok := m.batchHandlers[taskType]
 
-	return handler, ok
+	if !ok {
+		return nil, false
+	}
+
+	for i := len(m.batchMiddleware) - 1; i >= 0; i-- {
+		handler = m.batchMiddleware[i](handler)
+	}
+
+	return handler, true
 }
 
 // batchTypes lists the task types registered with HandleBatch, advertised to

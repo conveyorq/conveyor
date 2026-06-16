@@ -45,6 +45,80 @@ func TestClientEnqueueValidation(t *testing.T) {
 	require.ErrorContains(t, err, "task id is required")
 }
 
+func TestWithEnqueueMiddlewareWrapsInOrder(t *testing.T) {
+	var calls []string
+
+	record := func(name string, short bool) EnqueueMiddlewareFunc {
+		return func(next EnqueueFunc) EnqueueFunc {
+			return func(ctx context.Context, task *Task) (*TaskInfo, error) {
+				calls = append(calls, name)
+
+				if short {
+					return &TaskInfo{ID: "short"}, nil
+				}
+
+				return next(ctx, task)
+			}
+		}
+	}
+
+	// The first middleware runs outermost; the second short-circuits, so the
+	// core send never runs and no server is needed.
+	client, err := NewClient("http://127.0.0.1:1",
+		WithEnqueueMiddleware(record("first", false), record("second", true)))
+	require.NoError(t, err)
+
+	info, err := client.Enqueue(context.Background(), NewTask("mw:order", JSON("x")))
+	require.NoError(t, err)
+	require.Equal(t, "short", info.ID)
+	require.Equal(t, []string{"first", "second"}, calls)
+}
+
+func TestWithEnqueueMiddlewareSeesError(t *testing.T) {
+	blocked := errors.New("blocked by policy")
+
+	client, err := NewClient("http://127.0.0.1:1",
+		WithEnqueueMiddleware(func(next EnqueueFunc) EnqueueFunc {
+			return func(context.Context, *Task) (*TaskInfo, error) {
+				return nil, blocked
+			}
+		}))
+	require.NoError(t, err)
+
+	_, err = client.Enqueue(context.Background(), NewTask("mw:err", JSON("x")))
+	require.ErrorIs(t, err, blocked)
+}
+
+func TestWithEnqueueMiddlewarePanicsOnNil(t *testing.T) {
+	require.PanicsWithValue(t, "conveyor: WithEnqueueMiddleware with nil middleware", func() {
+		_, _ = NewClient("http://127.0.0.1:1", WithEnqueueMiddleware(nil))
+	})
+}
+
+// TestWithEnqueueMiddlewareReachesServer verifies the chain reaches the core
+// send (and the live server) when middleware calls next, and that middleware
+// sees the task being committed.
+func TestWithEnqueueMiddlewareReachesServer(t *testing.T) {
+	baseURL := startTestServer(t, nil)
+
+	var saw string
+
+	client, err := NewClient(baseURL,
+		WithEnqueueMiddleware(func(next EnqueueFunc) EnqueueFunc {
+			return func(ctx context.Context, task *Task) (*TaskInfo, error) {
+				saw = task.Type()
+
+				return next(ctx, task)
+			}
+		}))
+	require.NoError(t, err)
+
+	info, err := client.Enqueue(context.Background(), NewTask("mw:reach", JSON("x")))
+	require.NoError(t, err)
+	require.NotEmpty(t, info.ID)
+	require.Equal(t, "mw:reach", saw)
+}
+
 func TestClientEnqueueAndGetTask(t *testing.T) {
 	baseURL := startTestServer(t, nil)
 

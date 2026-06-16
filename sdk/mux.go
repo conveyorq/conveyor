@@ -27,6 +27,8 @@ type Mux struct {
 	batchHandlers map[string]BatchHandlerFunc
 	// middleware decorates every single-task handler, outermost first.
 	middleware []MiddlewareFunc
+	// batchMiddleware decorates every batch handler, outermost first.
+	batchMiddleware []BatchMiddlewareFunc
 }
 
 // NewMux builds an empty task router.

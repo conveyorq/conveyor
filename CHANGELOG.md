@@ -17,6 +17,10 @@ in-memory broker, with no Redis and no polling.
   `Mux.HandleBatch`. Fires on size, max-delay, or grace period (server-configured);
   one slot and one lease per batch; per-member outcomes via `BatchError`. Members
   show as the `aggregating` state in the dashboard. See `docs/grouping.md`.
+- **SDK middleware** on both sides of the queue: decorate the enqueue path with
+  `WithEnqueueMiddleware` (client) and handlers with `Mux.Use` (single-task) and
+  `Mux.UseBatch` (batch). The first middleware registered runs outermost; a group
+  member redelivered as a batch of one runs the single-task chain.
 - **Normative wire-protocol spec** (`docs/protocol.md`): the language-agnostic
   contract for non-Go SDKs, covering transport, auth, the `content_type` codec
   contract, flow control, the session frames, and a conformance checklist.

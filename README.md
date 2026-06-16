@@ -24,6 +24,9 @@ broker, with no Redis and no polling.
 - **Group aggregation** — coalesce many tasks into one batch and process them in
   a single handler call (debounce/digest, or bulk processing); fires on size,
   delay, or grace period.
+- **SDK middleware** — wrap both sides: decorate enqueues
+  (`WithEnqueueMiddleware`) and handlers (`Mux.Use`, `Mux.UseBatch`) for
+  logging, metrics, or policy, without touching task code.
 - **Cron** — server-persisted schedules that survive restarts and failover,
   pausable at runtime.
 - **Built-in clustering / HA** — multi-node by default; a lost node's work

@@ -69,10 +69,23 @@ type TaskInfo struct {
 	ProcessAt time.Time
 }
 
+// EnqueueFunc commits one task and returns its initial state. It is the core
+// of Client.Enqueue that EnqueueMiddlewareFunc decorates; the per-call
+// EnqueueOptions are already applied to the task before the chain runs.
+type EnqueueFunc func(ctx context.Context, task *Task) (*TaskInfo, error)
+
+// EnqueueMiddlewareFunc decorates an EnqueueFunc, e.g. to inject metadata,
+// enforce policy, or record metrics on the enqueue path. The returned function
+// must call next to commit the task. It is the client-side counterpart of
+// MiddlewareFunc; wire it with WithEnqueueMiddleware.
+type EnqueueMiddlewareFunc func(next EnqueueFunc) EnqueueFunc
+
 // Client enqueues tasks and inspects their state over the Conveyor API.
 type Client struct {
 	// wire is the ConnectRPC transport.
 	wire *transport.Client
+	// enqueueMiddleware decorates Enqueue, outermost first.
+	enqueueMiddleware []EnqueueMiddlewareFunc
 }
 
 // NewClient builds a Client for the Conveyor server at baseURL, e.g.
@@ -88,7 +101,10 @@ func NewClient(baseURL string, opts ...Option) (*Client, error) {
 		opt(settings)
 	}
 
-	return &Client{wire: transport.New(baseURL, settings.token)}, nil
+	return &Client{
+		wire:              transport.New(baseURL, settings.token),
+		enqueueMiddleware: settings.enqueueMiddleware,
+	}, nil
 }
 
 // Enqueue durably commits one task and returns its initial state.
@@ -120,49 +136,60 @@ func (c *Client) Enqueue(ctx context.Context, task *Task, opts ...EnqueueOption)
 		uniqueKey = derivedUniqueKey(task.taskType, task.payload)
 	}
 
-	request := &conveyorv1.EnqueueRequest{
-		TaskId:      settings.taskID,
-		Queue:       settings.queue,
-		Type:        task.taskType,
-		Payload:     task.payload,
-		ContentType: task.contentType,
-		Metadata:    task.metadata,
-		MaxRetry:    int32(settings.maxRetry),
-		Priority:    int32(settings.priority),
-		UniqueKey:   uniqueKey,
-		Group:       settings.group,
+	// core builds the wire request from the (possibly middleware-adjusted) task
+	// and the resolved options, then commits it. Middleware decorates this.
+	core := func(ctx context.Context, task *Task) (*TaskInfo, error) {
+		request := &conveyorv1.EnqueueRequest{
+			TaskId:      settings.taskID,
+			Queue:       settings.queue,
+			Type:        task.taskType,
+			Payload:     task.payload,
+			ContentType: task.contentType,
+			Metadata:    task.metadata,
+			MaxRetry:    int32(settings.maxRetry),
+			Priority:    int32(settings.priority),
+			UniqueKey:   uniqueKey,
+			Group:       settings.group,
+		}
+
+		if settings.timeout > 0 {
+			request.Timeout = durationpb.New(settings.timeout)
+		}
+
+		if !settings.deadline.IsZero() {
+			request.Deadline = timestamppb.New(settings.deadline)
+		}
+
+		if !settings.processAt.IsZero() {
+			request.ProcessAt = timestamppb.New(settings.processAt)
+		}
+
+		if settings.processIn > 0 {
+			request.ProcessIn = durationpb.New(settings.processIn)
+		}
+
+		if settings.retention > 0 {
+			request.Retention = durationpb.New(settings.retention)
+		}
+
+		if settings.uniqueTTL > 0 {
+			request.UniqueTtl = durationpb.New(settings.uniqueTTL)
+		}
+
+		info, err := c.wire.Enqueue(ctx, request)
+		if err != nil {
+			return nil, wireError(err)
+		}
+
+		return taskInfoFromProto(info), nil
 	}
 
-	if settings.timeout > 0 {
-		request.Timeout = durationpb.New(settings.timeout)
+	enqueue := core
+	for i := len(c.enqueueMiddleware) - 1; i >= 0; i-- {
+		enqueue = c.enqueueMiddleware[i](enqueue)
 	}
 
-	if !settings.deadline.IsZero() {
-		request.Deadline = timestamppb.New(settings.deadline)
-	}
-
-	if !settings.processAt.IsZero() {
-		request.ProcessAt = timestamppb.New(settings.processAt)
-	}
-
-	if settings.processIn > 0 {
-		request.ProcessIn = durationpb.New(settings.processIn)
-	}
-
-	if settings.retention > 0 {
-		request.Retention = durationpb.New(settings.retention)
-	}
-
-	if settings.uniqueTTL > 0 {
-		request.UniqueTtl = durationpb.New(settings.uniqueTTL)
-	}
-
-	info, err := c.wire.Enqueue(ctx, request)
-	if err != nil {
-		return nil, wireError(err)
-	}
-
-	return taskInfoFromProto(info), nil
+	return enqueue(ctx, task)
 }
 
 // GetTask returns the current state of one task.

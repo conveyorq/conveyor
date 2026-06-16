@@ -23,6 +23,8 @@ type options struct {
 	// minServerVersion is the minimum server version the worker requires
 	// (workers only); empty imposes no requirement.
 	minServerVersion string
+	// enqueueMiddleware decorates Client.Enqueue, outermost first (clients only).
+	enqueueMiddleware []EnqueueMiddlewareFunc
 }
 
 // WithToken authenticates with the given bearer token.
@@ -47,6 +49,22 @@ func WithConcurrency(n int) Option {
 // default imposes no requirement.
 func WithMinServerVersion(version string) Option {
 	return func(o *options) { o.minServerVersion = version }
+}
+
+// WithEnqueueMiddleware appends middleware applied to every Client.Enqueue
+// call, outermost first. It is the client-side counterpart of Mux.Use, letting
+// callers inject metadata, enforce policy, or record metrics on the enqueue
+// path. Passing a nil middleware panics.
+func WithEnqueueMiddleware(middleware ...EnqueueMiddlewareFunc) Option {
+	return func(o *options) {
+		for _, wrap := range middleware {
+			if wrap == nil {
+				panic("conveyor: WithEnqueueMiddleware with nil middleware")
+			}
+
+			o.enqueueMiddleware = append(o.enqueueMiddleware, wrap)
+		}
+	}
 }
 
 // EnqueueOption configures one Enqueue call.
