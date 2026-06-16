@@ -9,6 +9,7 @@ package server
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"slices"
 	"strings"
@@ -99,6 +100,7 @@ const (
 	defaultGroupMaxDelay     = time.Minute
 	defaultGroupGracePeriod  = 10 * time.Second
 	defaultGroupSweep        = time.Second
+	defaultRateLimitEnabled  = true
 	defaultOtelServiceName   = "conveyord"
 	// defaultMetricsListen is the OpenTelemetry Prometheus exporter's
 	// conventional port; metrics bind here, kept off the public API listener.
@@ -266,6 +268,14 @@ type EngineConfig struct {
 	GroupGracePeriod time.Duration `koanf:"group_grace_period"`
 	// GroupSweepInterval is the cadence of the group-aggregation sweep.
 	GroupSweepInterval time.Duration `koanf:"group_sweep_interval"`
+	// RateLimitEnabled gates dispatch rate limiting; false disables it for
+	// every queue regardless of any configured override.
+	RateLimitEnabled bool `koanf:"rate_limit_enabled"`
+	// RateLimitRatePerSec is the global default dispatch rate in tasks per
+	// second; zero leaves queues unlimited unless they set an override.
+	RateLimitRatePerSec float64 `koanf:"rate_limit_rate_per_sec"`
+	// RateLimitBurst is the global default token-bucket depth.
+	RateLimitBurst int `koanf:"rate_limit_burst"`
 }
 
 // LogConfig configures structured logging.
@@ -315,6 +325,7 @@ func DefaultConfig() *Config {
 			GroupMaxDelay:      defaultGroupMaxDelay,
 			GroupGracePeriod:   defaultGroupGracePeriod,
 			GroupSweepInterval: defaultGroupSweep,
+			RateLimitEnabled:   defaultRateLimitEnabled,
 		},
 		Log:     LogConfig{Level: LogLevelInfo, Format: LogFormatJSON},
 		Otel:    OtelConfig{ServiceName: defaultOtelServiceName},
@@ -410,6 +421,21 @@ func envKeyToConfigKey(envKey string) string {
 	key = strings.ToLower(key)
 
 	return strings.ReplaceAll(key, envLevelDelim, configKeyDelim)
+}
+
+// validateRateLimitDefault checks the global default dispatch-rate knobs: the
+// rate must be a non-negative finite number, and a positive rate needs a burst
+// of at least one (a zero burst would silently disable the default).
+func validateRateLimitDefault(engine EngineConfig) error {
+	if engine.RateLimitRatePerSec < 0 || math.IsNaN(engine.RateLimitRatePerSec) || math.IsInf(engine.RateLimitRatePerSec, 0) {
+		return fmt.Errorf("engine.rate_limit_rate_per_sec: must be a non-negative finite number, got %v", engine.RateLimitRatePerSec)
+	}
+
+	if engine.RateLimitRatePerSec > 0 && engine.RateLimitBurst < 1 {
+		return fmt.Errorf("engine.rate_limit_burst: must be at least 1 when a default rate is set, got %d", engine.RateLimitBurst)
+	}
+
+	return nil
 }
 
 // Validate checks the configuration for internal consistency and returns a
@@ -509,6 +535,10 @@ func (c *Config) Validate() error {
 
 	if c.Engine.DefaultMaxRetry < 0 {
 		return fmt.Errorf("engine.default_max_retry: must not be negative, got %d", c.Engine.DefaultMaxRetry)
+	}
+
+	if err := validateRateLimitDefault(c.Engine); err != nil {
+		return err
 	}
 
 	levels := []string{LogLevelDebug, LogLevelInfo, LogLevelWarn, LogLevelError}

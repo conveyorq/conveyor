@@ -54,6 +54,16 @@ type Settings struct {
 	// GroupSweepInterval is the cadence of the group-aggregation sweep that
 	// fires groups whose delay or grace threshold has elapsed.
 	GroupSweepInterval time.Duration
+	// RateLimitEnabled gates dispatch rate limiting. When false, no queue
+	// enforces a limit even if one is configured.
+	RateLimitEnabled bool
+	// RateLimitRatePerSec is the global default dispatch rate, in tasks per
+	// second, applied to every queue without its own override. Zero means no
+	// default (queues are unlimited unless overridden).
+	RateLimitRatePerSec float64
+	// RateLimitBurst is the global default token-bucket depth, paired with
+	// RateLimitRatePerSec.
+	RateLimitBurst int
 }
 
 // Counters are the core engine counters, safe for concurrent use. OTel

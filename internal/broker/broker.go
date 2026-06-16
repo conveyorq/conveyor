@@ -146,6 +146,21 @@ type GroupStat struct {
 	Newest time.Time
 }
 
+// RateLimit is a per-queue dispatch-rate override: the token-bucket parameters
+// a queue uses instead of the server's global default. It is config only — the
+// live bucket state lives in the dispatching queue grain, not the broker.
+type RateLimit struct {
+	// Queue is the queue the override applies to.
+	Queue string
+	// RatePerSec is the sustained dispatch rate in tasks per second (> 0).
+	RatePerSec float64
+	// Burst is the token-bucket depth: the most tasks dispatchable in an
+	// instantaneous burst before the rate applies (>= 1).
+	Burst int
+	// UpdatedAt is when the override was last written.
+	UpdatedAt time.Time
+}
+
 // TaskRecord pairs a task envelope with its current lifecycle state in
 // ListTasks results.
 type TaskRecord struct {
@@ -267,6 +282,23 @@ type Broker interface {
 	// QueuePaused reports the persisted paused flag; unknown queues are
 	// not paused.
 	QueuePaused(ctx context.Context, queue string) (bool, error)
+
+	// SetQueueRateLimit persists a per-queue dispatch-rate override,
+	// replacing the server's global default for that queue. ratePerSec must
+	// be > 0 and burst >= 1.
+	SetQueueRateLimit(ctx context.Context, queue string, ratePerSec float64, burst int) error
+
+	// DeleteQueueRateLimit removes a queue's override, reverting it to the
+	// global default. Removing a missing override is not an error.
+	DeleteQueueRateLimit(ctx context.Context, queue string) error
+
+	// QueueRateLimit returns a queue's override and whether one is set; an
+	// unset queue returns ok=false. The queue grain reads this at activation.
+	QueueRateLimit(ctx context.Context, queue string) (RateLimit, bool, error)
+
+	// QueueRateLimits returns every persisted override, ordered by queue
+	// name, for the management API and dashboard.
+	QueueRateLimits(ctx context.Context) ([]RateLimit, error)
 
 	// Info reports the storage engine's driver and runtime statistics for
 	// the dashboard's broker-info view.

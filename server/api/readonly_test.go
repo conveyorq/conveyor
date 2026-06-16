@@ -42,8 +42,21 @@ func TestReadOnlyInterceptorBlocksMutations(t *testing.T) {
 	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
 	require.False(t, called)
 
+	// The rate-limit mutations are blocked too.
+	_, err = wrapped(context.Background(), stubRequest{procedure: conveyorv1connect.AdminServiceSetQueueRateLimitProcedure})
+	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
+
+	_, err = wrapped(context.Background(), stubRequest{procedure: conveyorv1connect.AdminServiceDeleteQueueRateLimitProcedure})
+	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
+
 	// A read procedure passes through to the handler.
 	_, err = wrapped(context.Background(), stubRequest{procedure: conveyorv1connect.AdminServiceListTasksProcedure})
+	require.NoError(t, err)
+	require.True(t, called)
+
+	// Listing rate limits is a read and passes through.
+	called = false
+	_, err = wrapped(context.Background(), stubRequest{procedure: conveyorv1connect.AdminServiceListRateLimitsProcedure})
 	require.NoError(t, err)
 	require.True(t, called)
 }

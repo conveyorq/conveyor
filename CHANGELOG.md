@@ -21,6 +21,13 @@ in-memory broker, with no Redis and no polling.
   `WithEnqueueMiddleware` (client) and handlers with `Mux.Use` (single-task) and
   `Mux.UseBatch` (batch). The first middleware registered runs outermost; a group
   member redelivered as a batch of one runs the single-task chain.
+- **Per-queue rate limiting**: cap a queue's dispatch rate with a token bucket
+  (`rate` + `burst`). A global default in server config (`rate_limit_enabled`,
+  `rate_limit_rate_per_sec`, `rate_limit_burst`) plus per-queue overrides set live
+  via `conveyor ratelimit set|rm|ls`, the dashboard's Limits tab, or the
+  `AdminService` `SetQueueRateLimit`/`DeleteQueueRateLimit`/`ListRateLimits` RPCs.
+  Over-rate tasks wait without a retry penalty; the `conveyor_ratelimit_throttled`
+  metric tracks throttling. See `docs/rate-limiting.md`.
 - **Normative wire-protocol spec** (`docs/protocol.md`): the language-agnostic
   contract for non-Go SDKs, covering transport, auth, the `content_type` codec
   contract, flow control, the session frames, and a conformance checklist.

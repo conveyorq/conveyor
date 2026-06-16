@@ -713,6 +713,76 @@ func (b *Broker) QueuePaused(ctx context.Context, queue string) (bool, error) {
 	return paused, nil
 }
 
+// SetQueueRateLimit persists a per-queue dispatch-rate override; see broker.Broker.
+func (b *Broker) SetQueueRateLimit(ctx context.Context, queue string, ratePerSec float64, burst int) error {
+	const upsert = `INSERT INTO conveyor_rate_limits (queue, rate_per_sec, burst, updated_at)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (queue) DO UPDATE SET
+			rate_per_sec = EXCLUDED.rate_per_sec, burst = EXCLUDED.burst, updated_at = EXCLUDED.updated_at`
+
+	if _, err := b.pool.Exec(ctx, upsert, queue, ratePerSec, burst, b.clock.Now()); err != nil {
+		return fmt.Errorf("postgres: set queue rate limit: %w", err)
+	}
+
+	return nil
+}
+
+// DeleteQueueRateLimit removes a queue's override; see broker.Broker.
+func (b *Broker) DeleteQueueRateLimit(ctx context.Context, queue string) error {
+	if _, err := b.pool.Exec(ctx, "DELETE FROM conveyor_rate_limits WHERE queue = $1", queue); err != nil {
+		return fmt.Errorf("postgres: delete queue rate limit: %w", err)
+	}
+
+	return nil
+}
+
+// QueueRateLimit returns a queue's override and whether one is set; see broker.Broker.
+func (b *Broker) QueueRateLimit(ctx context.Context, queue string) (broker.RateLimit, bool, error) {
+	limit := broker.RateLimit{Queue: queue}
+
+	err := b.pool.QueryRow(ctx,
+		"SELECT rate_per_sec, burst, updated_at FROM conveyor_rate_limits WHERE queue = $1", queue).
+		Scan(&limit.RatePerSec, &limit.Burst, &limit.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return broker.RateLimit{}, false, nil
+	}
+
+	if err != nil {
+		return broker.RateLimit{}, false, fmt.Errorf("postgres: queue rate limit: %w", err)
+	}
+
+	return limit, true, nil
+}
+
+// QueueRateLimits returns every override ordered by queue name; see broker.Broker.
+func (b *Broker) QueueRateLimits(ctx context.Context) ([]broker.RateLimit, error) {
+	rows, err := b.pool.Query(ctx,
+		"SELECT queue, rate_per_sec, burst, updated_at FROM conveyor_rate_limits ORDER BY queue")
+	if err != nil {
+		return nil, fmt.Errorf("postgres: queue rate limits: %w", err)
+	}
+
+	defer rows.Close()
+
+	var limits []broker.RateLimit
+
+	for rows.Next() {
+		var limit broker.RateLimit
+
+		if err := rows.Scan(&limit.Queue, &limit.RatePerSec, &limit.Burst, &limit.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("postgres: scan queue rate limit: %w", err)
+		}
+
+		limits = append(limits, limit)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres: queue rate limits: %w", err)
+	}
+
+	return limits, nil
+}
+
 // Info reports the Postgres engine's driver, connection-pool counters, and
 // table row counts; see broker.Broker.
 func (b *Broker) Info(ctx context.Context) (broker.Info, error) {

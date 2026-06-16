@@ -21,6 +21,131 @@ func TestQueueGrainNameRoundTrip(t *testing.T) {
 	require.Equal(t, "critical", queueFromGrainName(QueueGrainName("critical")))
 }
 
+func TestBuildLimiter(t *testing.T) {
+	require.Nil(t, buildLimiter(0, 5), "a non-positive rate means unlimited")
+	require.Nil(t, buildLimiter(-1, 5), "a negative rate means unlimited")
+	require.Nil(t, buildLimiter(10, 0), "a burst below one means unlimited")
+
+	limiter := buildLimiter(10, 5)
+	require.NotNil(t, limiter)
+	require.EqualValues(t, 10, limiter.Limit())
+	require.Equal(t, 5, limiter.Burst())
+}
+
+// rateLimitGrain builds a bare grain whose runtime carries the given global
+// default and kill-switch, backed by a fake clock and an empty memory broker.
+func rateLimitGrain(t *testing.T, enabled bool, defaultRate float64, defaultBurst int) (*QueueGrain, *memory.Broker) {
+	t.Helper()
+
+	fake := clock.NewFake(time.Date(2026, 6, 16, 12, 0, 0, 0, time.UTC))
+	taskLog := memory.New(fake)
+	t.Cleanup(func() { _ = taskLog.Close() })
+
+	settings := testSettings
+	settings.RateLimitEnabled = enabled
+	settings.RateLimitRatePerSec = defaultRate
+	settings.RateLimitBurst = defaultBurst
+
+	runtime := NewRuntime(taskLog, fake, settings, quietLogger())
+
+	return &QueueGrain{runtime: runtime, queue: "default"}, taskLog
+}
+
+func TestLoadRateLimitUsesGlobalDefault(t *testing.T) {
+	grain, _ := rateLimitGrain(t, true, 10, 5)
+
+	require.NoError(t, grain.loadRateLimit(context.Background()))
+	require.NotNil(t, grain.limiter)
+	require.EqualValues(t, 10, grain.limiter.Limit())
+	require.Equal(t, 5, grain.limiter.Burst())
+}
+
+func TestLoadRateLimitOverrideReplacesDefault(t *testing.T) {
+	grain, taskLog := rateLimitGrain(t, true, 100, 50)
+	require.NoError(t, taskLog.SetQueueRateLimit(context.Background(), "default", 3, 2))
+
+	require.NoError(t, grain.loadRateLimit(context.Background()))
+	require.NotNil(t, grain.limiter)
+	require.EqualValues(t, 3, grain.limiter.Limit(), "the override rate replaces the default")
+	require.Equal(t, 2, grain.limiter.Burst(), "the override burst replaces the default")
+}
+
+func TestLoadRateLimitDisabledLeavesUnlimited(t *testing.T) {
+	grain, taskLog := rateLimitGrain(t, false, 10, 5)
+	require.NoError(t, taskLog.SetQueueRateLimit(context.Background(), "default", 3, 2))
+
+	require.NoError(t, grain.loadRateLimit(context.Background()))
+	require.Nil(t, grain.limiter, "the kill-switch overrides both default and override")
+}
+
+func TestApplyRateLimitChange(t *testing.T) {
+	grain, _ := rateLimitGrain(t, true, 10, 5)
+
+	// A positive rate sets the override.
+	grain.applyRateLimitChange(&conveyorv1.RateLimitChanged{RatePerSec: 7, Burst: 3})
+	require.NotNil(t, grain.limiter)
+	require.EqualValues(t, 7, grain.limiter.Limit())
+	require.Equal(t, 3, grain.limiter.Burst())
+
+	// A non-positive rate clears the override, reverting to the global default.
+	grain.applyRateLimitChange(&conveyorv1.RateLimitChanged{RatePerSec: 0})
+	require.NotNil(t, grain.limiter)
+	require.EqualValues(t, 10, grain.limiter.Limit())
+	require.Equal(t, 5, grain.limiter.Burst())
+}
+
+func TestApplyRateLimitChangeIgnoredWhenDisabled(t *testing.T) {
+	grain, _ := rateLimitGrain(t, false, 0, 0)
+
+	grain.applyRateLimitChange(&conveyorv1.RateLimitChanged{RatePerSec: 7, Burst: 3})
+	require.Nil(t, grain.limiter, "the kill-switch ignores runtime changes")
+}
+
+// TestQueueGrainRateLimitThrottlesDispatch drives the enforcement end-to-end on
+// a frozen clock: the burst dispatches, the rest stay pending, and advancing the
+// clock by one refill window releases exactly another burst.
+func TestQueueGrainRateLimitThrottlesDispatch(t *testing.T) {
+	const queue = "default"
+
+	ctx := context.Background()
+	fake := clock.NewFake(time.Date(2026, 6, 16, 12, 0, 0, 0, time.UTC))
+	taskLog := memory.New(fake)
+	t.Cleanup(func() { _ = taskLog.Close() })
+
+	settings := testSettings
+	settings.RateLimitEnabled = true
+	settings.RateLimitRatePerSec = 5
+	settings.RateLimitBurst = 3
+
+	engine := newNodeWithClock(taskLog, fake, settings, freePorts(t, 3), nil)
+	require.NoError(t, engine.Start(ctx))
+
+	t.Cleanup(func() {
+		stopCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = engine.Stop(stopCtx)
+	})
+
+	// Ample credits so the rate limit binds, not gateway capacity.
+	log := &dispatchLog{}
+	spawnGateway(t, engine, &mockGateway{queue: queue, capacity: 100, log: log})
+
+	enqueueTasks(t, engine, queue, 10)
+
+	// The frozen bucket holds exactly burst tokens: 3 dispatch, 7 stay pending.
+	require.Eventually(t, func() bool { return len(log.snapshot()) >= 3 }, 3*time.Second, 10*time.Millisecond)
+	time.Sleep(300 * time.Millisecond)
+	require.Len(t, log.snapshot(), 3, "the rate limit caps dispatch at the burst while the clock is frozen")
+
+	// One second refills 5 tokens, capped at the burst of 3.
+	fake.Advance(time.Second)
+	require.NoError(t, engine.TellQueue(ctx, queue, &conveyorv1.TasksAvailable{Queue: queue}))
+
+	require.Eventually(t, func() bool { return len(log.snapshot()) >= 6 }, 3*time.Second, 10*time.Millisecond)
+	time.Sleep(300 * time.Millisecond)
+	require.Len(t, log.snapshot(), 6, "a refill releases exactly another burst")
+}
+
 func TestRegisterGatewayGrantsInitialCredits(t *testing.T) {
 	grain := &QueueGrain{runtime: newTestRuntime(t)}
 

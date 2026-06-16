@@ -33,6 +33,7 @@ type Engine struct {
 	leaseExpired    metric.Int64Counter
 	wakeupsSwept    metric.Int64Counter
 	breakerOpen     metric.Int64Counter
+	rateLimited     metric.Int64Counter
 }
 
 // NewEngine creates the engine instruments from the global meter. The returned
@@ -51,6 +52,8 @@ func NewEngine() (*Engine, error) {
 		metric.WithDescription("Queues re-woken by the reaper's pending sweep (recovers lost wake-ups)."))
 	breakerOpen, e5 := meter.Int64Counter("conveyor.breaker.open",
 		metric.WithDescription("Completions deferred because a task type's circuit breaker was open."))
+	rateLimited, e6 := meter.Int64Counter("conveyor.ratelimit.throttled",
+		metric.WithDescription("Lease cycles a queue deferred because its dispatch rate limit was exhausted."))
 
 	return &Engine{
 		processDuration: processDuration,
@@ -58,7 +61,8 @@ func NewEngine() (*Engine, error) {
 		leaseExpired:    leaseExpired,
 		wakeupsSwept:    wakeupsSwept,
 		breakerOpen:     breakerOpen,
-	}, errors.Join(e1, e2, e3, e4, e5)
+		rateLimited:     rateLimited,
+	}, errors.Join(e1, e2, e3, e4, e5, e6)
 }
 
 // RecordProcessDuration records one execution's dispatch→completion time.
@@ -84,4 +88,10 @@ func (e *Engine) WakeupsSwept(ctx context.Context, queues int) {
 // BreakerOpen counts a completion deferred by an open circuit breaker.
 func (e *Engine) BreakerOpen(ctx context.Context) {
 	e.breakerOpen.Add(ctx, 1)
+}
+
+// RateLimited counts one lease cycle a queue deferred on an exhausted rate
+// limit, labeled by queue.
+func (e *Engine) RateLimited(ctx context.Context, queue string) {
+	e.rateLimited.Add(ctx, 1, metric.WithAttributes(attribute.String(queueAttr, queue)))
 }

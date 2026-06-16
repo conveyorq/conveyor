@@ -7,6 +7,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"math"
 	"testing"
 	"time"
 
@@ -98,6 +99,54 @@ func TestPauseResumeQueuePersistsFlag(t *testing.T) {
 	paused, err = taskLog.QueuePaused(ctx, defaultQueueName)
 	require.NoError(t, err)
 	require.False(t, paused)
+}
+
+func TestSetQueueRateLimitValidation(t *testing.T) {
+	admin, _, _ := newTestAdminService(t)
+	ctx := context.Background()
+
+	_, err := admin.SetQueueRateLimit(ctx, connect.NewRequest(&conveyorv1.SetQueueRateLimitRequest{RatePerSec: 10, Burst: 5}))
+	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err), "empty queue is rejected")
+
+	_, err = admin.SetQueueRateLimit(ctx, connect.NewRequest(&conveyorv1.SetQueueRateLimitRequest{Queue: defaultQueueName, RatePerSec: 0, Burst: 5}))
+	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err), "a non-positive rate is rejected")
+
+	_, err = admin.SetQueueRateLimit(ctx, connect.NewRequest(&conveyorv1.SetQueueRateLimitRequest{Queue: defaultQueueName, RatePerSec: 10, Burst: 0}))
+	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err), "a burst below one is rejected")
+
+	_, err = admin.SetQueueRateLimit(ctx, connect.NewRequest(&conveyorv1.SetQueueRateLimitRequest{Queue: defaultQueueName, RatePerSec: math.NaN(), Burst: 5}))
+	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err), "a NaN rate is rejected")
+
+	_, err = admin.SetQueueRateLimit(ctx, connect.NewRequest(&conveyorv1.SetQueueRateLimitRequest{Queue: defaultQueueName, RatePerSec: math.Inf(1), Burst: 5}))
+	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err), "an infinite rate is rejected")
+}
+
+func TestRateLimitSetListDelete(t *testing.T) {
+	admin, _, taskLog := newTestAdminService(t)
+	ctx := context.Background()
+
+	_, err := admin.SetQueueRateLimit(ctx, connect.NewRequest(&conveyorv1.SetQueueRateLimitRequest{Queue: defaultQueueName, RatePerSec: 50, Burst: 10}))
+	require.NoError(t, err)
+
+	limit, ok, err := taskLog.QueueRateLimit(ctx, defaultQueueName)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.EqualValues(t, 50, limit.RatePerSec)
+	require.Equal(t, 10, limit.Burst)
+
+	list, err := admin.ListRateLimits(ctx, connect.NewRequest(&conveyorv1.ListRateLimitsRequest{}))
+	require.NoError(t, err)
+	require.Len(t, list.Msg.GetLimits(), 1)
+	require.Equal(t, defaultQueueName, list.Msg.GetLimits()[0].GetQueue())
+	require.EqualValues(t, 50, list.Msg.GetLimits()[0].GetRatePerSec())
+	require.EqualValues(t, 10, list.Msg.GetLimits()[0].GetBurst())
+
+	_, err = admin.DeleteQueueRateLimit(ctx, connect.NewRequest(&conveyorv1.DeleteQueueRateLimitRequest{Queue: defaultQueueName}))
+	require.NoError(t, err)
+
+	_, ok, err = taskLog.QueueRateLimit(ctx, defaultQueueName)
+	require.NoError(t, err)
+	require.False(t, ok, "delete clears the override")
 }
 
 func TestListTasksPaginationAndFilters(t *testing.T) {

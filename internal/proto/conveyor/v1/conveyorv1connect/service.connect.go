@@ -53,6 +53,15 @@ const (
 	// AdminServiceResumeQueueProcedure is the fully-qualified name of the AdminService's ResumeQueue
 	// RPC.
 	AdminServiceResumeQueueProcedure = "/conveyor.v1.AdminService/ResumeQueue"
+	// AdminServiceListRateLimitsProcedure is the fully-qualified name of the AdminService's
+	// ListRateLimits RPC.
+	AdminServiceListRateLimitsProcedure = "/conveyor.v1.AdminService/ListRateLimits"
+	// AdminServiceSetQueueRateLimitProcedure is the fully-qualified name of the AdminService's
+	// SetQueueRateLimit RPC.
+	AdminServiceSetQueueRateLimitProcedure = "/conveyor.v1.AdminService/SetQueueRateLimit"
+	// AdminServiceDeleteQueueRateLimitProcedure is the fully-qualified name of the AdminService's
+	// DeleteQueueRateLimit RPC.
+	AdminServiceDeleteQueueRateLimitProcedure = "/conveyor.v1.AdminService/DeleteQueueRateLimit"
 	// AdminServiceListTasksProcedure is the fully-qualified name of the AdminService's ListTasks RPC.
 	AdminServiceListTasksProcedure = "/conveyor.v1.AdminService/ListTasks"
 	// AdminServiceCancelTaskProcedure is the fully-qualified name of the AdminService's CancelTask RPC.
@@ -301,6 +310,12 @@ type AdminServiceClient interface {
 	ListQueues(context.Context, *connect.Request[v1.ListQueuesRequest]) (*connect.Response[v1.ListQueuesResponse], error)
 	PauseQueue(context.Context, *connect.Request[v1.PauseQueueRequest]) (*connect.Response[v1.PauseQueueResponse], error)
 	ResumeQueue(context.Context, *connect.Request[v1.ResumeQueueRequest]) (*connect.Response[v1.ResumeQueueResponse], error)
+	// ListRateLimits returns every per-queue dispatch-rate override.
+	ListRateLimits(context.Context, *connect.Request[v1.ListRateLimitsRequest]) (*connect.Response[v1.ListRateLimitsResponse], error)
+	// SetQueueRateLimit sets a queue's dispatch-rate override.
+	SetQueueRateLimit(context.Context, *connect.Request[v1.SetQueueRateLimitRequest]) (*connect.Response[v1.SetQueueRateLimitResponse], error)
+	// DeleteQueueRateLimit clears a queue's override, reverting it to the default.
+	DeleteQueueRateLimit(context.Context, *connect.Request[v1.DeleteQueueRateLimitRequest]) (*connect.Response[v1.DeleteQueueRateLimitResponse], error)
 	ListTasks(context.Context, *connect.Request[v1.ListTasksRequest]) (*connect.Response[v1.ListTasksResponse], error)
 	CancelTask(context.Context, *connect.Request[v1.CancelTaskRequest]) (*connect.Response[v1.CancelTaskResponse], error)
 	DeleteTask(context.Context, *connect.Request[v1.DeleteTaskRequest]) (*connect.Response[v1.DeleteTaskResponse], error)
@@ -356,6 +371,24 @@ func NewAdminServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			httpClient,
 			baseURL+AdminServiceResumeQueueProcedure,
 			connect.WithSchema(adminServiceMethods.ByName("ResumeQueue")),
+			connect.WithClientOptions(opts...),
+		),
+		listRateLimits: connect.NewClient[v1.ListRateLimitsRequest, v1.ListRateLimitsResponse](
+			httpClient,
+			baseURL+AdminServiceListRateLimitsProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("ListRateLimits")),
+			connect.WithClientOptions(opts...),
+		),
+		setQueueRateLimit: connect.NewClient[v1.SetQueueRateLimitRequest, v1.SetQueueRateLimitResponse](
+			httpClient,
+			baseURL+AdminServiceSetQueueRateLimitProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("SetQueueRateLimit")),
+			connect.WithClientOptions(opts...),
+		),
+		deleteQueueRateLimit: connect.NewClient[v1.DeleteQueueRateLimitRequest, v1.DeleteQueueRateLimitResponse](
+			httpClient,
+			baseURL+AdminServiceDeleteQueueRateLimitProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("DeleteQueueRateLimit")),
 			connect.WithClientOptions(opts...),
 		),
 		listTasks: connect.NewClient[v1.ListTasksRequest, v1.ListTasksResponse](
@@ -465,26 +498,29 @@ func NewAdminServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 
 // adminServiceClient implements AdminServiceClient.
 type adminServiceClient struct {
-	listQueues         *connect.Client[v1.ListQueuesRequest, v1.ListQueuesResponse]
-	pauseQueue         *connect.Client[v1.PauseQueueRequest, v1.PauseQueueResponse]
-	resumeQueue        *connect.Client[v1.ResumeQueueRequest, v1.ResumeQueueResponse]
-	listTasks          *connect.Client[v1.ListTasksRequest, v1.ListTasksResponse]
-	cancelTask         *connect.Client[v1.CancelTaskRequest, v1.CancelTaskResponse]
-	deleteTask         *connect.Client[v1.DeleteTaskRequest, v1.DeleteTaskResponse]
-	runTask            *connect.Client[v1.RunTaskRequest, v1.RunTaskResponse]
-	archiveTask        *connect.Client[v1.ArchiveTaskRequest, v1.ArchiveTaskResponse]
-	batchDeleteTasks   *connect.Client[v1.BatchTasksRequest, v1.BatchTasksResponse]
-	batchRunTasks      *connect.Client[v1.BatchTasksRequest, v1.BatchTasksResponse]
-	batchCancelTasks   *connect.Client[v1.BatchTasksRequest, v1.BatchTasksResponse]
-	batchArchiveTasks  *connect.Client[v1.BatchTasksRequest, v1.BatchTasksResponse]
-	listCron           *connect.Client[v1.ListCronRequest, v1.ListCronResponse]
-	upsertCron         *connect.Client[v1.UpsertCronRequest, v1.UpsertCronResponse]
-	pauseCron          *connect.Client[v1.PauseCronRequest, v1.PauseCronResponse]
-	resumeCron         *connect.Client[v1.ResumeCronRequest, v1.ResumeCronResponse]
-	deleteCron         *connect.Client[v1.DeleteCronRequest, v1.DeleteCronResponse]
-	clusterInfo        *connect.Client[v1.ClusterInfoRequest, v1.ClusterInfoResponse]
-	listWorkerSessions *connect.Client[v1.ListWorkerSessionsRequest, v1.ListWorkerSessionsResponse]
-	brokerInfo         *connect.Client[v1.BrokerInfoRequest, v1.BrokerInfoResponse]
+	listQueues           *connect.Client[v1.ListQueuesRequest, v1.ListQueuesResponse]
+	pauseQueue           *connect.Client[v1.PauseQueueRequest, v1.PauseQueueResponse]
+	resumeQueue          *connect.Client[v1.ResumeQueueRequest, v1.ResumeQueueResponse]
+	listRateLimits       *connect.Client[v1.ListRateLimitsRequest, v1.ListRateLimitsResponse]
+	setQueueRateLimit    *connect.Client[v1.SetQueueRateLimitRequest, v1.SetQueueRateLimitResponse]
+	deleteQueueRateLimit *connect.Client[v1.DeleteQueueRateLimitRequest, v1.DeleteQueueRateLimitResponse]
+	listTasks            *connect.Client[v1.ListTasksRequest, v1.ListTasksResponse]
+	cancelTask           *connect.Client[v1.CancelTaskRequest, v1.CancelTaskResponse]
+	deleteTask           *connect.Client[v1.DeleteTaskRequest, v1.DeleteTaskResponse]
+	runTask              *connect.Client[v1.RunTaskRequest, v1.RunTaskResponse]
+	archiveTask          *connect.Client[v1.ArchiveTaskRequest, v1.ArchiveTaskResponse]
+	batchDeleteTasks     *connect.Client[v1.BatchTasksRequest, v1.BatchTasksResponse]
+	batchRunTasks        *connect.Client[v1.BatchTasksRequest, v1.BatchTasksResponse]
+	batchCancelTasks     *connect.Client[v1.BatchTasksRequest, v1.BatchTasksResponse]
+	batchArchiveTasks    *connect.Client[v1.BatchTasksRequest, v1.BatchTasksResponse]
+	listCron             *connect.Client[v1.ListCronRequest, v1.ListCronResponse]
+	upsertCron           *connect.Client[v1.UpsertCronRequest, v1.UpsertCronResponse]
+	pauseCron            *connect.Client[v1.PauseCronRequest, v1.PauseCronResponse]
+	resumeCron           *connect.Client[v1.ResumeCronRequest, v1.ResumeCronResponse]
+	deleteCron           *connect.Client[v1.DeleteCronRequest, v1.DeleteCronResponse]
+	clusterInfo          *connect.Client[v1.ClusterInfoRequest, v1.ClusterInfoResponse]
+	listWorkerSessions   *connect.Client[v1.ListWorkerSessionsRequest, v1.ListWorkerSessionsResponse]
+	brokerInfo           *connect.Client[v1.BrokerInfoRequest, v1.BrokerInfoResponse]
 }
 
 // ListQueues calls conveyor.v1.AdminService.ListQueues.
@@ -500,6 +536,21 @@ func (c *adminServiceClient) PauseQueue(ctx context.Context, req *connect.Reques
 // ResumeQueue calls conveyor.v1.AdminService.ResumeQueue.
 func (c *adminServiceClient) ResumeQueue(ctx context.Context, req *connect.Request[v1.ResumeQueueRequest]) (*connect.Response[v1.ResumeQueueResponse], error) {
 	return c.resumeQueue.CallUnary(ctx, req)
+}
+
+// ListRateLimits calls conveyor.v1.AdminService.ListRateLimits.
+func (c *adminServiceClient) ListRateLimits(ctx context.Context, req *connect.Request[v1.ListRateLimitsRequest]) (*connect.Response[v1.ListRateLimitsResponse], error) {
+	return c.listRateLimits.CallUnary(ctx, req)
+}
+
+// SetQueueRateLimit calls conveyor.v1.AdminService.SetQueueRateLimit.
+func (c *adminServiceClient) SetQueueRateLimit(ctx context.Context, req *connect.Request[v1.SetQueueRateLimitRequest]) (*connect.Response[v1.SetQueueRateLimitResponse], error) {
+	return c.setQueueRateLimit.CallUnary(ctx, req)
+}
+
+// DeleteQueueRateLimit calls conveyor.v1.AdminService.DeleteQueueRateLimit.
+func (c *adminServiceClient) DeleteQueueRateLimit(ctx context.Context, req *connect.Request[v1.DeleteQueueRateLimitRequest]) (*connect.Response[v1.DeleteQueueRateLimitResponse], error) {
+	return c.deleteQueueRateLimit.CallUnary(ctx, req)
 }
 
 // ListTasks calls conveyor.v1.AdminService.ListTasks.
@@ -592,6 +643,12 @@ type AdminServiceHandler interface {
 	ListQueues(context.Context, *connect.Request[v1.ListQueuesRequest]) (*connect.Response[v1.ListQueuesResponse], error)
 	PauseQueue(context.Context, *connect.Request[v1.PauseQueueRequest]) (*connect.Response[v1.PauseQueueResponse], error)
 	ResumeQueue(context.Context, *connect.Request[v1.ResumeQueueRequest]) (*connect.Response[v1.ResumeQueueResponse], error)
+	// ListRateLimits returns every per-queue dispatch-rate override.
+	ListRateLimits(context.Context, *connect.Request[v1.ListRateLimitsRequest]) (*connect.Response[v1.ListRateLimitsResponse], error)
+	// SetQueueRateLimit sets a queue's dispatch-rate override.
+	SetQueueRateLimit(context.Context, *connect.Request[v1.SetQueueRateLimitRequest]) (*connect.Response[v1.SetQueueRateLimitResponse], error)
+	// DeleteQueueRateLimit clears a queue's override, reverting it to the default.
+	DeleteQueueRateLimit(context.Context, *connect.Request[v1.DeleteQueueRateLimitRequest]) (*connect.Response[v1.DeleteQueueRateLimitResponse], error)
 	ListTasks(context.Context, *connect.Request[v1.ListTasksRequest]) (*connect.Response[v1.ListTasksResponse], error)
 	CancelTask(context.Context, *connect.Request[v1.CancelTaskRequest]) (*connect.Response[v1.CancelTaskResponse], error)
 	DeleteTask(context.Context, *connect.Request[v1.DeleteTaskRequest]) (*connect.Response[v1.DeleteTaskResponse], error)
@@ -643,6 +700,24 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 		AdminServiceResumeQueueProcedure,
 		svc.ResumeQueue,
 		connect.WithSchema(adminServiceMethods.ByName("ResumeQueue")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceListRateLimitsHandler := connect.NewUnaryHandler(
+		AdminServiceListRateLimitsProcedure,
+		svc.ListRateLimits,
+		connect.WithSchema(adminServiceMethods.ByName("ListRateLimits")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceSetQueueRateLimitHandler := connect.NewUnaryHandler(
+		AdminServiceSetQueueRateLimitProcedure,
+		svc.SetQueueRateLimit,
+		connect.WithSchema(adminServiceMethods.ByName("SetQueueRateLimit")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceDeleteQueueRateLimitHandler := connect.NewUnaryHandler(
+		AdminServiceDeleteQueueRateLimitProcedure,
+		svc.DeleteQueueRateLimit,
+		connect.WithSchema(adminServiceMethods.ByName("DeleteQueueRateLimit")),
 		connect.WithHandlerOptions(opts...),
 	)
 	adminServiceListTasksHandler := connect.NewUnaryHandler(
@@ -755,6 +830,12 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 			adminServicePauseQueueHandler.ServeHTTP(w, r)
 		case AdminServiceResumeQueueProcedure:
 			adminServiceResumeQueueHandler.ServeHTTP(w, r)
+		case AdminServiceListRateLimitsProcedure:
+			adminServiceListRateLimitsHandler.ServeHTTP(w, r)
+		case AdminServiceSetQueueRateLimitProcedure:
+			adminServiceSetQueueRateLimitHandler.ServeHTTP(w, r)
+		case AdminServiceDeleteQueueRateLimitProcedure:
+			adminServiceDeleteQueueRateLimitHandler.ServeHTTP(w, r)
 		case AdminServiceListTasksProcedure:
 			adminServiceListTasksHandler.ServeHTTP(w, r)
 		case AdminServiceCancelTaskProcedure:
@@ -808,6 +889,18 @@ func (UnimplementedAdminServiceHandler) PauseQueue(context.Context, *connect.Req
 
 func (UnimplementedAdminServiceHandler) ResumeQueue(context.Context, *connect.Request[v1.ResumeQueueRequest]) (*connect.Response[v1.ResumeQueueResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("conveyor.v1.AdminService.ResumeQueue is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) ListRateLimits(context.Context, *connect.Request[v1.ListRateLimitsRequest]) (*connect.Response[v1.ListRateLimitsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("conveyor.v1.AdminService.ListRateLimits is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) SetQueueRateLimit(context.Context, *connect.Request[v1.SetQueueRateLimitRequest]) (*connect.Response[v1.SetQueueRateLimitResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("conveyor.v1.AdminService.SetQueueRateLimit is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) DeleteQueueRateLimit(context.Context, *connect.Request[v1.DeleteQueueRateLimitRequest]) (*connect.Response[v1.DeleteQueueRateLimitResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("conveyor.v1.AdminService.DeleteQueueRateLimit is not implemented"))
 }
 
 func (UnimplementedAdminServiceHandler) ListTasks(context.Context, *connect.Request[v1.ListTasksRequest]) (*connect.Response[v1.ListTasksResponse], error) {

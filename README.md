@@ -24,6 +24,9 @@ broker, with no Redis and no polling.
 - **Group aggregation** — coalesce many tasks into one batch and process them in
   a single handler call (debounce/digest, or bulk processing); fires on size,
   delay, or grace period.
+- **Rate limiting** — cap a queue's dispatch rate (token bucket: rate + burst) to
+  protect a downstream; a global default plus per-queue overrides, tunable live
+  from the CLI, dashboard, or API.
 - **SDK middleware** — wrap both sides: decorate enqueues
   (`WithEnqueueMiddleware`) and handlers (`Mux.Use`, `Mux.UseBatch`) for
   logging, metrics, or policy, without touching task code.
@@ -216,6 +219,8 @@ a different-origin UI, and `api.grafana_url` for the metrics link. See the
   scaling, broker sizing, security, observability, and upgrades.
 - [Group aggregation](docs/grouping.md) — how to enqueue grouped tasks, write
   batch handlers, and tune the firing policy.
+- [Rate limiting](docs/rate-limiting.md) — cap per-queue dispatch rate with a
+  global default and live per-queue overrides.
 - [Wire protocol](docs/protocol.md) — the normative protocol spec for SDK
   authors building a Conveyor client or worker in another language.
 - [Migrating from asynq](docs/migrate-from-asynq.md) — side-by-side API mapping.

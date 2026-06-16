@@ -239,6 +239,8 @@ func TestValidateRejections(t *testing.T) {
 		{"zero lease ttl", func(c *Config) { c.Engine.LeaseTTL = 0 }, "engine.lease_ttl"},
 		{"zero batch", func(c *Config) { c.Engine.LeaseBatchMax = 0 }, "engine.lease_batch_max"},
 		{"negative retry", func(c *Config) { c.Engine.DefaultMaxRetry = -1 }, "engine.default_max_retry"},
+		{"negative rate", func(c *Config) { c.Engine.RateLimitRatePerSec = -1 }, "engine.rate_limit_rate_per_sec"},
+		{"rate without burst", func(c *Config) { c.Engine.RateLimitRatePerSec = 50 }, "engine.rate_limit_burst"},
 		{"bad log level", func(c *Config) { c.Log.Level = "verbose" }, "log.level"},
 		{"bad log format", func(c *Config) { c.Log.Format = "xml" }, "log.format"},
 	}

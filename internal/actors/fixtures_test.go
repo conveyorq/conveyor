@@ -95,11 +95,17 @@ func (discardWriter) Write(p []byte) (int, error) {
 // discovery provider is built here, as the server layer does from config:
 // static with the given gossip peers, or self-discovery when peers is nil.
 func newNode(taskLog broker.Broker, settings Settings, ports []int, peers []string) *Engine {
+	return newNodeWithClock(taskLog, clock.System(), settings, ports, peers)
+}
+
+// newNodeWithClock is newNode with an explicit time source, letting a test
+// drive engine and broker time deterministically (e.g. the rate-limiter bucket).
+func newNodeWithClock(taskLog broker.Broker, timeSource clock.Clock, settings Settings, ports []int, peers []string) *Engine {
 	if len(peers) == 0 {
 		peers = []string{fmt.Sprintf("%s:%d", testBindAddr, ports[1])}
 	}
 
-	return NewEngine(taskLog, clock.System(), quietLogger(), Config{
+	return NewEngine(taskLog, timeSource, quietLogger(), Config{
 		Name:          "conveyor-test",
 		BindAddr:      testBindAddr,
 		RemotingPort:  ports[0],

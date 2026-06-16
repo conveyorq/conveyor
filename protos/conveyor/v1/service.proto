@@ -31,6 +31,12 @@ service AdminService {
   rpc ListQueues(ListQueuesRequest) returns (ListQueuesResponse) {}
   rpc PauseQueue(PauseQueueRequest) returns (PauseQueueResponse) {}
   rpc ResumeQueue(ResumeQueueRequest) returns (ResumeQueueResponse) {}
+  // ListRateLimits returns every per-queue dispatch-rate override.
+  rpc ListRateLimits(ListRateLimitsRequest) returns (ListRateLimitsResponse) {}
+  // SetQueueRateLimit sets a queue's dispatch-rate override.
+  rpc SetQueueRateLimit(SetQueueRateLimitRequest) returns (SetQueueRateLimitResponse) {}
+  // DeleteQueueRateLimit clears a queue's override, reverting it to the default.
+  rpc DeleteQueueRateLimit(DeleteQueueRateLimitRequest) returns (DeleteQueueRateLimitResponse) {}
   rpc ListTasks(ListTasksRequest) returns (ListTasksResponse) {}
   rpc CancelTask(CancelTaskRequest) returns (CancelTaskResponse) {}
   rpc DeleteTask(DeleteTaskRequest) returns (DeleteTaskResponse) {}
@@ -306,6 +312,42 @@ message ResumeQueueRequest {
 }
 
 message ResumeQueueResponse {}
+
+// RateLimitInfo reports one queue's dispatch-rate override.
+message RateLimitInfo {
+  // queue is the queue the override applies to.
+  string queue = 1;
+  // rate_per_sec is the sustained dispatch rate in tasks per second.
+  double rate_per_sec = 2;
+  // burst is the token-bucket depth.
+  int32 burst = 3;
+}
+
+message ListRateLimitsRequest {}
+
+message ListRateLimitsResponse {
+  repeated RateLimitInfo limits = 1;
+}
+
+message SetQueueRateLimitRequest {
+  // queue is the queue to limit.
+  string queue = 1;
+  // rate_per_sec is the sustained dispatch rate in tasks per second; must be
+  // greater than zero.
+  double rate_per_sec = 2;
+  // burst is the token-bucket depth; must be at least one.
+  int32 burst = 3;
+}
+
+message SetQueueRateLimitResponse {}
+
+message DeleteQueueRateLimitRequest {
+  // queue is the queue whose override to clear; clearing an absent override
+  // succeeds.
+  string queue = 1;
+}
+
+message DeleteQueueRateLimitResponse {}
 
 message ListTasksRequest {
   string queue = 1;

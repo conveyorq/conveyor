@@ -76,6 +76,8 @@ type Broker struct {
 	tasks map[string]*taskRow
 	// pausedQueues holds the persisted queue pause flags.
 	pausedQueues map[string]bool
+	// rateLimits holds per-queue dispatch-rate overrides by queue name.
+	rateLimits map[string]broker.RateLimit
 	// cronEntries maps entry id to the stored entry.
 	cronEntries map[string]*broker.CronEntry
 }
@@ -89,6 +91,7 @@ func New(timeSource clock.Clock) *Broker {
 		clock:        timeSource,
 		tasks:        make(map[string]*taskRow),
 		pausedQueues: make(map[string]bool),
+		rateLimits:   make(map[string]broker.RateLimit),
 		cronEntries:  make(map[string]*broker.CronEntry),
 	}
 }
@@ -675,6 +678,58 @@ func (b *Broker) QueuePaused(_ context.Context, queue string) (bool, error) {
 	return b.pausedQueues[queue], nil
 }
 
+// SetQueueRateLimit persists a per-queue dispatch-rate override; see broker.Broker.
+func (b *Broker) SetQueueRateLimit(_ context.Context, queue string, ratePerSec float64, burst int) error {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	b.rateLimits[queue] = broker.RateLimit{
+		Queue:      queue,
+		RatePerSec: ratePerSec,
+		Burst:      burst,
+		UpdatedAt:  b.clock.Now(),
+	}
+
+	return nil
+}
+
+// DeleteQueueRateLimit removes a queue's override; see broker.Broker.
+func (b *Broker) DeleteQueueRateLimit(_ context.Context, queue string) error {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	delete(b.rateLimits, queue)
+
+	return nil
+}
+
+// QueueRateLimit returns a queue's override and whether one is set; see broker.Broker.
+func (b *Broker) QueueRateLimit(_ context.Context, queue string) (broker.RateLimit, bool, error) {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	limit, ok := b.rateLimits[queue]
+
+	return limit, ok, nil
+}
+
+// QueueRateLimits returns every override ordered by queue name; see broker.Broker.
+func (b *Broker) QueueRateLimits(_ context.Context) ([]broker.RateLimit, error) {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	limits := make([]broker.RateLimit, 0, len(b.rateLimits))
+	for _, limit := range b.rateLimits {
+		limits = append(limits, limit)
+	}
+
+	slices.SortFunc(limits, func(a, b broker.RateLimit) int {
+		return strings.Compare(a.Queue, b.Queue)
+	})
+
+	return limits, nil
+}
+
 // Info reports the in-memory engine's driver and row counts; see broker.Broker.
 func (b *Broker) Info(_ context.Context) (broker.Info, error) {
 	b.mutex.Lock()
@@ -686,6 +741,7 @@ func (b *Broker) Info(_ context.Context) (broker.Info, error) {
 			"tasks":         strconv.Itoa(len(b.tasks)),
 			"cron_entries":  strconv.Itoa(len(b.cronEntries)),
 			"paused_queues": strconv.Itoa(len(b.pausedQueues)),
+			"rate_limits":   strconv.Itoa(len(b.rateLimits)),
 		},
 	}, nil
 }

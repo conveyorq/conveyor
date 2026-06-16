@@ -126,6 +126,16 @@ message CancelActive {
   string task_id = 1;
 }
 
+// RateLimitChanged tells a queue grain that its dispatch-rate override changed
+// through the Admin API. It carries the new values so the grain rebuilds its
+// token bucket without a broker read: rate_per_sec greater than zero sets the
+// override, while zero reverts the queue to the server's global default.
+message RateLimitChanged {
+  string queue = 1;
+  double rate_per_sec = 2;
+  int32 burst = 3;
+}
+
 // FireCron tells the scheduler singleton that a cron entry is due.
 message FireCron {
   string entry_id = 1;

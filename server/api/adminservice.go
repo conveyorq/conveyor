@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"connectrpc.com/connect"
@@ -123,6 +124,77 @@ func (s *AdminService) ResumeQueue(ctx context.Context, request *connect.Request
 	}
 
 	return connect.NewResponse(&conveyorv1.ResumeQueueResponse{}), nil
+}
+
+// ListRateLimits returns every per-queue dispatch-rate override, ordered by
+// queue name.
+func (s *AdminService) ListRateLimits(ctx context.Context, _ *connect.Request[conveyorv1.ListRateLimitsRequest]) (*connect.Response[conveyorv1.ListRateLimitsResponse], error) {
+	limits, err := s.taskLog.QueueRateLimits(ctx)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+
+	infos := make([]*conveyorv1.RateLimitInfo, 0, len(limits))
+
+	for _, limit := range limits {
+		infos = append(infos, &conveyorv1.RateLimitInfo{
+			Queue:      limit.Queue,
+			RatePerSec: limit.RatePerSec,
+			Burst:      int32(limit.Burst),
+		})
+	}
+
+	return connect.NewResponse(&conveyorv1.ListRateLimitsResponse{Limits: infos}), nil
+}
+
+// SetQueueRateLimit persists a queue's dispatch-rate override and pushes the new
+// values to the live queue grain so the limit takes effect immediately.
+func (s *AdminService) SetQueueRateLimit(ctx context.Context, request *connect.Request[conveyorv1.SetQueueRateLimitRequest]) (*connect.Response[conveyorv1.SetQueueRateLimitResponse], error) {
+	queue, err := validQueueName(request.Msg.GetQueue())
+	if err != nil {
+		return nil, err
+	}
+
+	rate := request.Msg.GetRatePerSec()
+	if rate <= 0 || math.IsNaN(rate) || math.IsInf(rate, 0) {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("rate_per_sec must be a positive finite number, got %v", rate))
+	}
+
+	burst := request.Msg.GetBurst()
+	if burst < 1 {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("burst must be at least 1, got %d", burst))
+	}
+
+	if err := s.taskLog.SetQueueRateLimit(ctx, queue, rate, int(burst)); err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+
+	if err := s.engine.TellQueue(ctx, queue, &conveyorv1.RateLimitChanged{Queue: queue, RatePerSec: rate, Burst: burst}); err != nil {
+		return nil, connect.NewError(connect.CodeInternal,
+			fmt.Errorf("rate limit persisted but updating the live dispatcher failed, retry to take effect immediately: %w", err))
+	}
+
+	return connect.NewResponse(&conveyorv1.SetQueueRateLimitResponse{}), nil
+}
+
+// DeleteQueueRateLimit clears a queue's override and reverts the live queue
+// grain to the server's global default (a zero rate in the change message).
+func (s *AdminService) DeleteQueueRateLimit(ctx context.Context, request *connect.Request[conveyorv1.DeleteQueueRateLimitRequest]) (*connect.Response[conveyorv1.DeleteQueueRateLimitResponse], error) {
+	queue, err := validQueueName(request.Msg.GetQueue())
+	if err != nil {
+		return nil, err
+	}
+
+	if err := s.taskLog.DeleteQueueRateLimit(ctx, queue); err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+
+	if err := s.engine.TellQueue(ctx, queue, &conveyorv1.RateLimitChanged{Queue: queue}); err != nil {
+		return nil, connect.NewError(connect.CodeInternal,
+			fmt.Errorf("rate limit cleared but updating the live dispatcher failed, retry to take effect immediately: %w", err))
+	}
+
+	return connect.NewResponse(&conveyorv1.DeleteQueueRateLimitResponse{}), nil
 }
 
 // ListTasks pages through tasks newest first, optionally filtered by queue

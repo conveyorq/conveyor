@@ -119,6 +119,107 @@ func newQueuesCommand(conn *connection) *cobra.Command {
 	return command
 }
 
+// newRateLimitCommand groups the per-queue dispatch rate-limit subcommands.
+func newRateLimitCommand(conn *connection) *cobra.Command {
+	command := &cobra.Command{
+		Use:   "ratelimit",
+		Short: "Set, clear, and list per-queue dispatch rate limits",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			_ = cmd.Usage()
+
+			if len(args) > 0 {
+				return fmt.Errorf("ratelimit: unknown subcommand %q", args[0])
+			}
+
+			return errors.New("ratelimit: usage: conveyor ratelimit set|rm|ls")
+		},
+	}
+
+	command.AddCommand(newRateLimitSetCommand(conn), newRateLimitRemoveCommand(conn), newRateLimitListCommand(conn))
+
+	return command
+}
+
+// newRateLimitSetCommand builds the rate-limit set subcommand.
+func newRateLimitSetCommand(conn *connection) *cobra.Command {
+	var (
+		rate  float64
+		burst int
+	)
+
+	command := &cobra.Command{
+		Use:     "set <queue>",
+		Short:   "Limit a queue to rate tasks/second with a burst allowance",
+		Example: `  conveyor ratelimit set email --rate 50 --burst 10`,
+		Args:    exactQueueName("ratelimit set"),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			_, err := conn.admin().SetQueueRateLimit(context.Background(), connect.NewRequest(&conveyorv1.SetQueueRateLimitRequest{
+				Queue:      args[0],
+				RatePerSec: rate,
+				Burst:      int32(burst),
+			}))
+			if err != nil {
+				return err
+			}
+
+			fmt.Fprintf(cmd.OutOrStdout(), "queue %s limited to %g/s (burst %d)\n", args[0], rate, burst)
+
+			return nil
+		},
+	}
+
+	flags := command.Flags()
+	flags.Float64Var(&rate, "rate", 0, "sustained dispatch rate in tasks per second (required, > 0)")
+	flags.IntVar(&burst, "burst", 1, "token-bucket depth: the largest instantaneous burst (>= 1)")
+	_ = command.MarkFlagRequired("rate")
+
+	return command
+}
+
+// newRateLimitRemoveCommand builds the rate-limit rm subcommand.
+func newRateLimitRemoveCommand(conn *connection) *cobra.Command {
+	return &cobra.Command{
+		Use:   "rm <queue>",
+		Short: "Clear a queue's override, reverting it to the global default",
+		Args:  exactQueueName("ratelimit rm"),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			_, err := conn.admin().DeleteQueueRateLimit(context.Background(), connect.NewRequest(&conveyorv1.DeleteQueueRateLimitRequest{Queue: args[0]}))
+			if err != nil {
+				return err
+			}
+
+			fmt.Fprintf(cmd.OutOrStdout(), "queue %s rate limit cleared\n", args[0])
+
+			return nil
+		},
+	}
+}
+
+// newRateLimitListCommand builds the rate-limit ls subcommand.
+func newRateLimitListCommand(conn *connection) *cobra.Command {
+	return &cobra.Command{
+		Use:   "ls",
+		Short: "List per-queue rate-limit overrides",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			response, err := conn.admin().ListRateLimits(context.Background(), connect.NewRequest(&conveyorv1.ListRateLimitsRequest{}))
+			if err != nil {
+				return err
+			}
+
+			stdout := cmd.OutOrStdout()
+			table := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+			fmt.Fprintln(table, "QUEUE\tRATE/S\tBURST")
+
+			for _, limit := range response.Msg.GetLimits() {
+				fmt.Fprintf(table, "%s\t%g\t%d\n", limit.GetQueue(), limit.GetRatePerSec(), limit.GetBurst())
+			}
+
+			return table.Flush()
+		},
+	}
+}
+
 // newTasksListCommand builds the tasks list subcommand.
 func newTasksListCommand(conn *connection) *cobra.Command {
 	var (

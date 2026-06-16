@@ -14,7 +14,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file conveyor/v1/messages.proto.
  */
 export const file_conveyor_v1_messages: GenFile = /*@__PURE__*/
-  fileDesc("Chpjb252ZXlvci92MS9tZXNzYWdlcy5wcm90bxILY29udmV5b3IudjEiHQoMVGFza0VucXVldWVkEg0KBXF1ZXVlGAEgASgJIi0KDlRhc2tzQXZhaWxhYmxlEg0KBXF1ZXVlGAEgASgJEgwKBGhpbnQYAiABKAMiXQoPUmVnaXN0ZXJHYXRld2F5Eg0KBXF1ZXVlGAEgASgJEhQKDGdhdGV3YXlfbmFtZRgCIAEoCRIQCghjYXBhY2l0eRgDIAEoBRITCgtiYXRjaF90eXBlcxgEIAMoCSJFCg1HYXRld2F5Q3JlZGl0Eg0KBXF1ZXVlGAEgASgJEhQKDGdhdGV3YXlfbmFtZRgCIAEoCRIPCgdjcmVkaXRzGAMgASgFIn4KC0V4ZWN1dGVUYXNrEicKBHRhc2sYASABKAsyGS5jb252ZXlvci52MS5UYXNrRW52ZWxvcGUSEAoIbGVhc2VfaWQYAiABKAkSNAoQbGVhc2VfZXhwaXJlc19hdBgDIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAijwEKDEV4ZWN1dGVCYXRjaBIoCgV0YXNrcxgBIAMoCzIZLmNvbnZleW9yLnYxLlRhc2tFbnZlbG9wZRIQCghsZWFzZV9pZBgCIAEoCRI0ChBsZWFzZV9leHBpcmVzX2F0GAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBINCgVncm91cBgEIAEoCSI3CglGaXJlR3JvdXASDQoFcXVldWUYASABKAkSDQoFZ3JvdXAYAiABKAkSDAoEdHlwZRgDIAEoCSKzAQoTR3JvdXBMZWFzZUNvbXBsZXRlZBIoCgV0YXNrcxgBIAMoCzIZLmNvbnZleW9yLnYxLlRhc2tFbnZlbG9wZRIQCghsZWFzZV9pZBgCIAEoCRI0ChBsZWFzZV9leHBpcmVzX2F0GAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBINCgVncm91cBgEIAEoCRIMCgR0eXBlGAUgASgJEg0KBWVycm9yGAYgASgJIlYKDVRhc2tDb21wbGV0ZWQSDwoHdGFza19pZBgBIAEoCRINCgVxdWV1ZRgCIAEoCRIPCgdzdWNjZXNzGAMgASgIEhQKDGdhdGV3YXlfbmFtZRgEIAEoCSJXCg5CYXRjaENvbXBsZXRlZBINCgVxdWV1ZRgBIAEoCRIUCgxnYXRld2F5X25hbWUYAiABKAkSDQoFdG90YWwYAyABKAUSEQoJc3VjY2VlZGVkGAQgASgFIhsKCkRyYWluUXVldWUSDQoFcXVldWUYASABKAkiHAoLUmVzdW1lUXVldWUSDQoFcXVldWUYASABKAkiHwoMQ2FuY2VsQWN0aXZlEg8KB3Rhc2tfaWQYASABKAkiHAoIRmlyZUNyb24SEAoIZW50cnlfaWQYASABKAkiFAoSQ3JvbkVudHJpZXNDaGFuZ2VkIpYBChNMZWFzZUN5Y2xlQ29tcGxldGVkEigKBXRhc2tzGAEgAygLMhkuY29udmV5b3IudjEuVGFza0VudmVsb3BlEhAKCGxlYXNlX2lkGAIgASgJEjQKEGxlYXNlX2V4cGlyZXNfYXQYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEg0KBWVycm9yGAQgASgJIjcKE0xlYXNlZFRhc2tzUmVsZWFzZWQSEAoIcmVsZWFzZWQYASABKAUSDgoGZmFpbGVkGAIgASgFIg0KC1Byb21vdGVUaWNrIgoKCFJlYXBUaWNrIhAKDkdyb3VwU3dlZXBUaWNrYgZwcm90bzM", [file_conveyor_v1_task, file_google_protobuf_timestamp]);
+  fileDesc("Chpjb252ZXlvci92MS9tZXNzYWdlcy5wcm90bxILY29udmV5b3IudjEiHQoMVGFza0VucXVldWVkEg0KBXF1ZXVlGAEgASgJIi0KDlRhc2tzQXZhaWxhYmxlEg0KBXF1ZXVlGAEgASgJEgwKBGhpbnQYAiABKAMiXQoPUmVnaXN0ZXJHYXRld2F5Eg0KBXF1ZXVlGAEgASgJEhQKDGdhdGV3YXlfbmFtZRgCIAEoCRIQCghjYXBhY2l0eRgDIAEoBRITCgtiYXRjaF90eXBlcxgEIAMoCSJFCg1HYXRld2F5Q3JlZGl0Eg0KBXF1ZXVlGAEgASgJEhQKDGdhdGV3YXlfbmFtZRgCIAEoCRIPCgdjcmVkaXRzGAMgASgFIn4KC0V4ZWN1dGVUYXNrEicKBHRhc2sYASABKAsyGS5jb252ZXlvci52MS5UYXNrRW52ZWxvcGUSEAoIbGVhc2VfaWQYAiABKAkSNAoQbGVhc2VfZXhwaXJlc19hdBgDIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAijwEKDEV4ZWN1dGVCYXRjaBIoCgV0YXNrcxgBIAMoCzIZLmNvbnZleW9yLnYxLlRhc2tFbnZlbG9wZRIQCghsZWFzZV9pZBgCIAEoCRI0ChBsZWFzZV9leHBpcmVzX2F0GAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBINCgVncm91cBgEIAEoCSI3CglGaXJlR3JvdXASDQoFcXVldWUYASABKAkSDQoFZ3JvdXAYAiABKAkSDAoEdHlwZRgDIAEoCSKzAQoTR3JvdXBMZWFzZUNvbXBsZXRlZBIoCgV0YXNrcxgBIAMoCzIZLmNvbnZleW9yLnYxLlRhc2tFbnZlbG9wZRIQCghsZWFzZV9pZBgCIAEoCRI0ChBsZWFzZV9leHBpcmVzX2F0GAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBINCgVncm91cBgEIAEoCRIMCgR0eXBlGAUgASgJEg0KBWVycm9yGAYgASgJIlYKDVRhc2tDb21wbGV0ZWQSDwoHdGFza19pZBgBIAEoCRINCgVxdWV1ZRgCIAEoCRIPCgdzdWNjZXNzGAMgASgIEhQKDGdhdGV3YXlfbmFtZRgEIAEoCSJXCg5CYXRjaENvbXBsZXRlZBINCgVxdWV1ZRgBIAEoCRIUCgxnYXRld2F5X25hbWUYAiABKAkSDQoFdG90YWwYAyABKAUSEQoJc3VjY2VlZGVkGAQgASgFIhsKCkRyYWluUXVldWUSDQoFcXVldWUYASABKAkiHAoLUmVzdW1lUXVldWUSDQoFcXVldWUYASABKAkiHwoMQ2FuY2VsQWN0aXZlEg8KB3Rhc2tfaWQYASABKAkiRgoQUmF0ZUxpbWl0Q2hhbmdlZBINCgVxdWV1ZRgBIAEoCRIUCgxyYXRlX3Blcl9zZWMYAiABKAESDQoFYnVyc3QYAyABKAUiHAoIRmlyZUNyb24SEAoIZW50cnlfaWQYASABKAkiFAoSQ3JvbkVudHJpZXNDaGFuZ2VkIpYBChNMZWFzZUN5Y2xlQ29tcGxldGVkEigKBXRhc2tzGAEgAygLMhkuY29udmV5b3IudjEuVGFza0VudmVsb3BlEhAKCGxlYXNlX2lkGAIgASgJEjQKEGxlYXNlX2V4cGlyZXNfYXQYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEg0KBWVycm9yGAQgASgJIjcKE0xlYXNlZFRhc2tzUmVsZWFzZWQSEAoIcmVsZWFzZWQYASABKAUSDgoGZmFpbGVkGAIgASgFIg0KC1Byb21vdGVUaWNrIgoKCFJlYXBUaWNrIhAKDkdyb3VwU3dlZXBUaWNrYgZwcm90bzM", [file_conveyor_v1_task, file_google_protobuf_timestamp]);
 
 /**
  * TaskEnqueued tells a queue grain that one new task was committed.
@@ -419,6 +419,38 @@ export const CancelActiveSchema: GenMessage<CancelActive> = /*@__PURE__*/
   messageDesc(file_conveyor_v1_messages, 12);
 
 /**
+ * RateLimitChanged tells a queue grain that its dispatch-rate override changed
+ * through the Admin API. It carries the new values so the grain rebuilds its
+ * token bucket without a broker read: rate_per_sec greater than zero sets the
+ * override, while zero reverts the queue to the server's global default.
+ *
+ * @generated from message conveyor.v1.RateLimitChanged
+ */
+export type RateLimitChanged = Message<"conveyor.v1.RateLimitChanged"> & {
+  /**
+   * @generated from field: string queue = 1;
+   */
+  queue: string;
+
+  /**
+   * @generated from field: double rate_per_sec = 2;
+   */
+  ratePerSec: number;
+
+  /**
+   * @generated from field: int32 burst = 3;
+   */
+  burst: number;
+};
+
+/**
+ * Describes the message conveyor.v1.RateLimitChanged.
+ * Use `create(RateLimitChangedSchema)` to create a new message.
+ */
+export const RateLimitChangedSchema: GenMessage<RateLimitChanged> = /*@__PURE__*/
+  messageDesc(file_conveyor_v1_messages, 13);
+
+/**
  * FireCron tells the scheduler singleton that a cron entry is due.
  *
  * @generated from message conveyor.v1.FireCron
@@ -435,7 +467,7 @@ export type FireCron = Message<"conveyor.v1.FireCron"> & {
  * Use `create(FireCronSchema)` to create a new message.
  */
 export const FireCronSchema: GenMessage<FireCron> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_messages, 13);
+  messageDesc(file_conveyor_v1_messages, 14);
 
 /**
  * CronEntriesChanged tells the scheduler singleton to reload cron entries
@@ -451,7 +483,7 @@ export type CronEntriesChanged = Message<"conveyor.v1.CronEntriesChanged"> & {
  * Use `create(CronEntriesChangedSchema)` to create a new message.
  */
 export const CronEntriesChangedSchema: GenMessage<CronEntriesChanged> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_messages, 14);
+  messageDesc(file_conveyor_v1_messages, 15);
 
 /**
  * LeaseCycleCompleted delivers the outcome of an asynchronous lease cycle
@@ -489,7 +521,7 @@ export type LeaseCycleCompleted = Message<"conveyor.v1.LeaseCycleCompleted"> & {
  * Use `create(LeaseCycleCompletedSchema)` to create a new message.
  */
 export const LeaseCycleCompletedSchema: GenMessage<LeaseCycleCompleted> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_messages, 15);
+  messageDesc(file_conveyor_v1_messages, 16);
 
 /**
  * LeasedTasksReleased delivers the outcome of an asynchronous release back
@@ -523,7 +555,7 @@ export type LeasedTasksReleased = Message<"conveyor.v1.LeasedTasksReleased"> & {
  * Use `create(LeasedTasksReleasedSchema)` to create a new message.
  */
 export const LeasedTasksReleasedSchema: GenMessage<LeasedTasksReleased> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_messages, 16);
+  messageDesc(file_conveyor_v1_messages, 17);
 
 /**
  * PromoteTick triggers one scheduled-task promotion pass on the scheduler.
@@ -538,7 +570,7 @@ export type PromoteTick = Message<"conveyor.v1.PromoteTick"> & {
  * Use `create(PromoteTickSchema)` to create a new message.
  */
 export const PromoteTickSchema: GenMessage<PromoteTick> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_messages, 17);
+  messageDesc(file_conveyor_v1_messages, 18);
 
 /**
  * ReapTick triggers one maintenance pass on the reaper.
@@ -553,7 +585,7 @@ export type ReapTick = Message<"conveyor.v1.ReapTick"> & {
  * Use `create(ReapTickSchema)` to create a new message.
  */
 export const ReapTickSchema: GenMessage<ReapTick> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_messages, 18);
+  messageDesc(file_conveyor_v1_messages, 19);
 
 /**
  * GroupSweepTick triggers one firing pass on the group-aggregation sweeper.
@@ -568,5 +600,5 @@ export type GroupSweepTick = Message<"conveyor.v1.GroupSweepTick"> & {
  * Use `create(GroupSweepTickSchema)` to create a new message.
  */
 export const GroupSweepTickSchema: GenMessage<GroupSweepTick> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_messages, 19);
+  messageDesc(file_conveyor_v1_messages, 20);
 

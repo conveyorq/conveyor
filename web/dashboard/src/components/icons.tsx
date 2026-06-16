@@ -108,6 +108,16 @@ export function IconBroker(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+// IconLimits is a speedometer gauge (dispatch rate limits).
+export function IconLimits(props: SVGProps<SVGSVGElement>) {
+  return (
+    <Svg {...props}>
+      <path d="M4 18a8 8 0 1 1 16 0" />
+      <path d="m12 18 4-5" />
+    </Svg>
+  );
+}
+
 // IconExternal is an external-link arrow.
 export function IconExternal(props: SVGProps<SVGSVGElement>) {
   return (

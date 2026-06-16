@@ -41,6 +41,10 @@ Key groups:
   `cluster.tls`, and `cluster.kubernetes` (namespace + pod labels).
 - `engine.lease_ttl`, `reap_interval`, `lease_batch_max`, `promote_interval`,
   `passivate_after`, `default_max_retry`, `shutdown_timeout`.
+- `engine.rate_limit_enabled` (master switch, default `true`),
+  `engine.rate_limit_rate_per_sec` and `engine.rate_limit_burst` (the global
+  default per-queue dispatch limit; per-queue overrides are set at runtime — see
+  [rate limiting](rate-limiting.md)).
 - `metrics.listen` (default `:9464`; empty disables the endpoint).
 - `otel.endpoint` (OTLP push for metrics + traces), `otel.service_name`.
 - `log.level`, `log.format`.

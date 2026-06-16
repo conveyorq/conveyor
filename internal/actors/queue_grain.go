@@ -7,9 +7,11 @@ package actors
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 
 	goakt "github.com/tochemey/goakt/v4/actor"
+	"golang.org/x/time/rate"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
@@ -64,6 +66,16 @@ type QueueGrain struct {
 	gateways []*gatewayCredits
 	// nextGateway is the round-robin cursor into gateways.
 	nextGateway int
+	// limiter caps how fast this queue dispatches, or nil when the queue is
+	// unlimited. It is the queue's effective rate limit — its own override or
+	// the server's global default — rebuilt on activation and on change. The
+	// bucket is driven by the injected clock, so it is the only live token
+	// state and never touches the broker on the dispatch path.
+	limiter *rate.Limiter
+	// throttled records whether the limiter last deferred a lease cycle, so the
+	// throttled metric counts episodes rather than every wake-up that finds the
+	// bucket empty.
+	throttled bool
 }
 
 // enforce interface compliance at compile time.
@@ -87,10 +99,58 @@ func (x *QueueGrain) OnActivate(ctx context.Context, props *goakt.GrainProps) er
 	x.leasing = false
 	x.gateways = nil
 	x.nextGateway = 0
+	x.throttled = false
 
-	runtime.Logger().Debug("queue grain activated", "queue", x.queue, "paused", paused)
+	if err := x.loadRateLimit(ctx); err != nil {
+		return err
+	}
+
+	runtime.Logger().Debug("queue grain activated", "queue", x.queue, "paused", paused, "rate_limited", x.limiter != nil)
 
 	return nil
+}
+
+// loadRateLimit rebuilds the queue's effective token bucket: its persisted
+// override if one exists, otherwise the server's global default. It runs only
+// at activation, so the one broker read it makes is never on the dispatch path.
+// A disabled kill-switch skips the read and leaves the queue unlimited. The new
+// bucket starts full, so a queue that passivates and reactivates may burst once
+// more — an accepted consequence of keeping live token state only in the grain.
+func (x *QueueGrain) loadRateLimit(ctx context.Context) error {
+	x.limiter = nil
+
+	settings := x.runtime.Settings()
+	if !settings.RateLimitEnabled {
+		return nil
+	}
+
+	override, ok, err := x.runtime.Broker().QueueRateLimit(ctx, x.queue)
+	if err != nil {
+		return fmt.Errorf("queue grain %s: loading rate limit: %w", x.queue, err)
+	}
+
+	if ok {
+		x.limiter = buildLimiter(override.RatePerSec, override.Burst)
+
+		return nil
+	}
+
+	x.limiter = buildLimiter(settings.RateLimitRatePerSec, settings.RateLimitBurst)
+
+	return nil
+}
+
+// buildLimiter returns a full token bucket for the given rate and burst, or nil
+// when the limit is unset or invalid (a non-positive or non-finite rate, or a
+// burst below one, means the queue is unlimited). The finite guard defends the
+// dispatch path against a NaN/Inf value reaching rate.NewLimiter, whatever its
+// source.
+func buildLimiter(ratePerSec float64, burst int) *rate.Limiter {
+	if ratePerSec <= 0 || math.IsNaN(ratePerSec) || math.IsInf(ratePerSec, 0) || burst < 1 {
+		return nil
+	}
+
+	return rate.NewLimiter(rate.Limit(ratePerSec), burst)
 }
 
 // OnReceive dispatches on the wake-up hints and control messages of §8.1.
@@ -153,6 +213,11 @@ func (x *QueueGrain) OnReceive(ctx *goakt.GrainContext) {
 	case *conveyorv1.ResumeQueue:
 		x.setPaused(ctx, false)
 		x.maybeLease(ctx)
+
+	case *conveyorv1.RateLimitChanged:
+		x.applyRateLimitChange(message)
+		x.maybeLease(ctx)
+		ctx.NoErr()
 
 	case *goakt.StatusFailure:
 		// A piped lease cycle failed outside the task function (timeout,
@@ -256,6 +321,29 @@ func (x *QueueGrain) maybeLease(ctx *goakt.GrainContext) {
 
 	settings := x.runtime.Settings()
 	limit := min(credits, settings.LeaseBatchMax)
+
+	// Rate limit: lease only as many tasks as the bucket can spend now, so the
+	// excess stays pending in the broker rather than idling under a lease. A
+	// fully drained bucket defers the whole cycle; the next wake-up — a
+	// completion, a returned credit, an enqueue, or the reaper's pending sweep —
+	// retries once tokens have refilled. The bucket is consumed in
+	// finishLeaseCycle for the tasks actually dispatched.
+	if x.limiter != nil {
+		available := int(x.limiter.TokensAt(x.runtime.Clock().Now()))
+
+		if available <= 0 {
+			if !x.throttled {
+				x.throttled = true
+				x.runtime.Metrics().RateLimited(ctx.Context(), x.queue)
+			}
+
+			return
+		}
+
+		x.throttled = false
+		limit = min(limit, available)
+	}
+
 	leaseID := x.runtime.NewID()
 	expiresAt := x.runtime.Clock().Now().Add(settings.LeaseTTL)
 	taskLog := x.runtime.Broker()
@@ -352,12 +440,21 @@ func (x *QueueGrain) finishLeaseCycle(ctx *goakt.GrainContext, message *conveyor
 		x.runtime.Logger().Debug("task dispatched", "queue", x.queue, "task_id", task.GetId(), "gateway", gateway.name)
 	}
 
+	// Spend a token per task actually dispatched. maybeLease capped this cycle
+	// to the bucket's available tokens, so the reservation never waits. Clamp to
+	// the burst: a rate-limit change between this cycle's lease and its
+	// completion can shrink the bucket below the in-flight count, and ReserveN
+	// with n above the burst would consume nothing at all.
+	if dispatched := len(tasks) - len(undeliverable); x.limiter != nil && dispatched > 0 {
+		x.limiter.ReserveN(x.runtime.Clock().Now(), min(dispatched, x.limiter.Burst()))
+	}
+
 	if len(undeliverable) > 0 {
 		x.releaseLeased(ctx, message.GetLeaseId(), undeliverable)
 	}
 
 	// A non-empty batch may mean more work is due; run another cycle.
-	// maybeLease itself guards pause state and remaining credits.
+	// maybeLease itself guards pause state, remaining credits, and rate limit.
 	x.maybeLease(ctx)
 }
 
@@ -430,6 +527,32 @@ func (x *QueueGrain) removeGateway(name string) {
 			return
 		}
 	}
+}
+
+// applyRateLimitChange rebuilds the queue's token bucket from an Admin API
+// change. The new values ride in the message, so the grain never reads the
+// broker on the turn: a positive rate sets the override, while a non-positive
+// rate clears it and reverts the queue to the server's global default. The
+// kill-switch wins — a disabled limiter stays nil.
+func (x *QueueGrain) applyRateLimitChange(message *conveyorv1.RateLimitChanged) {
+	settings := x.runtime.Settings()
+
+	if !settings.RateLimitEnabled {
+		x.limiter = nil
+		x.runtime.Logger().Info("queue rate limit change ignored; rate limiting disabled", "queue", x.queue)
+
+		return
+	}
+
+	ratePerSec, burst := message.GetRatePerSec(), int(message.GetBurst())
+
+	if ratePerSec <= 0 {
+		ratePerSec, burst = settings.RateLimitRatePerSec, settings.RateLimitBurst
+	}
+
+	x.limiter = buildLimiter(ratePerSec, burst)
+	x.throttled = false
+	x.runtime.Logger().Info("queue rate limit changed", "queue", x.queue, "rate_per_sec", ratePerSec, "burst", burst)
 }
 
 // setPaused persists and applies the queue pause flag. The persistence

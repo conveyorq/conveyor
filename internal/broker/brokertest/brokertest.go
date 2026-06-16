@@ -72,6 +72,7 @@ func Run(t *testing.T, factory Factory) {
 		{"RunTaskNow", testRunTaskNow},
 		{"ArchiveTask", testArchiveTask},
 		{"QueuePauseFlag", testQueuePauseFlag},
+		{"QueueRateLimit", testQueueRateLimit},
 		{"QueueStats", testQueueStats},
 		{"CronEntries", testCronEntries},
 		{"ListTasks", testListTasks},
@@ -779,6 +780,64 @@ func testQueuePauseFlag(t *testing.T, b broker.Broker, _ *clock.Fake) {
 
 	if paused, _ = b.QueuePaused(context.Background(), queueName); paused {
 		t.Fatal("resume not persisted")
+	}
+}
+
+func testQueueRateLimit(t *testing.T, b broker.Broker, _ *clock.Fake) {
+	ctx := context.Background()
+
+	if _, ok, err := b.QueueRateLimit(ctx, queueName); err != nil || ok {
+		t.Fatalf("unset queue rate limit = ok %v, err %v; want false, nil", ok, err)
+	}
+
+	if err := b.SetQueueRateLimit(ctx, queueName, 50, 10); err != nil {
+		t.Fatal(err)
+	}
+
+	limit, ok, err := b.QueueRateLimit(ctx, queueName)
+	if err != nil || !ok {
+		t.Fatalf("rate limit not persisted: ok %v, err %v", ok, err)
+	}
+
+	if limit.RatePerSec != 50 || limit.Burst != 10 || limit.Queue != queueName {
+		t.Fatalf("rate limit = %+v; want {%s 50 10}", limit, queueName)
+	}
+
+	// Overwrite replaces in place.
+	if err := b.SetQueueRateLimit(ctx, queueName, 100, 20); err != nil {
+		t.Fatal(err)
+	}
+
+	if limit, _, _ = b.QueueRateLimit(ctx, queueName); limit.RatePerSec != 100 || limit.Burst != 20 {
+		t.Fatalf("overwrite not applied: %+v", limit)
+	}
+
+	// A second queue, then list is ordered by queue name.
+	if err := b.SetQueueRateLimit(ctx, "alpha", 5, 1); err != nil {
+		t.Fatal(err)
+	}
+
+	all, err := b.QueueRateLimits(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(all) != 2 || all[0].Queue != "alpha" || all[1].Queue != queueName {
+		t.Fatalf("list = %+v; want [alpha %s] ordered", all, queueName)
+	}
+
+	// Delete reverts to the default (no override).
+	if err := b.DeleteQueueRateLimit(ctx, queueName); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok, _ := b.QueueRateLimit(ctx, queueName); ok {
+		t.Fatal("delete did not remove the override")
+	}
+
+	// Deleting a missing override is not an error.
+	if err := b.DeleteQueueRateLimit(ctx, "nonexistent"); err != nil {
+		t.Fatalf("delete of missing override: %v", err)
 	}
 }
 

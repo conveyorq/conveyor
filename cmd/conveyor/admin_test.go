@@ -59,6 +59,42 @@ func TestQueuesUsageErrors(t *testing.T) {
 	require.ErrorContains(t, err, `unknown subcommand "drop"`)
 }
 
+func TestRateLimitUsageErrors(t *testing.T) {
+	err := run([]string{"ratelimit"}, &bytes.Buffer{})
+	require.ErrorContains(t, err, "usage: conveyor ratelimit")
+
+	err = run([]string{"ratelimit", "explode"}, &bytes.Buffer{})
+	require.ErrorContains(t, err, `unknown subcommand "explode"`)
+
+	err = run([]string{"ratelimit", "set"}, &bytes.Buffer{})
+	require.ErrorContains(t, err, "exactly one queue name is required")
+}
+
+func TestRateLimitAgainstEmbeddedServer(t *testing.T) {
+	addr := startEmbeddedNode(t)
+
+	var setOut bytes.Buffer
+
+	require.NoError(t, run([]string{"--addr", addr, "ratelimit", "set", "email", "--rate", "50", "--burst", "10"}, &setOut))
+	require.Contains(t, setOut.String(), "queue email limited to 50/s (burst 10)")
+
+	var lsOut bytes.Buffer
+
+	require.NoError(t, run([]string{"--addr", addr, "ratelimit", "ls"}, &lsOut))
+	require.Contains(t, lsOut.String(), "email")
+	require.Contains(t, lsOut.String(), "50")
+
+	var rmOut bytes.Buffer
+
+	require.NoError(t, run([]string{"--addr", addr, "ratelimit", "rm", "email"}, &rmOut))
+	require.Contains(t, rmOut.String(), "queue email rate limit cleared")
+
+	var lsAfter bytes.Buffer
+
+	require.NoError(t, run([]string{"--addr", addr, "ratelimit", "ls"}, &lsAfter))
+	require.NotContains(t, lsAfter.String(), "email")
+}
+
 func TestCronUsageErrors(t *testing.T) {
 	err := run([]string{"cron"}, &bytes.Buffer{})
 	require.ErrorContains(t, err, "usage: conveyor cron")
