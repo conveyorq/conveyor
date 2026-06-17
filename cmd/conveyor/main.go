@@ -14,6 +14,7 @@
 //	enqueue <type> [--queue NAME] [--json PAYLOAD] [--id ID] [--in DUR]
 //	               [--at RFC3339] [--max-retry N] [--priority N]
 //	               [--retention DUR] [--unique DUR] [--unique-key KEY]
+//	               [--encryption-key ID:SECRET]
 //	stats
 //	queues pause|resume <name>
 //	ratelimit set <queue> --rate N [--burst N] | rm <queue> | ls
@@ -24,20 +25,25 @@
 //	cluster info
 //
 // The server address and token come from --addr/--token or the
-// CONVEYOR_ADDR/CONVEYOR_TOKEN environment variables; flags win.
+// CONVEYOR_ADDR/CONVEYOR_TOKEN environment variables; flags win. The
+// enqueue payload-encryption key comes from --encryption-key or
+// CONVEYOR_ENCRYPTION_KEY.
 package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/conveyorq/conveyor/encryption"
 	conveyor "github.com/conveyorq/conveyor/sdk"
 )
 
@@ -51,6 +57,10 @@ const (
 	envAddr = "CONVEYOR_ADDR"
 	// envToken supplies the bearer token.
 	envToken = "CONVEYOR_TOKEN"
+	// envEncryptionKey supplies the AES-256-GCM key used to encrypt
+	// enqueued payloads, in the same "<id>:<base64-secret>" form as
+	// --encryption-key.
+	envEncryptionKey = "CONVEYOR_ENCRYPTION_KEY"
 )
 
 func main() {
@@ -92,9 +102,13 @@ func (c *connection) bearerToken() string {
 	return firstNonEmpty(c.token, os.Getenv(envToken))
 }
 
-// client builds the SDK client for the enqueue-side commands.
-func (c *connection) client() (*conveyor.Client, error) {
-	return conveyor.NewClient(c.baseURL(), conveyor.WithToken(c.bearerToken()))
+// client builds the SDK client for the enqueue-side commands, applying any
+// extra options (e.g. payload encryption) on top of the resolved connection
+// settings.
+func (c *connection) client(extra ...conveyor.Option) (*conveyor.Client, error) {
+	options := append([]conveyor.Option{conveyor.WithToken(c.bearerToken())}, extra...)
+
+	return conveyor.NewClient(c.baseURL(), options...)
 }
 
 // newRootCommand assembles the full conveyor command tree.
@@ -136,16 +150,17 @@ CONVEYOR_ADDR/CONVEYOR_TOKEN environment variables; flags win.`,
 // newEnqueueCommand builds the enqueue command.
 func newEnqueueCommand(conn *connection) *cobra.Command {
 	var (
-		queue     string
-		payload   string
-		taskID    string
-		processIn time.Duration
-		processAt string
-		maxRetry  int
-		priority  int
-		retention time.Duration
-		unique    time.Duration
-		uniqueKey string
+		queue         string
+		payload       string
+		taskID        string
+		processIn     time.Duration
+		processAt     string
+		maxRetry      int
+		priority      int
+		retention     time.Duration
+		unique        time.Duration
+		uniqueKey     string
+		encryptionKey string
 	)
 
 	command := &cobra.Command{
@@ -170,7 +185,12 @@ func newEnqueueCommand(conn *connection) *cobra.Command {
 				return err
 			}
 
-			client, err := conn.client()
+			encryptor, err := buildEncryptor(encryptionKey)
+			if err != nil {
+				return err
+			}
+
+			client, err := conn.client(conveyor.WithEncryption(encryptor))
 			if err != nil {
 				return err
 			}
@@ -197,6 +217,7 @@ func newEnqueueCommand(conn *connection) *cobra.Command {
 	flags.DurationVar(&retention, "retention", 0, "keep the completed task visible for this long")
 	flags.DurationVar(&unique, "unique", 0, "reject duplicates of this task for the given TTL")
 	flags.StringVar(&uniqueKey, "unique-key", "", "explicit uniqueness key (default: type + payload hash)")
+	flags.StringVar(&encryptionKey, "encryption-key", "", `encrypt the payload with AES-256-GCM, as "<id>:<base64-secret>" (default $CONVEYOR_ENCRYPTION_KEY)`)
 
 	return command
 }
@@ -333,6 +354,39 @@ func buildEnqueueOptions(queue, taskID, processAt, uniqueKey string, processIn, 
 	}
 
 	return options, nil
+}
+
+// buildEncryptor resolves the payload-encryption key with flag > environment
+// precedence and builds the built-in AES-256-GCM encryptor from it, so the
+// enqueued payload is sealed before it leaves the CLI. It returns a nil
+// Encryptor — encryption off — when no key is configured.
+//
+// The key is "<id>:<base64-secret>": an id that labels the ciphertext so a
+// worker holding the same id can find the matching secret to decrypt it, and a
+// standard-base64-encoded 32-byte AES-256 secret. The id must not contain a
+// colon.
+func buildEncryptor(key string) (encryption.Encryptor, error) {
+	key = firstNonEmpty(key, os.Getenv(envEncryptionKey))
+	if key == "" {
+		return nil, nil
+	}
+
+	id, encodedSecret, found := strings.Cut(key, ":")
+	if !found || id == "" || encodedSecret == "" {
+		return nil, errors.New(`enqueue: --encryption-key must be "<id>:<base64-secret>"`)
+	}
+
+	secret, err := base64.StdEncoding.DecodeString(encodedSecret)
+	if err != nil {
+		return nil, fmt.Errorf("enqueue: decoding --encryption-key secret: %w", err)
+	}
+
+	encryptor, err := encryption.NewAESGCM(id, encryption.Key{ID: id, Secret: secret})
+	if err != nil {
+		return nil, fmt.Errorf("enqueue: %w", err)
+	}
+
+	return encryptor, nil
 }
 
 // firstNonEmpty returns the first non-empty value, encoding the

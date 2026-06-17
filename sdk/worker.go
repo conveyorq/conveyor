@@ -14,6 +14,7 @@ import (
 
 	"connectrpc.com/connect"
 
+	"github.com/conveyorq/conveyor/encryption"
 	"github.com/conveyorq/conveyor/internal/backoff"
 	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 	"github.com/conveyorq/conveyor/sdk/internal/transport"
@@ -62,6 +63,8 @@ type Worker struct {
 	// minServerVersion is the minimum server version the worker requires,
 	// sent in Hello; empty imposes no requirement.
 	minServerVersion string
+	// encryptor opens encrypted payloads on dispatch; nil expects plaintext.
+	encryptor encryption.Encryptor
 }
 
 // NewWorker builds a Worker for the Conveyor server at baseURL. WithQueues
@@ -100,6 +103,7 @@ func NewWorker(baseURL string, opts ...Option) (*Worker, error) {
 		queues:           settings.queues,
 		concurrency:      settings.concurrency,
 		minServerVersion: settings.minServerVersion,
+		encryptor:        settings.encryptor,
 	}, nil
 }
 
@@ -210,6 +214,7 @@ func (w *Worker) runSession(ctx context.Context, mux *Mux) (bool, error) {
 		cancels:    make(map[string]context.CancelCauseFunc),
 		sessionID:  welcome.GetSessionId(),
 		runContext: ctx,
+		encryptor:  w.encryptor,
 	}
 
 	return true, session.run(welcome.GetHeartbeatInterval().AsDuration())
@@ -235,6 +240,8 @@ type workerSession struct {
 	sessionID string
 	// runContext is the Run context; its cancellation ends the session.
 	runContext context.Context
+	// encryptor opens encrypted payloads on dispatch; nil expects plaintext.
+	encryptor encryption.Encryptor
 }
 
 // run drives the receive loop and the heartbeat until the stream ends.
@@ -355,6 +362,12 @@ func (s *workerSession) execute(ctx context.Context, release func(), envelope *c
 
 	case <-ctx.Done():
 		s.finish(ctx, envelope.GetId(), ctx.Err())
+
+		return
+	}
+
+	if err := s.openEnvelope(ctx, envelope); err != nil {
+		s.finish(ctx, envelope.GetId(), err)
 
 		return
 	}

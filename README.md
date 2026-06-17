@@ -30,6 +30,9 @@ broker, with no Redis and no polling.
 - **SDK middleware** — wrap both sides: decorate enqueues
   (`WithEnqueueMiddleware`) and handlers (`Mux.Use`, `Mux.UseBatch`) for
   logging, metrics, or policy, without touching task code.
+- **End-to-end encryption** — seal task payloads in the SDK/CLI
+  (`WithEncryption`) so the server stores ciphertext only and holds no keys;
+  built-in AES-256-GCM or bring your own KMS/HSM codec.
 - **Cron** — server-persisted schedules that survive restarts and failover,
   pausable at runtime.
 - **Built-in clustering / HA** — multi-node by default; a lost node's work
@@ -221,6 +224,8 @@ a different-origin UI, and `api.grafana_url` for the metrics link. See the
   batch handlers, and tune the firing policy.
 - [Rate limiting](docs/rate-limiting.md) — cap per-queue dispatch rate with a
   global default and live per-queue overrides.
+- [End-to-end encryption](docs/encryption.md) — seal task payloads in the
+  SDK/CLI so the server stores ciphertext only and holds no keys.
 - [Wire protocol](docs/protocol.md) — the normative protocol spec for SDK
   authors building a Conveyor client or worker in another language.
 - [Migrating from asynq](docs/migrate-from-asynq.md) — side-by-side API mapping.

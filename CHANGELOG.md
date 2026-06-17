@@ -12,6 +12,15 @@ in-memory broker, with no Redis and no polling.
 
 ### Added
 
+- **End-to-end payload encryption**: seal task payloads in the SDK/CLI with
+  `conveyor.WithEncryption(...)` so the server stores ciphertext only and holds
+  no keys. Ships the `encryption` package — an `Encryptor` seam with a built-in
+  AES-256-GCM implementation (fresh nonce per call, key-id-framed ciphertext for
+  rotation) and bring-your-own as the extension point. A metadata marker gates
+  decryption, so encrypted and plaintext tasks share a queue; a wrong-key or
+  keyless worker fails the task without running the handler. The CLI gains
+  `conveyor enqueue --encryption-key <id>:<base64-secret>` (or
+  `$CONVEYOR_ENCRYPTION_KEY`). See `docs/encryption.md`.
 - **Group aggregation**: tag tasks with `conveyor.Group(...)` to accumulate them
   by `(queue, group)` and deliver the whole group to a worker as one batch via
   `Mux.HandleBatch`. Fires on size, max-delay, or grace period (server-configured);

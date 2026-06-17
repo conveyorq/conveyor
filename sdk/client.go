@@ -16,6 +16,7 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/conveyorq/conveyor/encryption"
 	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 	"github.com/conveyorq/conveyor/sdk/internal/transport"
 )
@@ -86,6 +87,8 @@ type Client struct {
 	wire *transport.Client
 	// enqueueMiddleware decorates Enqueue, outermost first.
 	enqueueMiddleware []EnqueueMiddlewareFunc
+	// encryptor seals payloads before enqueue; nil leaves them in clear.
+	encryptor encryption.Encryptor
 }
 
 // NewClient builds a Client for the Conveyor server at baseURL, e.g.
@@ -104,6 +107,7 @@ func NewClient(baseURL string, opts ...Option) (*Client, error) {
 	return &Client{
 		wire:              transport.New(baseURL, settings.token),
 		enqueueMiddleware: settings.enqueueMiddleware,
+		encryptor:         settings.encryptor,
 	}, nil
 }
 
@@ -139,13 +143,29 @@ func (c *Client) Enqueue(ctx context.Context, task *Task, opts ...EnqueueOption)
 	// core builds the wire request from the (possibly middleware-adjusted) task
 	// and the resolved options, then commits it. Middleware decorates this.
 	core := func(ctx context.Context, task *Task) (*TaskInfo, error) {
+		payload := task.payload
+		metadata := task.metadata
+
+		// Seal the payload after the unique key was derived over plaintext, so
+		// identical work still collides under Unique while the server only ever
+		// sees ciphertext. An empty payload stays empty.
+		if c.encryptor != nil && len(payload) > 0 {
+			sealed, err := c.encryptor.Encrypt(ctx, payload)
+			if err != nil {
+				return nil, fmt.Errorf("conveyor: encrypting payload: %w", err)
+			}
+
+			payload = sealed
+			metadata = withEncryptionMarker(metadata)
+		}
+
 		request := &conveyorv1.EnqueueRequest{
 			TaskId:      settings.taskID,
 			Queue:       settings.queue,
 			Type:        task.taskType,
-			Payload:     task.payload,
+			Payload:     payload,
 			ContentType: task.contentType,
-			Metadata:    task.metadata,
+			Metadata:    metadata,
 			MaxRetry:    int32(settings.maxRetry),
 			Priority:    int32(settings.priority),
 			UniqueKey:   uniqueKey,

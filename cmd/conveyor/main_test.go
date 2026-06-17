@@ -7,6 +7,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"strings"
 	"testing"
 	"time"
@@ -14,7 +15,12 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/conveyorq/conveyor/embedded"
+	conveyor "github.com/conveyorq/conveyor/sdk"
 )
+
+// testSecret is a deterministic 32-byte AES-256 key for the encryption tests,
+// base64-encoded as the --encryption-key flag expects.
+var testSecret = base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x7}, 32))
 
 // testTimeout bounds the embedded system boot and shutdown in tests.
 const testTimeout = 30 * time.Second
@@ -121,6 +127,125 @@ func TestTasksGetUnknownIDFails(t *testing.T) {
 
 	err = run([]string{"--addr", "http://" + system.Addr(), "tasks", "get", "no-such-task"}, &bytes.Buffer{})
 	require.ErrorContains(t, err, "not found")
+}
+
+func TestBuildEncryptorWithoutKeyIsNil(t *testing.T) {
+	t.Setenv(envEncryptionKey, "")
+
+	encryptor, err := buildEncryptor("")
+	require.NoError(t, err)
+	require.Nil(t, encryptor)
+}
+
+func TestBuildEncryptorFromFlag(t *testing.T) {
+	encryptor, err := buildEncryptor("k1:" + testSecret)
+	require.NoError(t, err)
+	require.NotNil(t, encryptor)
+}
+
+func TestBuildEncryptorFromEnv(t *testing.T) {
+	t.Setenv(envEncryptionKey, "k1:"+testSecret)
+
+	encryptor, err := buildEncryptor("")
+	require.NoError(t, err)
+	require.NotNil(t, encryptor)
+}
+
+func TestBuildEncryptorFlagBeatsEnv(t *testing.T) {
+	t.Setenv(envEncryptionKey, "ignored:"+testSecret)
+
+	encryptor, err := buildEncryptor("k1:" + testSecret)
+	require.NoError(t, err)
+	require.NotNil(t, encryptor)
+}
+
+func TestBuildEncryptorRejectsMalformedKey(t *testing.T) {
+	for name, key := range map[string]string{
+		"no separator": "justthekey",
+		"empty id":     ":" + testSecret,
+		"empty secret": "k1:",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := buildEncryptor(key)
+			require.ErrorContains(t, err, `"<id>:<base64-secret>"`)
+		})
+	}
+}
+
+func TestBuildEncryptorRejectsBadBase64(t *testing.T) {
+	_, err := buildEncryptor("k1:not-base-64!!")
+	require.ErrorContains(t, err, "decoding --encryption-key secret")
+}
+
+func TestBuildEncryptorRejectsWrongLengthSecret(t *testing.T) {
+	short := base64.StdEncoding.EncodeToString([]byte("too-short"))
+
+	_, err := buildEncryptor("k1:" + short)
+	require.ErrorContains(t, err, "secret")
+}
+
+// TestEnqueueWithEncryptionRoundTripsToWorker proves the CLI knob end to end: a
+// task enqueued with --encryption-key is sealed before it leaves the CLI, and a
+// worker holding the same key opens it and sees the original plaintext.
+func TestEnqueueWithEncryptionRoundTripsToWorker(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
+	defer cancel()
+
+	system, err := embedded.Start(ctx, embedded.Config{})
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		stopCtx, stopCancel := context.WithTimeout(context.Background(), testTimeout)
+		defer stopCancel()
+
+		require.NoError(t, system.Stop(stopCtx))
+	})
+
+	addr := "http://" + system.Addr()
+
+	encryptor, err := buildEncryptor("k1:" + testSecret)
+	require.NoError(t, err)
+
+	delivered := make(chan []byte, 1)
+
+	mux := conveyor.NewMux()
+	mux.HandleFunc("secret:task", func(_ context.Context, task *conveyor.Task) error {
+		delivered <- task.Payload()
+
+		return nil
+	})
+
+	worker, err := conveyor.NewWorker(addr,
+		conveyor.WithQueues(map[string]int{"default": 1}),
+		conveyor.WithConcurrency(1),
+		conveyor.WithEncryption(encryptor))
+	require.NoError(t, err)
+
+	runCtx, stopWorker := context.WithCancel(ctx)
+	workerDone := make(chan error, 1)
+
+	go func() { workerDone <- worker.Run(runCtx, mux) }()
+
+	t.Cleanup(func() {
+		stopWorker()
+		<-workerDone
+	})
+
+	err = run([]string{
+		"--addr", addr,
+		"enqueue", "secret:task",
+		"--json", `{"secret":"launch-code"}`,
+		"--encryption-key", "k1:" + testSecret,
+	}, &bytes.Buffer{})
+	require.NoError(t, err)
+
+	select {
+	case payload := <-delivered:
+		require.JSONEq(t, `{"secret":"launch-code"}`, string(payload))
+
+	case <-time.After(testTimeout):
+		t.Fatal("worker did not receive the task")
+	}
 }
 
 func TestFirstNonEmpty(t *testing.T) {

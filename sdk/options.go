@@ -6,6 +6,8 @@ package conveyor
 
 import (
 	"time"
+
+	"github.com/conveyorq/conveyor/encryption"
 )
 
 // Option configures a Client or a Worker.
@@ -25,6 +27,8 @@ type options struct {
 	minServerVersion string
 	// enqueueMiddleware decorates Client.Enqueue, outermost first (clients only).
 	enqueueMiddleware []EnqueueMiddlewareFunc
+	// encryptor encrypts task payloads end to end; nil leaves them in clear.
+	encryptor encryption.Encryptor
 }
 
 // WithToken authenticates with the given bearer token.
@@ -65,6 +69,24 @@ func WithEnqueueMiddleware(middleware ...EnqueueMiddlewareFunc) Option {
 			o.enqueueMiddleware = append(o.enqueueMiddleware, wrap)
 		}
 	}
+}
+
+// WithEncryption encrypts task payloads end to end with enc: a client seals
+// each payload before it is enqueued, and a worker opens it on dispatch, so the
+// server only ever stores and relays ciphertext — it holds no keys. Set the
+// same Encryptor on every client and worker that share a queue. Use
+// encryption.NewAESGCM for the built-in AES-256-GCM scheme, or supply your own
+// Encryptor backed by a KMS, HSM, or custom codec.
+//
+// A nil enc is ignored, leaving encryption off, so callers can pass an
+// optionally-configured Encryptor without a nil check.
+//
+// A worker decrypts only payloads that were sealed by an encrypting client, so
+// encrypted and plaintext tasks may coexist on one queue; a worker that
+// receives an encrypted task without an Encryptor fails the task rather than
+// processing ciphertext.
+func WithEncryption(enc encryption.Encryptor) Option {
+	return func(o *options) { o.encryptor = enc }
 }
 
 // EnqueueOption configures one Enqueue call.

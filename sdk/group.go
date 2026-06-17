@@ -166,6 +166,12 @@ func (s *workerSession) executeBatch(ctx context.Context, release func(), batch 
 
 	tasks := make([]*Task, 0, len(batch.GetTasks()))
 	for _, envelope := range batch.GetTasks() {
+		if err := s.openEnvelope(ctx, envelope); err != nil {
+			s.finishBatch(ctx, batch, err)
+
+			return
+		}
+
 		tasks = append(tasks, newTaskFromEnvelope(envelope))
 	}
 
