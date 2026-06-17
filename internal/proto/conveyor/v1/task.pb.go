@@ -280,7 +280,14 @@ type TaskOptions struct {
 	// within its queue. Members accumulate in the aggregating state and are
 	// delivered to a worker as one batch when the group fires. A group is
 	// single-type: every member shares the task's type.
-	Group         string `protobuf:"bytes,9,opt,name=group,proto3" json:"group,omitempty"`
+	Group string `protobuf:"bytes,9,opt,name=group,proto3" json:"group,omitempty"`
+	// expires_at is the absolute time after which the task must not be
+	// dispatched: a task still waiting (scheduled, pending, or retrying) when
+	// this passes is archived instead of run. It is distinct from deadline,
+	// which cancels a task already running, and from retention, which purges a
+	// task already completed. Unset leaves the task with no expiry. The server
+	// resolves the relative EnqueueRequest.expires_in to this absolute time.
+	ExpiresAt     *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -378,6 +385,13 @@ func (x *TaskOptions) GetGroup() string {
 	return ""
 }
 
+func (x *TaskOptions) GetExpiresAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ExpiresAt
+	}
+	return nil
+}
+
 var File_conveyor_v1_task_proto protoreflect.FileDescriptor
 
 const file_conveyor_v1_task_proto_rawDesc = "" +
@@ -402,7 +416,7 @@ const file_conveyor_v1_task_proto_rawDesc = "" +
 	"\fcompleted_at\x18\f \x01(\v2\x1a.google.protobuf.TimestampR\vcompletedAt\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x9c\x03\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xd7\x03\n" +
 	"\vTaskOptions\x12\x1b\n" +
 	"\tmax_retry\x18\x01 \x01(\x05R\bmaxRetry\x123\n" +
 	"\atimeout\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\atimeout\x126\n" +
@@ -415,8 +429,10 @@ const file_conveyor_v1_task_proto_rawDesc = "" +
 	"unique_ttl\x18\x06 \x01(\v2\x19.google.protobuf.DurationR\tuniqueTtl\x127\n" +
 	"\tretention\x18\a \x01(\v2\x19.google.protobuf.DurationR\tretention\x12\x1a\n" +
 	"\bpriority\x18\b \x01(\x05R\bpriority\x12\x14\n" +
-	"\x05group\x18\t \x01(\tR\x05groupJ\x04\b\n" +
-	"\x10\x10*\xee\x01\n" +
+	"\x05group\x18\t \x01(\tR\x05group\x129\n" +
+	"\n" +
+	"expires_at\x18\n" +
+	" \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAtJ\x04\b\v\x10\x10*\xee\x01\n" +
 	"\tTaskState\x12\x1a\n" +
 	"\x16TASK_STATE_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14TASK_STATE_SCHEDULED\x10\x01\x12\x16\n" +
@@ -462,11 +478,12 @@ var file_conveyor_v1_task_proto_depIdxs = []int32{
 	4,  // 7: conveyor.v1.TaskOptions.process_at:type_name -> google.protobuf.Timestamp
 	5,  // 8: conveyor.v1.TaskOptions.unique_ttl:type_name -> google.protobuf.Duration
 	5,  // 9: conveyor.v1.TaskOptions.retention:type_name -> google.protobuf.Duration
-	10, // [10:10] is the sub-list for method output_type
-	10, // [10:10] is the sub-list for method input_type
-	10, // [10:10] is the sub-list for extension type_name
-	10, // [10:10] is the sub-list for extension extendee
-	0,  // [0:10] is the sub-list for field type_name
+	4,  // 10: conveyor.v1.TaskOptions.expires_at:type_name -> google.protobuf.Timestamp
+	11, // [11:11] is the sub-list for method output_type
+	11, // [11:11] is the sub-list for method input_type
+	11, // [11:11] is the sub-list for extension type_name
+	11, // [11:11] is the sub-list for extension extendee
+	0,  // [0:11] is the sub-list for field type_name
 }
 
 func init() { file_conveyor_v1_task_proto_init() }

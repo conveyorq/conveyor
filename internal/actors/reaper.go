@@ -101,6 +101,10 @@ func (r *Reaper) maintain(ctx *goakt.ReceiveContext) {
 		r.runtime.Logger().Warn("purging completed tasks failed", "error", err)
 	}
 
+	if _, err = taskLog.ArchiveExpired(goCtx, limit); err != nil {
+		r.runtime.Logger().Warn("archiving expired tasks failed", "error", err)
+	}
+
 	pending, err := taskLog.PendingCount(goCtx)
 	if err != nil {
 		// Do not report this error via ctx.Err: the reaper runs under the

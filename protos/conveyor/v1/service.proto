@@ -97,6 +97,13 @@ message EnqueueRequest {
   // within its queue: members accumulate and are delivered to a worker as one
   // batch when the group fires. Mutually exclusive with process_at/process_in.
   string group = 16;
+  // expires_in and expires_at are mutually exclusive forms of a pre-dispatch
+  // TTL: a task not yet dispatched when its expiry passes is archived instead
+  // of run. expires_in is relative to enqueue time; the server resolves it to
+  // the absolute expires_at it stores. This is distinct from deadline (which
+  // cancels a running task) and retention (which purges a completed one).
+  google.protobuf.Duration expires_in = 17;
+  google.protobuf.Timestamp expires_at = 18;
 }
 
 message EnqueueResponse {

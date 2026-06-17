@@ -56,6 +56,7 @@ const uniqueViolationCode = "23505"
 var leaseQuery = fmt.Sprintf(`WITH due AS (
   SELECT id, priority, process_at FROM conveyor_tasks
   WHERE queue = $1 AND state IN (%d, %d) AND process_at <= $4
+    AND (expires_at IS NULL OR expires_at > $4)
   ORDER BY priority DESC, process_at, id
   LIMIT $2
   FOR UPDATE SKIP LOCKED
@@ -107,8 +108,8 @@ RETURNING t.queue`,
 const insertTaskQuery = `INSERT INTO conveyor_tasks (
   id, queue, type, state, priority, payload, unique_key, unique_expires_at,
   process_at, deadline, max_retry, retried, last_error, retention,
-  enqueued_at, updated_at, group_key
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+  enqueued_at, updated_at, group_key, expires_at
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 ON CONFLICT (id) DO NOTHING`
 
 // releaseLapsedUniqueQuery frees a unique-key claim whose TTL has lapsed
@@ -189,6 +190,22 @@ var purgeCompletedQuery = fmt.Sprintf(`WITH expired AS (
   FOR UPDATE SKIP LOCKED
 )
 DELETE FROM conveyor_tasks t USING expired WHERE t.id = expired.id`, stateCompleted)
+
+// archiveExpiredQuery dead-letters still-waiting tasks (scheduled, pending, or
+// retry) whose pre-dispatch expiry lapsed, so a task never dispatched in time
+// is archived rather than run.
+var archiveExpiredQuery = fmt.Sprintf(`WITH expired AS (
+  SELECT id FROM conveyor_tasks
+  WHERE state IN (%d, %d, %d) AND expires_at IS NOT NULL AND expires_at <= $1
+  ORDER BY expires_at
+  LIMIT $2
+  FOR UPDATE SKIP LOCKED
+)
+UPDATE conveyor_tasks t
+SET state = %d, last_error = $3, completed_at = $1,
+    lease_id = NULL, lease_expires_at = NULL, updated_at = $1
+FROM expired WHERE t.id = expired.id`,
+	stateScheduled, statePending, stateRetry, stateArchived)
 
 // Broker is the Postgres broker.Broker implementation.
 type Broker struct {
@@ -274,6 +291,7 @@ func (b *Broker) Enqueue(ctx context.Context, task *conveyorv1.TaskEnvelope) err
 		payload, uniqueKey, uniqueExpiresAt, processAt, protoTime(options.GetDeadline()),
 		options.GetMaxRetry(), task.GetRetried(), task.GetLastError(),
 		pgInterval(options.GetRetention().AsDuration()), enqueuedAt, now, group,
+		protoTime(options.GetExpiresAt()),
 	}
 
 	if uniqueKey == nil {
@@ -579,6 +597,20 @@ func (b *Broker) PurgeCompleted(ctx context.Context, limit int) (int, error) {
 	tag, err := b.pool.Exec(ctx, purgeCompletedQuery, now, limit)
 	if err != nil {
 		return 0, fmt.Errorf("postgres: purge completed: %w", err)
+	}
+
+	return int(tag.RowsAffected()), nil
+}
+
+// ArchiveExpired dead-letters still-waiting tasks past their expiry; see broker.Broker.
+func (b *Broker) ArchiveExpired(ctx context.Context, limit int) (int, error) {
+	if limit <= 0 {
+		return 0, nil
+	}
+
+	tag, err := b.pool.Exec(ctx, archiveExpiredQuery, b.clock.Now(), limit, broker.TaskExpiredMessage)
+	if err != nil {
+		return 0, fmt.Errorf("postgres: archive expired tasks: %w", err)
 	}
 
 	return int(tag.RowsAffected()), nil

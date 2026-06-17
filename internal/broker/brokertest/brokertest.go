@@ -64,6 +64,7 @@ func Run(t *testing.T, factory Factory) {
 		{"ReapArchivesExhaustedRetries", testReapArchivesExhaustedRetries},
 		{"PromoteScheduled", testPromoteScheduled},
 		{"PurgeCompletedHonorsRetention", testPurgeCompletedHonorsRetention},
+		{"ExpiredTaskNotLeasedAndArchived", testExpiredTaskNotLeasedAndArchived},
 		{"PendingCount", testPendingCount},
 		{"UniqueTasks", testUniqueTasks},
 		{"UniqueKeyTTLLapses", testUniqueKeyTTLLapses},
@@ -106,6 +107,14 @@ func withPriority(priority int32) taskOption {
 func withProcessAt(processAt time.Time) taskOption {
 	return func(task *conveyorv1.TaskEnvelope) {
 		task.Options.ProcessAt = timestamppb.New(processAt)
+	}
+}
+
+// withExpiresAt sets the pre-dispatch expiry: a task still waiting past this
+// time is archived instead of leased.
+func withExpiresAt(expiresAt time.Time) taskOption {
+	return func(task *conveyorv1.TaskEnvelope) {
+		task.Options.ExpiresAt = timestamppb.New(expiresAt)
 	}
 }
 
@@ -613,6 +622,51 @@ func testPurgeCompletedHonorsRetention(t *testing.T, b broker.Broker, fake *cloc
 
 	if _, _, err := b.GetTask(context.Background(), "task-002"); !errors.Is(err, broker.ErrTaskNotFound) {
 		t.Fatalf("purged task still present: %v", err)
+	}
+}
+
+// testExpiredTaskNotLeasedAndArchived proves the pre-dispatch TTL: a task is
+// leasable before its expiry, is never leased after it, and the sweep archives
+// the lapsed task rather than running it.
+func testExpiredTaskNotLeasedAndArchived(t *testing.T, b broker.Broker, fake *clock.Fake) {
+	mustEnqueue(t, b, newTask("task-001", withExpiresAt(start.Add(time.Hour))))
+
+	// Before expiry the task is due and leasable.
+	leased := mustLease(t, b, queueName, batchLimit, "lease-early")
+	if got := leasedIDs(leased); len(got) != 1 || got[0] != "task-001" {
+		t.Fatalf("before expiry leased %v, want [task-001]", got)
+	}
+
+	if err := b.Release(context.Background(), "task-001", "lease-early"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Past the expiry the task must not be leased.
+	fake.Advance(2 * time.Hour)
+
+	if leased = mustLease(t, b, queueName, batchLimit, "lease-late"); len(leased) != 0 {
+		t.Fatalf("expired task was leased: %v", leasedIDs(leased))
+	}
+
+	// The sweep archives the lapsed task instead of running it.
+	archived, err := b.ArchiveExpired(context.Background(), batchLimit)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if archived != 1 {
+		t.Fatalf("archived %d expired tasks, want 1", archived)
+	}
+
+	mustState(t, b, "task-001", conveyorv1.TaskState_TASK_STATE_ARCHIVED)
+
+	stored, _, err := b.GetTask(context.Background(), "task-001")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if stored.GetLastError() != broker.TaskExpiredMessage {
+		t.Fatalf("last error = %q, want %q", stored.GetLastError(), broker.TaskExpiredMessage)
 	}
 }
 

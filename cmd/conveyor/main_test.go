@@ -53,6 +53,11 @@ func TestEnqueueRejectsBadAtTimestamp(t *testing.T) {
 	require.ErrorContains(t, err, "parsing --at")
 }
 
+func TestEnqueueRejectsBadExpiresAtTimestamp(t *testing.T) {
+	err := run([]string{"enqueue", "email:welcome", "--expires-at", "soon"}, &bytes.Buffer{})
+	require.ErrorContains(t, err, "parsing --expires-at")
+}
+
 func TestTasksRequiresSubcommand(t *testing.T) {
 	err := run([]string{"tasks"}, &bytes.Buffer{})
 	require.ErrorContains(t, err, "a subcommand is required")

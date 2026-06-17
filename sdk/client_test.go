@@ -41,6 +41,10 @@ func TestClientEnqueueValidation(t *testing.T) {
 		ProcessAt(clock.System().Now().Add(time.Hour)), ProcessIn(time.Hour))
 	require.ErrorContains(t, err, "mutually exclusive")
 
+	_, err = client.Enqueue(ctx, NewTask("test:ok", JSON("x")),
+		ExpiresAt(clock.System().Now().Add(time.Hour)), ExpiresIn(time.Hour))
+	require.ErrorContains(t, err, "ExpiresAt and ExpiresIn are mutually exclusive")
+
 	_, err = client.GetTask(ctx, "")
 	require.ErrorContains(t, err, "task id is required")
 }

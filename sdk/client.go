@@ -135,6 +135,10 @@ func (c *Client) Enqueue(ctx context.Context, task *Task, opts ...EnqueueOption)
 		return nil, errors.New("conveyor: ProcessAt and ProcessIn are mutually exclusive")
 	}
 
+	if !settings.expiresAt.IsZero() && settings.expiresIn > 0 {
+		return nil, errors.New("conveyor: ExpiresAt and ExpiresIn are mutually exclusive")
+	}
+
 	uniqueKey := settings.uniqueKey
 	if uniqueKey == "" && settings.uniqueTTL > 0 {
 		uniqueKey = derivedUniqueKey(task.taskType, task.payload)
@@ -186,6 +190,14 @@ func (c *Client) Enqueue(ctx context.Context, task *Task, opts ...EnqueueOption)
 
 		if settings.processIn > 0 {
 			request.ProcessIn = durationpb.New(settings.processIn)
+		}
+
+		if !settings.expiresAt.IsZero() {
+			request.ExpiresAt = timestamppb.New(settings.expiresAt)
+		}
+
+		if settings.expiresIn > 0 {
+			request.ExpiresIn = durationpb.New(settings.expiresIn)
 		}
 
 		if settings.retention > 0 {

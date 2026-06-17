@@ -21,6 +21,8 @@ broker, with no Redis and no polling.
   per-task **timeouts/deadlines**, per-task **priorities** and weighted queues.
 - **Unique tasks**, **dead-letter/archive**, **retention**, per-queue
   **pause/resume**, and a per-task-type **circuit breaker**.
+- **Expiring tasks** — a pre-dispatch TTL (`ExpiresIn`/`ExpiresAt`): a task not
+  dispatched in time is archived instead of run, for work that goes stale.
 - **Group aggregation** — coalesce many tasks into one batch and process them in
   a single handler call (debounce/digest, or bulk processing); fires on size,
   delay, or grace period.
@@ -226,6 +228,8 @@ a different-origin UI, and `api.grafana_url` for the metrics link. See the
   global default and live per-queue overrides.
 - [End-to-end encryption](docs/encryption.md) — seal task payloads in the
   SDK/CLI so the server stores ciphertext only and holds no keys.
+- [Expiring tasks](docs/expiring-jobs.md) — a pre-dispatch TTL, and how it
+  differs from a deadline and from retention.
 - [Wire protocol](docs/protocol.md) — the normative protocol spec for SDK
   authors building a Conveyor client or worker in another language.
 - [Migrating from asynq](docs/migrate-from-asynq.md) — side-by-side API mapping.

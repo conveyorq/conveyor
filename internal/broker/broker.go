@@ -68,6 +68,11 @@ func EffectiveListLimit(limit int) int {
 // reclaims an expired lease.
 const LeaseExpiredMessage = "lease expired"
 
+// TaskExpiredMessage is recorded as the task's last error when the reaper
+// archives a task whose pre-dispatch expiry (expires_at) lapsed before it was
+// ever dispatched.
+const TaskExpiredMessage = "task expired before dispatch"
+
 // CronEntry is a persisted cron schedule from which the scheduler
 // materializes tasks.
 type CronEntry struct {
@@ -267,6 +272,13 @@ type Broker interface {
 	// has lapsed and releases lapsed unique-key claims. It returns the
 	// number of rows deleted. A non-positive limit purges nothing.
 	PurgeCompleted(ctx context.Context, limit int) (int, error)
+
+	// ArchiveExpired archives up to limit still-waiting tasks (scheduled,
+	// pending, or retry) whose expires_at has passed, so a task that was
+	// never dispatched before its expiry is dead-lettered rather than run.
+	// It returns the number of rows archived. A non-positive limit archives
+	// nothing.
+	ArchiveExpired(ctx context.Context, limit int) (int, error)
 
 	// PendingCount returns, per queue, the number of tasks that are due
 	// for dispatch right now (pending or retry with process_at reached).

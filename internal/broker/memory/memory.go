@@ -36,6 +36,9 @@ type taskRow struct {
 	priority int32
 	// processAt is when the task becomes due.
 	processAt time.Time
+	// expiresAt is the pre-dispatch expiry: a still-waiting task past it is
+	// archived rather than leased. Zero means the task never expires.
+	expiresAt time.Time
 	// retried counts completed retry attempts.
 	retried int32
 	// lastError is the message of the most recent failure.
@@ -142,11 +145,17 @@ func (b *Broker) Enqueue(_ context.Context, task *conveyorv1.TaskEnvelope) error
 		uniqueExpiresAt = now.Add(options.GetUniqueTtl().AsDuration())
 	}
 
+	var expiresAt time.Time
+	if options.GetExpiresAt() != nil {
+		expiresAt = options.GetExpiresAt().AsTime()
+	}
+
 	b.tasks[task.GetId()] = &taskRow{
 		envelope:        proto.Clone(task).(*conveyorv1.TaskEnvelope),
 		state:           state,
 		priority:        options.GetPriority(),
 		processAt:       processAt,
+		expiresAt:       expiresAt,
 		retried:         task.GetRetried(),
 		lastError:       task.GetLastError(),
 		retention:       options.GetRetention().AsDuration(),
@@ -204,7 +213,7 @@ func (b *Broker) Lease(_ context.Context, queue string, limit int, ttl time.Dura
 	var due []*taskRow
 
 	for _, row := range b.tasks {
-		if row.envelope.GetQueue() == queue && dispatchable(row.state) && !row.processAt.After(now) {
+		if row.envelope.GetQueue() == queue && dispatchable(row.state) && !row.processAt.After(now) && !expired(row, now) {
 			due = append(due, row)
 		}
 	}
@@ -585,6 +594,47 @@ func (b *Broker) PurgeCompleted(_ context.Context, limit int) (int, error) {
 	}
 
 	return purged, nil
+}
+
+// expired reports whether the row carries a pre-dispatch expiry that has
+// passed by now. A zero expiry never expires.
+func expired(row *taskRow, now time.Time) bool {
+	return !row.expiresAt.IsZero() && !row.expiresAt.After(now)
+}
+
+// ArchiveExpired dead-letters still-waiting tasks past their expiry; see broker.Broker.
+func (b *Broker) ArchiveExpired(_ context.Context, limit int) (int, error) {
+	if limit <= 0 {
+		return 0, nil
+	}
+
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	now := b.clock.Now()
+	archived := 0
+
+	for _, row := range b.tasks {
+		if archived == limit {
+			break
+		}
+
+		if !dispatchable(row.state) && row.state != conveyorv1.TaskState_TASK_STATE_SCHEDULED {
+			continue
+		}
+
+		if !expired(row, now) {
+			continue
+		}
+
+		row.state = conveyorv1.TaskState_TASK_STATE_ARCHIVED
+		row.lastError = broker.TaskExpiredMessage
+		row.completedAt = now
+		row.leaseID = ""
+		archived++
+	}
+
+	return archived, nil
 }
 
 // PendingCount counts due tasks per queue; see broker.Broker.

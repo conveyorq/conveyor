@@ -89,6 +89,31 @@ func TestEnqueueScheduledStates(t *testing.T) {
 	require.Equal(t, conveyorv1.TaskState_TASK_STATE_SCHEDULED, absolute.Msg.GetTask().GetState())
 }
 
+func TestEnqueueExpiry(t *testing.T) {
+	service := newTestTaskService(t)
+	ctx := context.Background()
+
+	relative, err := service.Enqueue(ctx, connect.NewRequest(&conveyorv1.EnqueueRequest{
+		Type:      "test:expires-relative",
+		ExpiresIn: durationpb.New(time.Hour),
+	}))
+	require.NoError(t, err)
+	require.Equal(t, conveyorv1.TaskState_TASK_STATE_PENDING, relative.Msg.GetTask().GetState())
+
+	_, err = service.Enqueue(ctx, connect.NewRequest(&conveyorv1.EnqueueRequest{
+		Type:      "test:expires-absolute",
+		ExpiresAt: timestamppb.New(clock.System().Now().Add(time.Hour)),
+	}))
+	require.NoError(t, err)
+
+	_, err = service.Enqueue(ctx, connect.NewRequest(&conveyorv1.EnqueueRequest{
+		Type:      "test:expires-both",
+		ExpiresIn: durationpb.New(time.Hour),
+		ExpiresAt: timestamppb.New(clock.System().Now().Add(time.Hour)),
+	}))
+	require.ErrorContains(t, err, "expires_at and expires_in are mutually exclusive")
+}
+
 func TestEnqueueDuplicateUniqueKey(t *testing.T) {
 	service := newTestTaskService(t)
 	ctx := context.Background()

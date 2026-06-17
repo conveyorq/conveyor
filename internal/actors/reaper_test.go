@@ -12,7 +12,9 @@ import (
 	"github.com/stretchr/testify/require"
 	goakt "github.com/tochemey/goakt/v4/actor"
 	goaktlog "github.com/tochemey/goakt/v4/log"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/conveyorq/conveyor/internal/broker"
 	"github.com/conveyorq/conveyor/internal/broker/memory"
 	"github.com/conveyorq/conveyor/internal/clock"
 	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
@@ -53,6 +55,29 @@ func TestReaperReclaimsExpiredLeases(t *testing.T) {
 	envelope, _, err := taskLog.GetTask(ctx, "task-stalled")
 	require.NoError(t, err)
 	require.EqualValues(t, 1, envelope.GetRetried(), "a reclaimed lease counts as one retry")
+}
+
+// TestReaperArchivesExpiredTasks verifies the pre-dispatch TTL end to end: a
+// task whose expiry lapses while it waits is moved to archived by the reaper's
+// sweep, not run. The queue is paused so the only path to a terminal state is
+// the reaper, proving the actor drives it.
+func TestReaperArchivesExpiredTasks(t *testing.T) {
+	const queue = "expiring"
+
+	ctx := context.Background()
+	taskLog := memory.New(clock.System())
+	pauseQueue(t, taskLog, queue)
+	engine := startEngine(t, taskLog)
+
+	task := newTask("task-expiring", queue, "test:expire", 4)
+	task.Options.ExpiresAt = timestamppb.New(clock.System().Now().Add(100 * time.Millisecond))
+	require.NoError(t, taskLog.Enqueue(ctx, task))
+
+	requireTaskState(t, engine, "task-expiring", conveyorv1.TaskState_TASK_STATE_ARCHIVED)
+
+	envelope, _, err := taskLog.GetTask(ctx, "task-expiring")
+	require.NoError(t, err)
+	require.Equal(t, broker.TaskExpiredMessage, envelope.GetLastError())
 }
 
 // TestReaperSweepRecoversLostWakeups verifies the sweep backstop: work

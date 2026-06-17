@@ -12,9 +12,9 @@
 // Commands:
 //
 //	enqueue <type> [--queue NAME] [--json PAYLOAD] [--id ID] [--in DUR]
-//	               [--at RFC3339] [--max-retry N] [--priority N]
-//	               [--retention DUR] [--unique DUR] [--unique-key KEY]
-//	               [--encryption-key ID:SECRET]
+//	               [--at RFC3339] [--expires-in DUR] [--expires-at RFC3339]
+//	               [--max-retry N] [--priority N] [--retention DUR]
+//	               [--unique DUR] [--unique-key KEY] [--encryption-key ID:SECRET]
 //	stats
 //	queues pause|resume <name>
 //	ratelimit set <queue> --rate N [--burst N] | rm <queue> | ls
@@ -155,6 +155,8 @@ func newEnqueueCommand(conn *connection) *cobra.Command {
 		taskID        string
 		processIn     time.Duration
 		processAt     string
+		expiresIn     time.Duration
+		expiresAt     string
 		maxRetry      int
 		priority      int
 		retention     time.Duration
@@ -180,7 +182,7 @@ func newEnqueueCommand(conn *connection) *cobra.Command {
 				return err
 			}
 
-			options, err := buildEnqueueOptions(queue, taskID, processAt, uniqueKey, processIn, retention, unique, maxRetry, priority)
+			options, err := buildEnqueueOptions(queue, taskID, processAt, expiresAt, uniqueKey, processIn, expiresIn, retention, unique, maxRetry, priority)
 			if err != nil {
 				return err
 			}
@@ -212,6 +214,8 @@ func newEnqueueCommand(conn *connection) *cobra.Command {
 	flags.StringVar(&taskID, "id", "", "client-assigned task id for idempotent retries")
 	flags.DurationVar(&processIn, "in", 0, "delay execution by duration, e.g. 5m")
 	flags.StringVar(&processAt, "at", "", "delay execution until an RFC3339 time")
+	flags.DurationVar(&expiresIn, "expires-in", 0, "archive the task if not dispatched within this duration of enqueue")
+	flags.StringVar(&expiresAt, "expires-at", "", "archive the task if not dispatched by this RFC3339 time")
 	flags.IntVar(&maxRetry, "max-retry", 0, "retry budget (server default when 0)")
 	flags.IntVar(&priority, "priority", 0, "dispatch priority 1..9 (server default when 0)")
 	flags.DurationVar(&retention, "retention", 0, "keep the completed task visible for this long")
@@ -309,7 +313,7 @@ func buildTask(taskType, payload string) (*conveyor.Task, error) {
 
 // buildEnqueueOptions maps the enqueue flags to SDK options, leaving
 // server defaults in charge of everything unset.
-func buildEnqueueOptions(queue, taskID, processAt, uniqueKey string, processIn, retention, unique time.Duration, maxRetry, priority int) ([]conveyor.EnqueueOption, error) {
+func buildEnqueueOptions(queue, taskID, processAt, expiresAt, uniqueKey string, processIn, expiresIn, retention, unique time.Duration, maxRetry, priority int) ([]conveyor.EnqueueOption, error) {
 	var options []conveyor.EnqueueOption
 
 	if queue != "" {
@@ -331,6 +335,19 @@ func buildEnqueueOptions(queue, taskID, processAt, uniqueKey string, processIn, 
 		}
 
 		options = append(options, conveyor.ProcessAt(at))
+	}
+
+	if expiresIn > 0 {
+		options = append(options, conveyor.ExpiresIn(expiresIn))
+	}
+
+	if expiresAt != "" {
+		at, err := time.Parse(time.RFC3339, expiresAt)
+		if err != nil {
+			return nil, fmt.Errorf("enqueue: parsing --expires-at: %w", err)
+		}
+
+		options = append(options, conveyor.ExpiresAt(at))
 	}
 
 	if maxRetry > 0 {

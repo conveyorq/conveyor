@@ -226,6 +226,11 @@ func (e *encryptedBroker) PurgeCompleted(ctx context.Context, limit int) (int, e
 	return e.inner.PurgeCompleted(ctx, limit)
 }
 
+// ArchiveExpired delegates to the wrapped broker.
+func (e *encryptedBroker) ArchiveExpired(ctx context.Context, limit int) (int, error) {
+	return e.inner.ArchiveExpired(ctx, limit)
+}
+
 // PendingCount delegates to the wrapped broker.
 func (e *encryptedBroker) PendingCount(ctx context.Context) (map[string]int64, error) {
 	return e.inner.PendingCount(ctx)

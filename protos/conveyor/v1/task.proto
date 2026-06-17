@@ -92,6 +92,14 @@ message TaskOptions {
   // single-type: every member shares the task's type.
   string group = 9;
 
-  // Reserved for v2: rate limits.
-  reserved 10 to 15;
+  // expires_at is the absolute time after which the task must not be
+  // dispatched: a task still waiting (scheduled, pending, or retrying) when
+  // this passes is archived instead of run. It is distinct from deadline,
+  // which cancels a task already running, and from retention, which purges a
+  // task already completed. Unset leaves the task with no expiry. The server
+  // resolves the relative EnqueueRequest.expires_in to this absolute time.
+  google.protobuf.Timestamp expires_at = 10;
+
+  // Reserved for future options.
+  reserved 11 to 15;
 }

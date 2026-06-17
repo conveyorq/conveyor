@@ -12,6 +12,13 @@ in-memory broker, with no Redis and no polling.
 
 ### Added
 
+- **Expiring tasks (pre-dispatch TTL)**: a task that must not run if it was not
+  dispatched in time. Set `conveyor.ExpiresIn(d)` or `conveyor.ExpiresAt(t)`
+  (or the CLI `--expires-in`/`--expires-at` flags) and a task still waiting past
+  its expiry is archived with `task expired before dispatch` instead of run.
+  Distinct from a deadline (which cancels a running task) and retention (which
+  purges a completed one). The lease query skips expired tasks and a reaper
+  sweep archives them. See `docs/expiring-jobs.md`.
 - **End-to-end payload encryption**: seal task payloads in the SDK/CLI with
   `conveyor.WithEncryption(...)` so the server stores ciphertext only and holds
   no keys. Ships the `encryption` package — an `Encryptor` seam with a built-in

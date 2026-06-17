@@ -110,6 +110,12 @@ type enqueueOptions struct {
 	processAt time.Time
 	// processIn delays execution by a duration.
 	processIn time.Duration
+	// expiresAt is the absolute time after which an undispatched task is
+	// archived instead of run.
+	expiresAt time.Time
+	// expiresIn is the duration after enqueue after which an undispatched task
+	// is archived instead of run.
+	expiresIn time.Duration
 	// retention keeps the completed task visible before purge.
 	retention time.Duration
 	// uniqueKey enforces uniqueness among incomplete tasks.
@@ -163,6 +169,23 @@ func ProcessAt(t time.Time) EnqueueOption {
 // ProcessIn delays execution by the given duration.
 func ProcessIn(d time.Duration) EnqueueOption {
 	return func(o *enqueueOptions) { o.processIn = d }
+}
+
+// ExpiresAt drops the task if it has not been dispatched by the given time:
+// a task still waiting then is archived instead of run. Use it for work that
+// loses its value once a moment passes (a one-time code, a timely
+// notification). It is distinct from Deadline, which cancels a task already
+// running, and Retention, which purges a task already completed. Mutually
+// exclusive with ExpiresIn.
+func ExpiresAt(t time.Time) EnqueueOption {
+	return func(o *enqueueOptions) { o.expiresAt = t }
+}
+
+// ExpiresIn drops the task if it has not been dispatched within the given
+// duration of enqueue; it is the relative form of ExpiresAt, resolved against
+// the server clock. Mutually exclusive with ExpiresAt.
+func ExpiresIn(d time.Duration) EnqueueOption {
+	return func(o *enqueueOptions) { o.expiresIn = d }
 }
 
 // Retention keeps the completed task row visible for inspection for the

@@ -175,6 +175,10 @@ func (s *TaskService) envelopeFromRequest(request *conveyorv1.EnqueueRequest) (*
 		return nil, errors.New("process_at and process_in are mutually exclusive")
 	}
 
+	if request.GetExpiresAt().IsValid() && request.GetExpiresIn().IsValid() {
+		return nil, errors.New("expires_at and expires_in are mutually exclusive")
+	}
+
 	if request.GetGroup() != "" && (request.GetProcessAt().IsValid() || request.GetProcessIn().IsValid()) {
 		return nil, errors.New("group and process_at/process_in are mutually exclusive")
 	}
@@ -207,6 +211,16 @@ func (s *TaskService) envelopeFromRequest(request *conveyorv1.EnqueueRequest) (*
 		processAt = timestamppb.New(s.timeSource.Now().Add(request.GetProcessIn().AsDuration()))
 	}
 
+	var expiresAt *timestamppb.Timestamp
+
+	switch {
+	case request.GetExpiresAt().IsValid():
+		expiresAt = request.GetExpiresAt()
+
+	case request.GetExpiresIn().IsValid():
+		expiresAt = timestamppb.New(s.timeSource.Now().Add(request.GetExpiresIn().AsDuration()))
+	}
+
 	return &conveyorv1.TaskEnvelope{
 		Id:          request.GetTaskId(),
 		Queue:       queue,
@@ -225,6 +239,7 @@ func (s *TaskService) envelopeFromRequest(request *conveyorv1.EnqueueRequest) (*
 			Retention: request.GetRetention(),
 			Priority:  priority,
 			Group:     request.GetGroup(),
+			ExpiresAt: expiresAt,
 		},
 	}, nil
 }
