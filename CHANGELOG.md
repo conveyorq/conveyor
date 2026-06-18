@@ -74,6 +74,17 @@ in-memory broker, with no Redis and no polling.
   embedded (the whole server in-process).
 - **Go SDK** free of protobuf and GoAkt types, a **CLI** (`conveyor`), and a
   ConnectRPC wire protocol intended as the public contract.
+- **TypeScript SDK** (`sdks/typescript`, npm `@conveyorq/conveyor`): a producer
+  `Client` and a `Worker` implementing the full session protocol (push-based
+  dispatch, heartbeats, full-jitter reconnect, graceful drain), `Mux` routing
+  with batch handlers and middleware, JSON/binary/text codecs, and AES-256-GCM
+  end-to-end encryption byte-compatible with the Go SDK. ESM, Node 20+.
+- **Python SDK** (`sdks/python`, PyPI `conveyorq`): an asyncio-native `Client`
+  and `Worker` — plus synchronous `SyncClient`/`SyncWorker` wrappers over the
+  same core — with `Mux` routing (batch handlers and middleware), JSON/binary/text
+  codecs, and AES-256-GCM encryption byte-compatible with the Go SDK. Full type
+  hints (`py.typed`), Python 3.9+. A task enqueued from any SDK runs on a worker
+  written in any other.
 - **Operations dashboard** embedded in `conveyord`: queues, tasks (filter,
   pagination, detail), cron, and a worker-topology view, with mutations
   (run/cancel/delete, pause/resume, cron edit), live auto-refresh, light/dark
@@ -88,6 +99,10 @@ in-memory broker, with no Redis and no polling.
 
 ### Changed
 
+- **Go SDK relocated** from `sdk/` to `sdks/go/`, so all three SDKs live under
+  `sdks/<language>/`. The import path is now
+  `github.com/conveyorq/conveyor/sdks/go` (the package name is unchanged:
+  `conveyor`). Done before the first tag, so no released version is affected.
 - **Deploys are free**: a worker draining on shutdown (SIGTERM) now hands its
   in-flight tasks back with no retry penalty and no backoff — they become due
   immediately on another worker instead of consuming a retry. The drain-induced

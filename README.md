@@ -138,6 +138,26 @@ Or from the command line:
 go run ./cmd/conveyor enqueue email:welcome --queue critical --json '{"user_id":42}' --in 5m
 ```
 
+## SDKs
+
+One wire protocol, three SDKs — a task enqueued from any of them runs on a
+worker written in any other.
+
+- **Go** — `import conveyor "github.com/conveyorq/conveyor/sdks/go"` (the worker
+  and enqueue examples above). The reference implementation.
+- **TypeScript** — [`sdks/typescript`](sdks/typescript), npm package
+  `@conveyorq/conveyor`, Node 20+.
+- **Python** — [`sdks/python`](sdks/python), PyPI package `conveyorq`,
+  Python 3.9+, with both async and synchronous APIs.
+
+The TypeScript and Python SDKs match the Go SDK feature-for-feature: a producer
+client, a worker runtime (push-based dispatch, heartbeats, graceful drain),
+JSON/binary codecs, and AES-256-GCM end-to-end encryption that is byte-compatible
+across all three. The npm and PyPI packages publish with the `v1.1.0` release;
+until then, install from the in-repo source (see each SDK's README). The wire
+contract that any new SDK implements is specified in
+[`docs/protocol.md`](docs/protocol.md).
+
 ## Embedded mode
 
 The whole system inside one process — no server, no infrastructure:
@@ -232,6 +252,10 @@ a different-origin UI, and `api.grafana_url` for the metrics link. See the
   differs from a deadline and from retention.
 - [Wire protocol](docs/protocol.md) — the normative protocol spec for SDK
   authors building a Conveyor client or worker in another language.
+- [TypeScript SDK](sdks/typescript/README.md) — enqueue and process tasks from
+  Node (the `@conveyorq/conveyor` npm package).
+- [Python SDK](sdks/python/README.md) — async and sync clients and workers, with
+  a "Conveyor for Celery/RQ users" intro (the `conveyorq` PyPI package).
 - [Migrating from asynq](docs/migrate-from-asynq.md) — side-by-side API mapping.
 - [Migrating from River](docs/migrate-from-river.md) — side-by-side API mapping,
   and the one trade-off to decide first (transactional enqueue).
