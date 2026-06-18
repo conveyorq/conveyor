@@ -1,0 +1,16 @@
+version: v2
+# Python SDK protobuf + gRPC stubs, generated into sdks/python/src/conveyorq/gen
+# and committed so the SDK install never needs buf. The plugin versions track the
+# protobuf-29 line so the generated gencode matches the SDK's protobuf>=5.29,<6
+# runtime (a newer plugin pins gencode that the supported runtime cannot load).
+# `make sdk-py-gen` runs generation, then rewrites the cross-module imports to
+# package-relative form (protoletariat) and makes the gen tree an importable
+# package. Never hand-edit the generated files.
+clean: true
+plugins:
+  - remote: buf.build/protocolbuffers/python:v29.3
+    out: sdks/python/src/conveyorq/gen
+  - remote: buf.build/protocolbuffers/pyi:v29.3
+    out: sdks/python/src/conveyorq/gen
+  - remote: buf.build/grpc/python:v1.67.1
+    out: sdks/python/src/conveyorq/gen

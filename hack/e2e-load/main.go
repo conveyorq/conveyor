@@ -23,7 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	conveyor "github.com/conveyorq/conveyor/sdk"
+	conveyor "github.com/conveyorq/conveyor/sdks/go"
 )
 
 // defaultAddr is the API address used when CONVEYOR_ADDR is unset.

@@ -12,7 +12,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	conveyor "github.com/conveyorq/conveyor/sdk"
+	conveyor "github.com/conveyorq/conveyor/sdks/go"
 	"github.com/conveyorq/conveyor/server"
 )
 

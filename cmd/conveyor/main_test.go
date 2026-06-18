@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/conveyorq/conveyor/embedded"
-	conveyor "github.com/conveyorq/conveyor/sdk"
+	conveyor "github.com/conveyorq/conveyor/sdks/go"
 )
 
 // testSecret is a deterministic 32-byte AES-256 key for the encryption tests,

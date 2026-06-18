@@ -18,7 +18,7 @@ import (
 
 	"github.com/conveyorq/conveyor/encryption"
 	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
-	"github.com/conveyorq/conveyor/sdk/internal/transport"
+	"github.com/conveyorq/conveyor/sdks/go/internal/transport"
 )
 
 // TaskState is the lifecycle state of a task as reported by the server.

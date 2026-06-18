@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/conveyorq/conveyor/internal/dynaport"
-	conveyor "github.com/conveyorq/conveyor/sdk"
+	conveyor "github.com/conveyorq/conveyor/sdks/go"
 )
 
 // e2eTaskCount is the workload size of the worker-kill end-to-end test.

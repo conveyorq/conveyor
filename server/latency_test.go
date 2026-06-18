@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/conveyorq/conveyor/internal/clock"
-	conveyor "github.com/conveyorq/conveyor/sdk"
+	conveyor "github.com/conveyorq/conveyor/sdks/go"
 )
 
 // Latency gate parameters: p99 enqueue-to-handler-start under 50ms at

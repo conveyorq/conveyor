@@ -22,7 +22,7 @@ import (
 	"time"
 
 	"github.com/conveyorq/conveyor/embedded"
-	conveyor "github.com/conveyorq/conveyor/sdk"
+	conveyor "github.com/conveyorq/conveyor/sdks/go"
 )
 
 const taskType = "bench:noop"

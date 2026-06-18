@@ -1,0 +1,25 @@
+{
+  "name": "conveyor-example-email",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Production-shaped email-delivery service built on the Conveyor TypeScript SDK.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "worker": "tsx src/worker.ts",
+    "produce": "tsx src/producer.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@conveyorq/conveyor": "file:../../sdks/typescript"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.3",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3"
+  }
+}

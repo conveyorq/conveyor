@@ -16,7 +16,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	conveyor "github.com/conveyorq/conveyor/sdk"
+	conveyor "github.com/conveyorq/conveyor/sdks/go"
 )
 
 // TestMetricsRecordsExecutionTiming is the end-to-end check that the §13 timing

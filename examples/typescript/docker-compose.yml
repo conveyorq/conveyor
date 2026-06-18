@@ -1,0 +1,56 @@
+# A complete email-delivery stack: Postgres, the Conveyor server, and the
+# TypeScript worker built from this example.
+#
+#   docker compose -f examples/typescript/docker-compose.yml up --build
+#
+# Enqueue work (reusing the worker image):
+#
+#   docker compose -f examples/typescript/docker-compose.yml run --rm worker \
+#     npm run produce -- welcome ada@example.com Ada
+#
+# Auth is disabled for local evaluation only; a real deployment sets
+# CONVEYOR_API__AUTH_TOKENS on the server and CONVEYOR_TOKEN on the worker.
+name: conveyor-email-example
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: conveyor
+      POSTGRES_PASSWORD: conveyor
+      POSTGRES_DB: conveyor
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U conveyor -d conveyor"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+  conveyord:
+    image: ghcr.io/conveyorq/conveyor:edge
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      CONVEYOR_BROKER__DRIVER: postgres
+      CONVEYOR_BROKER__DSN: postgres://conveyor:conveyor@postgres:5432/conveyor?sslmode=disable
+      CONVEYOR_LOG__FORMAT: text
+      CONVEYOR_API__ALLOW_UNAUTHENTICATED: "true"
+    ports:
+      - "8080:8080" # API + health (/healthz, /readyz)
+
+  worker:
+    build:
+      # Build from the repo root so the SDK (a file: dependency) is in context.
+      context: ../..
+      dockerfile: examples/typescript/Dockerfile
+    depends_on:
+      - conveyord
+    environment:
+      # The worker reconnects with backoff, so it tolerates conveyord starting
+      # after it.
+      CONVEYOR_ADDR: http://conveyord:8080
+      WORKER_CONCURRENCY: "20"
+      EMAIL_FAILURE_RATE: "0.15" # simulate a flaky provider to show retries
+      LOG_LEVEL: info
+    # docker stop sends SIGTERM; the worker drains in-flight tasks before exit.
+    stop_grace_period: 30s

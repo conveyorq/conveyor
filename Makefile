@@ -26,6 +26,8 @@ DOCKER_RUN := docker run --rm \
 	$(IMAGE)
 
 DASHBOARD_DIR := web/dashboard
+SDK_TS_DIR    := sdks/typescript
+SDK_PY_DIR    := sdks/python
 
 # License-header tooling. addlicense is fetched on demand with GOFLAGS cleared,
 # so it resolves even when the build runs under -mod=vendor/-mod=readonly. The
@@ -35,7 +37,7 @@ COPYRIGHT_HOLDER   := ConveyorQ
 GO_SOURCES         := $(shell find . -path ./vendor -prune -o -name '*.go' -print)
 ADDLICENSE         := GOFLAGS= $(GO) run github.com/google/addlicense@$(ADDLICENSE_VERSION) -l apache -s -c "$(COPYRIGHT_HOLDER)"
 
-.PHONY: help all image build test lint license-check license-fix licenses proto proto-format proto-lint proto-breaking quickstart chaos e2e e2e-clean e2e-dashboard e2e-demo benchmark helm-lint release clean dashboard dashboard-gen dashboard-test
+.PHONY: help all image build test lint license-check license-fix licenses proto proto-format proto-lint proto-breaking quickstart chaos e2e e2e-clean e2e-dashboard e2e-demo benchmark helm-lint release clean dashboard dashboard-gen dashboard-test sdk-gen sdk-ts-gen sdk-ts-test sdk-py-gen sdk-py-test
 
 help: ## Show available targets
 	@awk 'BEGIN{FS=":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -66,7 +68,7 @@ license-fix: ## Add the Apache-2.0 SPDX header to any Go source file missing it
 
 licenses: ## Print the dependency license report backing docs/licenses.md
 	$(GO) run github.com/google/go-licenses@latest report \
-		./cmd/conveyord ./cmd/conveyor ./sdk/... ./embedded
+		./cmd/conveyord ./cmd/conveyor ./sdks/go/... ./embedded
 
 # Generation goes through the gen/ staging directory: internal/proto is
 # replaced only after buf generate has succeeded, and nothing else under
@@ -138,6 +140,34 @@ dashboard-gen: ## Regenerate the dashboard's TypeScript Connect client from the 
 
 dashboard-test: ## Run the dashboard frontend unit tests (needs Node)
 	cd $(DASHBOARD_DIR) && npm ci && npm test
+
+sdk-ts-gen: ## Regenerate the TypeScript SDK's protobuf from the protos
+	cd $(SDK_TS_DIR) && npm install
+	buf generate --template buf.gen.ts.yaml
+
+sdk-ts-test: ## Run the TypeScript SDK unit tests (needs Node)
+	cd $(SDK_TS_DIR) && npm install && npm test
+
+sdk-gen: sdk-ts-gen sdk-py-gen ## Regenerate both SDKs' protobuf stubs from the protos
+
+# Generation runs buf with the protobuf-29-pinned remote plugins, then rewrites
+# the generated cross-module imports to package-relative form (protoletariat) and
+# restores the gen tree's __init__.py package markers (buf's clean step drops
+# them). Needs Python + uv.
+sdk-py-gen: ## Regenerate the Python SDK's protobuf + gRPC stubs from the protos
+	cd $(SDK_PY_DIR) && { test -d .venv || uv venv .venv; } && uv pip install --python .venv -e ".[dev]"
+	buf generate --template buf.gen.python.yaml
+	$(SDK_PY_DIR)/.venv/bin/python -m protoletariat --in-place \
+		--python-out $(SDK_PY_DIR)/src/conveyorq/gen \
+		protoc --proto-path=protos \
+		conveyor/v1/task.proto conveyor/v1/service.proto conveyor/v1/messages.proto
+	touch $(SDK_PY_DIR)/src/conveyorq/gen/__init__.py \
+		$(SDK_PY_DIR)/src/conveyorq/gen/conveyor/__init__.py \
+		$(SDK_PY_DIR)/src/conveyorq/gen/conveyor/v1/__init__.py
+
+sdk-py-test: ## Run the Python SDK unit tests (needs Python + uv)
+	cd $(SDK_PY_DIR) && { test -d .venv || uv venv .venv; } && uv pip install --python .venv -e ".[dev]" && \
+		.venv/bin/python -m pytest tests -k "not integration"
 
 # Lint the chart and prove it renders with both standalone and clustered
 # value sets. Runs on the host helm (not the tools image).

@@ -16,7 +16,7 @@ import (
 	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 	"github.com/conveyorq/conveyor/internal/proto/conveyor/v1/conveyorv1connect"
 	"github.com/conveyorq/conveyor/internal/wire"
-	conveyor "github.com/conveyorq/conveyor/sdk"
+	conveyor "github.com/conveyorq/conveyor/sdks/go"
 )
 
 // drainStopBudget bounds Stop in the drain test. It is far below the

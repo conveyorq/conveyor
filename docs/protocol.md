@@ -6,7 +6,7 @@
 | Audience        | SDK authors implementing a Conveyor client or worker in any language |
 | Source of truth | `protos/conveyor/v1/*.proto` + this document                         |
 
-This is the contract every Conveyor SDK implements. The Go SDK (`sdk/`) is one
+This is the contract every Conveyor SDK implements. The Go SDK (`sdks/go/`) is one
 conforming implementation; nothing in it is privileged. Where this document and
 the `.proto` files disagree, the `.proto` files win for message *shape* and this
 document wins for *behavior* (ordering, defaults, when frames are sent).

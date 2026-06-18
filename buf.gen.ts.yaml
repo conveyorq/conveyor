@@ -1,0 +1,16 @@
+version: v2
+# TypeScript SDK protobuf + Connect service descriptors, generated into
+# sdks/typescript/src/gen and committed so the SDK build never needs buf.
+# Connect-ES v2 (protoc-gen-es) emits the service descriptors alongside the
+# messages, so no separate connect plugin is needed — the same toolchain the
+# dashboard uses (buf.gen.web.yaml). Refresh with `make sdk-ts-gen`.
+clean: true
+plugins:
+  - local: ./sdks/typescript/node_modules/.bin/protoc-gen-es
+    out: sdks/typescript/src/gen
+    opt:
+      - target=ts
+      # Emit .js import extensions so the generated code resolves under the
+      # SDK's NodeNext module resolution (the dashboard uses a bundler and does
+      # not need this).
+      - import_extension=js

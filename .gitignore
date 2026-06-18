@@ -28,3 +28,23 @@ gen.env
 web/dashboard/node_modules/
 web/dashboard/dist/*
 !web/dashboard/dist/.gitkeep
+
+# Node dependencies and build output anywhere (TS SDK, examples). Unanchored so
+# it matches node_modules/ in every package; package-lock.json stays tracked
+# for reproducible installs.
+node_modules/
+sdks/typescript/dist/
+examples/typescript/**/dist/
+
+# Python SDK and examples: ignore virtualenvs, caches, and build output. The
+# generated stubs under sdks/python/src/conveyorq/gen are committed (regenerate
+# with `make sdk-py-gen`); everything else here is local.
+.venv*/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+sdks/python/build/
+sdks/python/dist/

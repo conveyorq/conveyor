@@ -15,7 +15,7 @@ import (
 	"fmt"
 
 	"github.com/conveyorq/conveyor/internal/dynaport"
-	conveyor "github.com/conveyorq/conveyor/sdk"
+	conveyor "github.com/conveyorq/conveyor/sdks/go"
 	"github.com/conveyorq/conveyor/server"
 )
 

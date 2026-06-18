@@ -44,7 +44,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/conveyorq/conveyor/encryption"
-	conveyor "github.com/conveyorq/conveyor/sdk"
+	conveyor "github.com/conveyorq/conveyor/sdks/go"
 )
 
 // defaultAddr is the server base URL used when neither --addr nor

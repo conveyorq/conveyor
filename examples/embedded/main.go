@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"github.com/conveyorq/conveyor/embedded"
-	conveyor "github.com/conveyorq/conveyor/sdk"
+	conveyor "github.com/conveyorq/conveyor/sdks/go"
 )
 
 // taskCount is how many welcome emails this run enqueues and awaits.

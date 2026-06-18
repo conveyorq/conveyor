@@ -25,7 +25,7 @@ import (
 	"syscall"
 	"time"
 
-	conveyor "github.com/conveyorq/conveyor/sdk"
+	conveyor "github.com/conveyorq/conveyor/sdks/go"
 )
 
 // defaultAddr is the conveyord API address used when CONVEYOR_ADDR is unset.

@@ -15,7 +15,7 @@ import (
 )
 
 // tracerName is the instrumentation scope of worker-side spans.
-const tracerName = "github.com/conveyorq/conveyor/sdk"
+const tracerName = "github.com/conveyorq/conveyor/sdks/go"
 
 // taskPropagator carries the W3C trace context the server stamped into the
 // task metadata. The SDK speaks this format directly rather than the process

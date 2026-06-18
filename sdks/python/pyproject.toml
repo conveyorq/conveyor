@@ -1,0 +1,80 @@
+# Copyright 2026 ConveyorQ
+#
+# SPDX-License-Identifier: Apache-2.0
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "conveyorq"
+version = "0.1.0"
+description = "Python SDK for Conveyor — a durable, distributed task queue"
+readme = "README.md"
+requires-python = ">=3.9"
+license = "Apache-2.0"
+authors = [{ name = "ConveyorQ" }]
+keywords = ["task-queue", "jobs", "worker", "background-jobs", "conveyor"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: Software Development :: Libraries",
+  "Typing :: Typed",
+]
+dependencies = [
+  "grpcio>=1.71",
+  "protobuf>=5.29,<6",
+  "cryptography>=44",
+]
+
+[project.optional-dependencies]
+dev = [
+  "grpcio-tools>=1.71",
+  "protoletariat>=3.3",
+  "pytest>=8",
+  "pytest-asyncio>=0.24",
+  "mypy>=1.13",
+  "ruff>=0.8",
+  "types-protobuf>=5.29",
+]
+
+[project.urls]
+Homepage = "https://github.com/conveyorq/conveyor"
+Repository = "https://github.com/conveyorq/conveyor"
+Documentation = "https://github.com/conveyorq/conveyor/blob/main/sdks/python/README.md"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/conveyorq"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B"]
+ignore = ["E731"]  # assigning the enqueue chain to a lambda mirrors the Go/TS SDKs
+
+[tool.ruff.lint.per-file-ignores]
+"src/conveyorq/gen/**" = ["ALL"]
+
+# Pragmatic, not strict: the gRPC runtime ships no type stubs and the protobuf
+# gencode is dynamically typed, so full strictness would be noise rather than
+# signal. Analysis targets 3.10 (the code still runs on 3.9 via stringized
+# annotations); the generated package is excluded.
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+warn_unused_ignores = false
+exclude = ["src/conveyorq/gen/"]
+
+[[tool.mypy.overrides]]
+module = "conveyorq.gen.*"
+ignore_errors = true
+follow_imports = "skip"
