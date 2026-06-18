@@ -126,12 +126,15 @@ func (a *AESGCM) Encrypt(_ context.Context, plaintext []byte) ([]byte, error) {
 		return nil, fmt.Errorf("encryption: reading nonce: %w", err)
 	}
 
-	// Build the output buffer explicitly as header || nonce so it never aliases
-	// header, which is passed to Seal as additional data; Seal appends the
-	// sealed bytes. Sizing the capacity up front avoids a reallocation.
-	out := make([]byte, 0, len(header)+nonceBytes+len(plaintext)+a.active.Overhead())
-	out = append(out, header...)
-	out = append(out, nonce...)
+	// Build the output as a fresh buffer holding header || nonce, distinct from
+	// header (passed to Seal as additional data, so the destination must not
+	// alias it); Seal appends the sealed bytes. Only the fixed-size prefix is
+	// sized here: folding len(plaintext) into the capacity risks an integer
+	// overflow in the size computation, and Seal grows the buffer in one
+	// allocation regardless.
+	out := make([]byte, len(header)+nonceBytes)
+	copy(out, header)
+	copy(out[len(header):], nonce)
 
 	return a.active.Seal(out, nonce, plaintext, header), nil
 }
