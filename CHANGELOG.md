@@ -57,6 +57,12 @@ in-memory broker, with no Redis and no polling.
 - **At-least-once execution** with crash safety across server nodes and worker
   disconnects: tasks are persisted before dispatch, and lease expiry
   redelivers a dead worker's in-flight tasks.
+- **Free deploys (graceful drain)**: a worker draining on shutdown (SIGTERM)
+  hands its in-flight tasks back with no retry penalty and no backoff — they
+  become due immediately on another worker instead of consuming a retry. The
+  drain-induced cancellation is reported as `RELEASED`, distinct from a genuine
+  failure, deadline, or server cancel (which count as a retry). A crashed worker
+  is still recovered via lease expiry and does count, bounding poison tasks.
 - **Queues**: named queues with weights, per-task priority, and bounded worker
   concurrency.
 - **Task lifecycle**: retries with exponential backoff, delayed/scheduled
@@ -72,14 +78,14 @@ in-memory broker, with no Redis and no polling.
   implementations behind a shared conformance suite.
 - **Four run modes** from one codebase: standalone, cluster, Kubernetes, and
   embedded (the whole server in-process).
-- **Go SDK** free of protobuf and GoAkt types, a **CLI** (`conveyor`), and a
-  ConnectRPC wire protocol intended as the public contract.
-- **TypeScript SDK** (`sdks/typescript`, npm `@conveyorq/conveyor`): a producer
+- **Go SDK** free of protobuf and internal runtime types, a **CLI**
+  (`conveyor`), and a ConnectRPC wire protocol intended as the public contract.
+- **TypeScript SDK** (`sdks/typescript`): a producer
   `Client` and a `Worker` implementing the full session protocol (push-based
   dispatch, heartbeats, full-jitter reconnect, graceful drain), `Mux` routing
   with batch handlers and middleware, JSON/binary/text codecs, and AES-256-GCM
   end-to-end encryption byte-compatible with the Go SDK. ESM, Node 20+.
-- **Python SDK** (`sdks/python`, PyPI `conveyorq`): an asyncio-native `Client`
+- **Python SDK** (`sdks/python`): an asyncio-native `Client`
   and `Worker` — plus synchronous `SyncClient`/`SyncWorker` wrappers over the
   same core — with `Mux` routing (batch handlers and middleware), JSON/binary/text
   codecs, and AES-256-GCM encryption byte-compatible with the Go SDK. Full type
@@ -90,30 +96,9 @@ in-memory broker, with no Redis and no polling.
   (run/cancel/delete, pause/resume, cron edit), live auto-refresh, light/dark
   themes, and host-anywhere portability (configurable CORS).
 - **Observability**: Prometheus `/metrics` (engine counters, timing histograms,
-  health canaries, and GoAkt metrics), OpenTelemetry traces with enqueue→worker
+  health canaries, and runtime metrics), OpenTelemetry traces with enqueue→worker
   propagation and OTLP push export, plus a Grafana dashboard.
 - **Security**: bearer-token auth that fails closed outside `--dev`, mutual TLS
   on cluster remoting, and hardened container `securityContext` defaults.
 - **Deployment**: a multi-arch, cosign-signed image on GHCR, a Helm chart
   (StatefulSet), a Docker Compose quickstart, and a systemd unit.
-
-### Changed
-
-- **Go SDK relocated** from `sdk/` to `sdks/go/`, so all three SDKs live under
-  `sdks/<language>/`. The import path is now
-  `github.com/conveyorq/conveyor/sdks/go` (the package name is unchanged:
-  `conveyor`). Done before the first tag, so no released version is affected.
-- **Deploys are free**: a worker draining on shutdown (SIGTERM) now hands its
-  in-flight tasks back with no retry penalty and no backoff — they become due
-  immediately on another worker instead of consuming a retry. The drain-induced
-  cancellation is reported as `RELEASED`, distinct from a genuine failure,
-  deadline, or server cancel (which still count as a retry). A crashed worker is
-  still recovered via lease expiry and does count, bounding poison tasks.
-
-### Positioning
-
-Verified against asynq, Faktory, and River: Conveyor matches their core
-task-queue features and adds push-based dispatch (no polling), built-in
-clustering/HA, an embeddable mode, and an operations dashboard that goes beyond
-asynqmon's read-only inspection — mutations, a live worker-topology view, and
-host-anywhere hosting.

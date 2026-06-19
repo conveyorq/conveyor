@@ -2,7 +2,6 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# Run the example against the local SDK source:
-#   pip install -e ../../sdks/python
-# or, once published:
-conveyorq>=0.1.0
+# conveyorq is not yet published to PyPI, so install it from the local source.
+# Once it is published, replace this line with: conveyorq>=0.1.0
+-e ../../sdks/python

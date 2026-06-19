@@ -12,16 +12,16 @@ Start a Conveyor server (from the repo root):
 go run ./cmd/conveyord --dev      # standalone, in-memory broker, auth disabled
 ```
 
-Install the SDK and run the worker and producer in two terminals:
+Install the SDK with [uv](https://docs.astral.sh/uv/) and run the worker and
+producer in two terminals:
 
 ```bash
 cd examples/python
-python -m venv .venv && . .venv/bin/activate
-pip install -e ../../sdks/python   # or: pip install conveyorq
+uv venv && uv pip install -e ../../sdks/python
 
-python worker.py                                   # terminal 1
-python client.py welcome ada@example.com Ada       # terminal 2
-python client.py reminder ada@example.com "Pay invoice" 1
+uv run worker.py                                   # terminal 1
+uv run client.py welcome ada@example.com Ada       # terminal 2
+uv run client.py reminder ada@example.com "Pay invoice" 1
 ```
 
 The worker prints each delivery; the producer prints the enqueued task id. Stop

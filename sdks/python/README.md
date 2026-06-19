@@ -5,13 +5,29 @@ a durable, distributed task queue. It speaks the same wire protocol as the Go an
 TypeScript SDKs, so a task enqueued from any of them runs on a worker written in
 any other.
 
-```bash
-pip install conveyorq
-```
-
 Requires Python 3.9+. A worker connects to a running Conveyor server
 (`conveyord`); see the [project README](https://github.com/conveyorq/conveyor)
 to start one.
+
+## Install
+
+`conveyorq` is not yet on PyPI, so install it from source with
+[uv](https://docs.astral.sh/uv/). Pick whichever fits your setup:
+
+```bash
+# Straight from the repository — no clone needed (recommended):
+uv add "conveyorq @ git+https://github.com/conveyorq/conveyor.git#subdirectory=sdks/python"
+
+# Or from a local checkout, so you can edit the SDK and have changes apply live:
+git clone https://github.com/conveyorq/conveyor.git
+uv add --editable ./conveyor/sdks/python
+```
+
+Not using uv? The same git URL works with pip:
+
+```bash
+pip install "git+https://github.com/conveyorq/conveyor.git#subdirectory=sdks/python"
+```
 
 ## Enqueue a task
 

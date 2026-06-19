@@ -11,9 +11,33 @@ on Node (not the browser).
 
 ## Install
 
+`@conveyorq/conveyor` is not yet on npm. Install it from a local checkout of the
+repository — building the SDK once produces the `dist/` that consumers import
+(the package's `prepare` script runs the build automatically on install):
+
 ```sh
-npm install @conveyorq/conveyor
+git clone https://github.com/conveyorq/conveyor.git
+cd conveyor/sdks/typescript
+npm install && npm run build
 ```
+
+Then reference it from your project in one of these ways:
+
+```sh
+# A) file: dependency — add to your package.json and run npm install:
+#    "dependencies": { "@conveyorq/conveyor": "file:../path/to/conveyor/sdks/typescript" }
+
+# B) npm link — best while actively editing the SDK:
+npm link                                   # run in conveyor/sdks/typescript
+npm link @conveyorq/conveyor               # run in your project
+
+# C) tarball — portable, no path coupling:
+npm pack                                   # run in conveyor/sdks/typescript -> conveyorq-conveyor-0.1.0.tgz
+npm install /path/to/conveyorq-conveyor-0.1.0.tgz   # run in your project
+```
+
+> npm git installs can't target a subdirectory, so `npm install github:conveyorq/conveyor`
+> won't work — the SDK lives in `sdks/typescript`, not the repo root.
 
 ## Enqueue (producer)
 

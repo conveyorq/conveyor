@@ -52,8 +52,6 @@ type taskRow struct {
 	startedAt time.Time
 	// completedAt is when the task reached a terminal state.
 	completedAt time.Time
-	// result is the worker-reported result stored at Ack.
-	result []byte
 	// retention keeps the completed row for inspection before purge.
 	retention time.Duration
 	// uniqueKey is the uniqueness claim, empty when unclaimed or lapsed.
@@ -404,8 +402,10 @@ func (b *Broker) ExtendLease(_ context.Context, taskID, leaseID string, ttl time
 	return nil
 }
 
-// Ack completes an active task; see broker.Broker.
-func (b *Broker) Ack(_ context.Context, taskID, leaseID string, result []byte) error {
+// Ack completes an active task; see broker.Broker. The worker-reported result
+// is discarded: the in-memory broker, like the Broker interface, exposes no
+// result-read path.
+func (b *Broker) Ack(_ context.Context, taskID, leaseID string, _ []byte) error {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 
@@ -416,7 +416,6 @@ func (b *Broker) Ack(_ context.Context, taskID, leaseID string, result []byte) e
 
 	row.state = conveyorv1.TaskState_TASK_STATE_COMPLETED
 	row.completedAt = b.clock.Now()
-	row.result = result
 	row.leaseID = ""
 
 	return nil

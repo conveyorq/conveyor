@@ -1,12 +1,25 @@
+<div align="center">
+
 # Conveyor
 
 [![CI](https://img.shields.io/github/actions/workflow/status/conveyorq/conveyor/ci.yml?branch=main&label=build)](https://github.com/conveyorq/conveyor/actions/workflows/ci.yml)
+&nbsp;
 [![Go Reference](https://pkg.go.dev/badge/github.com/conveyorq/conveyor.svg)](https://pkg.go.dev/github.com/conveyorq/conveyor)
+&nbsp;
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-Conveyor is a distributed task processing system for Go: a persistent task
-queue with push-based dispatch, at-least-once execution, retries with
-backoff, scheduling, and priorities — backed by Postgres or an in-memory
-broker, with no Redis and no polling.
+**A distributed, push-based task queue for Go.**
+
+Persistent tasks with at-least-once execution, retries with backoff, scheduling,
+and priorities — backed by Postgres or an in-memory broker, with **no Redis and no polling**.
+
+[Quickstart](#quickstart) · [Writing a worker](#writing-a-worker) · [SDKs](#sdks) · [Documentation](#documentation)
+
+</div>
+
+<p align="center">
+  <img src="docs/architecture.svg" width="940" alt="Conveyor architecture: producers (Client SDK / CLI) enqueue over gRPC into named, prioritized queues held in a multi-node conveyord cluster backed by a durable Postgres or in-memory broker; the cluster pushes queued tasks to the free concurrency slots of connected workers, which acknowledge and heartbeat back.">
+</p>
 
 ## Features
 
@@ -143,33 +156,61 @@ go run ./cmd/conveyor enqueue email:welcome --queue critical --json '{"user_id":
 One wire protocol, three SDKs — a task enqueued from any of them runs on a
 worker written in any other.
 
-- **Go** — `import conveyor "github.com/conveyorq/conveyor/sdks/go"` (the worker
-  and enqueue examples above). The reference implementation.
-- **TypeScript** — [`sdks/typescript`](sdks/typescript), npm package
-  `@conveyorq/conveyor`, Node 20+.
-- **Python** — [`sdks/python`](sdks/python), PyPI package `conveyorq`,
-  Python 3.9+, with both async and synchronous APIs.
+- **Go** — [`sdks/go`](sdks/go/README.md), `import conveyor "github.com/conveyorq/conveyor/sdks/go"`.
+  The reference implementation (the worker and enqueue examples above).
+- **TypeScript** — [`sdks/typescript`](sdks/typescript/README.md), Node 20+.
+- **Python** — [`sdks/python`](sdks/python/README.md), Python 3.9+, with both
+  async and synchronous APIs.
 
 The TypeScript and Python SDKs match the Go SDK feature-for-feature: a producer
 client, a worker runtime (push-based dispatch, heartbeats, graceful drain),
 JSON/binary codecs, and AES-256-GCM end-to-end encryption that is byte-compatible
-across all three. The npm and PyPI packages publish with the `v1.1.0` release;
-until then, install from the in-repo source (see each SDK's README). The wire
-contract that any new SDK implements is specified in
-[`docs/protocol.md`](docs/protocol.md).
+across all three. The SDKs are not yet published to npm or PyPI — install from
+the in-repo source; each SDK's README has the exact commands. The wire contract
+that any new SDK implements is specified in [`docs/protocol.md`](docs/protocol.md).
 
 ## Embedded mode
 
-The whole system inside one process — no server, no infrastructure:
+Run the whole system — broker, server, and dispatch — inside your own Go
+process, with no separate `conveyord` to deploy and no network hop. Your handler
+and enqueue code is identical to a remote deployment.
 
 ```go
 system, _ := embedded.Start(ctx, embedded.Config{Broker: embedded.Memory()})
+defer system.Stop(ctx)
+
 client := system.Client()
 worker := system.Worker(conveyor.WithQueues(map[string]int{"default": 1}), conveyor.WithConcurrency(8))
 ```
 
-See [`examples/embedded`](examples/embedded). Moving to a real cluster is
-swapping the constructors; handler and enqueue code is identical.
+**Use it for:**
+
+- **Tests** — a full-fidelity node in a plain `go test`, with no Docker or
+  external infrastructure.
+- **Single-process apps** — a CLI, an edge/desktop binary, or a small service
+  that wants durable background jobs without operating a separate server.
+- **Local development and demos** — producer, worker, and server in one process
+  (see [`examples/embedded`](examples/embedded)).
+- **A zero-friction start** — adopt Conveyor now; graduating to a cluster later
+  is just swapping `embedded.Start` for `conveyor.NewClient`/`NewWorker` with a
+  URL, leaving handler and enqueue code unchanged.
+
+**Durability vs. availability — read this before production.** Embedded is a
+single process, which has two distinct consequences people often conflate:
+
+- **Durability is your choice of broker.** `embedded.Memory()` keeps nothing
+  across a restart — right for tests and disposable work. `embedded.Postgres(dsn)`
+  gives the same durability as a remote deployment: queued and in-flight work
+  survives a restart.
+- **It is not highly available.** One process is a single point of failure —
+  while it is down, nothing is dispatched. Embedded always runs as a cluster of
+  one on a private loopback port and cannot join or form a multi-node cluster.
+
+So embedded can be **durable** (with Postgres) but never **HA**. For high
+availability — no single point of failure, automatic failover — run the real
+deployment: multiple `conveyord` nodes clustered over a shared Postgres broker,
+where a lost node's work re-activates elsewhere with no task loss. See the
+[operations guide](docs/operations.md).
 
 ## How it works
 
@@ -177,23 +218,8 @@ Conveyor has three moving parts: your **client** enqueues tasks, the
 **server** (`conveyord`) owns them, and your **workers** process them. A
 durable **broker** — Postgres in production, in-memory for dev — is the source
 of truth. Tasks are persisted *before* they're dispatched, so they survive any
-crash.
-
-```
- ┌──────────┐  enqueue   ┌─────────────────────────┐   dispatch ↓  ┌──────────┐
- │  Client  │ ──────────▶│        conveyord        │ ─────────────▶│  Worker  │
- │ (or CLI) │            │  · accepts enqueues     │   results  ↑  │ (handler │
- └──────────┘            │  · pushes work to ready │◀───────────── │  code)   │
-                         │    workers (no polling) │               └──────────┘
-                         │  · retries, backoff,    │
-                         │    scheduling, cron     │
-                         └────────────┬────────────┘
-                                      │ persists before dispatch
-                              ┌───────▼────────┐
-                              │     Broker     │  durable source of truth
-                              │ Postgres / mem │  (tasks survive crashes)
-                              └────────────────┘
-```
+crash. The [architecture diagram](#conveyor) at the top of this README shows
+the whole flow.
 
 **Push, not poll.** The server pushes tasks to workers the instant work
 exists and a worker has free capacity — there's no poll interval to tune and
@@ -240,6 +266,8 @@ a different-origin UI, and `api.grafana_url` for the metrics link. See the
 
 ## Documentation
 
+- [Architecture](docs/architecture.md) — how the system works inside: the actor
+  runtime, queue grains, broker, dispatch, and clustering, for contributors.
 - [Operations guide](docs/operations.md) — deployment modes, configuration,
   scaling, broker sizing, security, observability, and upgrades.
 - [Group aggregation](docs/grouping.md) — how to enqueue grouped tasks, write
@@ -252,10 +280,11 @@ a different-origin UI, and `api.grafana_url` for the metrics link. See the
   differs from a deadline and from retention.
 - [Wire protocol](docs/protocol.md) — the normative protocol spec for SDK
   authors building a Conveyor client or worker in another language.
+- [Go SDK](sdks/go/README.md) — the reference client and worker for Go services.
 - [TypeScript SDK](sdks/typescript/README.md) — enqueue and process tasks from
-  Node (the `@conveyorq/conveyor` npm package).
+  Node.
 - [Python SDK](sdks/python/README.md) — async and sync clients and workers, with
-  a "Conveyor for Celery/RQ users" intro (the `conveyorq` PyPI package).
+  a "Conveyor for Celery/RQ users" intro.
 - [Migrating from asynq](docs/migrate-from-asynq.md) — side-by-side API mapping.
 - [Migrating from River](docs/migrate-from-river.md) — side-by-side API mapping,
   and the one trade-off to decide first (transactional enqueue).
