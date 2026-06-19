@@ -18,7 +18,7 @@ and priorities — backed by Postgres or an in-memory broker, with **no Redis an
 </div>
 
 <p align="center">
-  <img src="docs/architecture.svg" width="940" alt="Conveyor architecture: producers (Client SDK / CLI) enqueue over gRPC into named, prioritized queues held in a multi-node conveyord cluster backed by a durable Postgres or in-memory broker; the cluster pushes queued tasks to the free concurrency slots of connected workers, which acknowledge and heartbeat back.">
+  <img src="docs/architecture.svg" width="100%" alt="Conveyor architecture: producers (Client SDK / CLI) enqueue over gRPC into named, prioritized queues held in a multi-node conveyord cluster backed by a durable Postgres or in-memory broker; the cluster pushes queued tasks to the free concurrency slots of connected workers, which acknowledge and heartbeat back.">
 </p>
 
 ## Features

@@ -2,7 +2,7 @@
 
 |                 |                                                                      |
 |-----------------|----------------------------------------------------------------------|
-| Status          | Normative for protocol **v1** (frozen at the v1.0.0 tag)             |
+| Status          | Normative for the **`conveyor.v1`** protocol namespace; the wire is not yet frozen (pre-1.0) — see §8 |
 | Audience        | SDK authors implementing a Conveyor client or worker in any language |
 | Source of truth | `protos/conveyor/v1/*.proto` + this document                         |
 
@@ -375,6 +375,7 @@ Unary RPCs. All inputs validated server-side; violations return
 | `priority`                  | `0` → default (**4**). Explicit range **1..9** (1 lowest, 9 highest). Out of `0..9` → error.                                             |
 | `retention`                 | OPTIONAL how long to keep the completed row before purge.                                                                                |
 | `group`                     | OPTIONAL aggregation group key (§5.11). The task accumulates as `aggregating` and is batch-delivered when its group fires. **Mutually exclusive** with `process_at`/`process_in`. |
+| `expires_in` / `expires_at` | OPTIONAL pre-dispatch TTL: a task still waiting (scheduled/pending/retry) when it passes is **archived** instead of run. **Mutually exclusive** (both set → error); `expires_in` resolves to `now + expires_in`. Distinct from `deadline` (cancels a *running* task) and `retention` (purges a *completed* one). |
 
 - `EnqueueResponse.task` is a `TaskInfo` reflecting the committed task and its
   initial state (`SCHEDULED` if delayed, else `PENDING`).
@@ -391,7 +392,7 @@ Unary RPCs. All inputs validated server-side; violations return
 `TaskInfo` is the externally visible task view (id, queue, type, `TaskState`,
 priority, retried, max_retry, last_error, timestamps, payload, content_type,
 started_at). `TaskState` values are stable and MUST NOT be renumbered:
-`SCHEDULED, PENDING, ACTIVE, RETRY, COMPLETED, ARCHIVED, CANCELED`.
+`SCHEDULED, PENDING, ACTIVE, RETRY, COMPLETED, ARCHIVED, CANCELED, AGGREGATING`.
 
 ---
 
@@ -411,9 +412,11 @@ Batch actions report per-id outcomes positionally in
 
 ## 8. Versioning & compatibility
 
-- **Protocol version is `v1`** (the proto package `conveyor.v1`). After the
-  v1.0.0 tag, changes are **additive only**: new fields and messages, never
-  renumbered or removed; enum values appended, never repurposed.
+- The protocol namespace is **`conveyor.v1`**. The project is pre-1.0 (current
+  release `v0.1.0`), so the wire is **not yet frozen** — a breaking change
+  remains possible before the 1.0.0 release. From **1.0.0** on, changes within
+  `conveyor.v1` are **additive only**: new fields and messages, never renumbered
+  or removed; enum values appended, never repurposed.
 - The session opens with a **two-way version handshake**:
   - A worker advertises its SDK build in `Hello.sdk_version`. The server enforces
     a **minimum SDK version**: a value that parses as semver and is older than the
@@ -432,8 +435,8 @@ Batch actions report per-id outcomes positionally in
   compatibility), so a newer server can add fields without breaking older SDKs
   and vice versa.
 
-See `COMPATIBILITY.md` (once published) for the SemVer promise covering the Go
-API and this wire protocol, and for the supported version-skew window.
+The release history and compatibility notes are tracked in the
+[changelog](../CHANGELOG.md).
 
 ---
 
@@ -460,41 +463,5 @@ A client (producer) SDK is conformant when it implements `Enqueue`
 (+ optionally `EnqueueBatch`, `GetTask`) with the defaults, limits, and
 idempotency/uniqueness semantics of §6.
 
-The cross-SDK **conformance suite** (Stage 3d) is the executable form of this
-checklist and is the real gate.
-
----
-
-## 10. Gaps found by this audit
-
-These surfaced while writing the spec — exactly what a second SDK is supposed to
-reveal. Items 1 and 2 were **fixed additively** as part of this audit (the wire
-is not yet frozen); items 3–5 are documented behavior with no wire change.
-
-1. **Credit-model wording in the protos was misleading.** *(Fixed.)* `Credit`
-   read as a *worker-driven* model ("opens n free execution slots"); the actual
-   model is **server-managed credits seeded from `Hello.concurrency`** (§5.5) and
-   the Go SDK never sends `Credit`. The `Credit` proto comment now states it is
-   optional and explains the seeded model. Comment-only, backward-compatible.
-
-2. **No version handshake for skew governance.** *(Fixed, additive.)* Added
-   `Hello.min_server_version`, `Welcome.server_version`, and
-   `Welcome.min_sdk_version`. The server now advertises its version and admitted
-   SDK floor, and enforces a worker-requested minimum server version (§8). The
-   Go SDK gained `WithMinServerVersion(...)`. All three fields are new and
-   optional, so older peers are unaffected.
-
-3. **`RELEASED`-on-drain.** *(Fixed.)* The Go SDK previously cancelled in-flight
-   tasks on shutdown so they surfaced as `RETRY` (consuming a retry + backoff),
-   racing the server's on-close lease release. The SDK now tags the
-   drain-induced cancellation distinctly from a deadline or a server `Cancel` and
-   reports `RELEASED`, so a deploy or scale-down hands tasks back penalty-free
-   and deterministically (§5.10). The server also archives an admin-canceled task
-   that races a drain, so a deliberate cancel still wins. No wire change.
-
-4. **`Ping` is defined but never emitted; `Hello.labels` is defined but never
-   populated.** Both are harmless reserved surface. Documented as such (§5.7,
-   §5.2). No change required.
-
-5. **`result` bytes on `Result` are optional and unused by the Go SDK.** Stored
-   only on `SUCCESS`. Documented as OPTIONAL (§5.8). No change required.
+The cross-SDK **conformance suite** is the executable form of this checklist
+and is the real gate.

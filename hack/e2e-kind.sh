@@ -147,14 +147,19 @@ kubectl -n "${NAMESPACE}" port-forward "statefulset/${RELEASE}" 9464:9464 >/dev/
 forward_pid=$!
 sleep 3
 metrics=$(curl -fsS "http://localhost:9464/metrics")
-echo "${metrics}" | grep -q "^conveyor_enqueued_total" || { echo "FAIL: missing conveyor metrics"; exit 1; }
-echo "${metrics}" | grep -q "^actor_" || { echo "FAIL: missing GoAkt actor metrics"; exit 1; }
+# Feed grep from a here-string, not `echo | grep -q`: under `set -o pipefail`,
+# grep -q closing the pipe early on a match makes echo exit with SIGPIPE, which
+# pipefail reports as a failed pipeline — a false negative when the series IS
+# present (and the most likely match, ^actor_, is the first line emitted).
+grep -q "^conveyor_enqueued_total" <<<"${metrics}" || { echo "FAIL: missing conveyor metrics"; exit 1; }
+grep -q "^actor_" <<<"${metrics}" || { echo "FAIL: missing GoAkt actor metrics"; exit 1; }
 
 log "asserting the embedded dashboard is served at the API root"
 kubectl -n "${NAMESPACE}" port-forward "statefulset/${RELEASE}" 18080:8080 >/dev/null 2>&1 &
 dash_forward_pid=$!
 sleep 3
-curl -fsS "http://localhost:18080/" | grep -q 'id="root"' || { echo "FAIL: dashboard not served at /"; exit 1; }
+dashboard=$(curl -fsS "http://localhost:18080/")
+grep -q 'id="root"' <<<"${dashboard}" || { echo "FAIL: dashboard not served at /"; exit 1; }
 kill "${dash_forward_pid}" >/dev/null 2>&1 || true
 
 log "building workload driver image ${LOAD_IMAGE}"
