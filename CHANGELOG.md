@@ -6,6 +6,8 @@ All notable changes to Conveyor are documented here. The format is based on
 
 ## [Unreleased]
 
+## [v0.1.0] - 2026-06-19
+
 First public release — a distributed task queue for Go: a persistent,
 push-based queue with at-least-once execution, backed by Postgres or an
 in-memory broker, with no Redis and no polling.
