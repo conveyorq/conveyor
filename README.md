@@ -268,6 +268,8 @@ a different-origin UI, and `api.grafana_url` for the metrics link. See the
 
 ## Documentation
 
+- [Concepts](docs/concepts.md) — the core vocabulary in plain terms: task,
+  queue, client, server, worker, and broker, and how they fit together. Start here.
 - [Architecture](docs/architecture.md) — how the system works inside: the actor
   runtime, queue grains, broker, dispatch, and clustering, for contributors.
 - [Operations guide](docs/operations.md) — deployment modes, configuration,

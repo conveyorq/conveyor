@@ -1,4 +1,32 @@
 {
   $schema: "https://docs.renovatebot.com/renovate-schema.json",
-  extends: ["config:recommended", ":dependencyDashboardApproval"],
+  extends: [
+    "config:recommended",
+    // Append a "Signed-off-by" trailer to every commit so the DCO check passes.
+    ":gitSignOff",
+    // Use Conventional Commit messages (e.g. "chore(deps): ...") so commitlint passes.
+    ":semanticCommitsEnabled",
+  ],
+
+  // Check once a week, early Wednesday, so updates land in one predictable batch.
+  timezone: "UTC",
+  schedule: ["before 5am on wednesday"],
+
+  // Open a PR for every outdated dependency across all ecosystems Renovate
+  // detects here — Go (go.mod), the npm trees (sdks/typescript, examples/typescript,
+  // web/dashboard), Python (sdks/python/pyproject.toml, examples/python/requirements.txt),
+  // Dockerfiles, GitHub Actions, and the Helm chart. No dependency-dashboard
+  // approval gate and no rate limiting, so nothing is held back.
+  prConcurrentLimit: 0,
+  prHourlyLimit: 0,
+  labels: ["dependencies"],
+
+  // Keep go.mod/go.sum tidy after a Go module update.
+  postUpdateOptions: ["gomodTidy"],
+
+  // Refresh lock files (package-lock.json, go.sum, ...) on the same weekly cadence.
+  lockFileMaintenance: {
+    enabled: true,
+    schedule: ["before 5am on wednesday"],
+  },
 }

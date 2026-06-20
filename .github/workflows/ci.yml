@@ -24,29 +24,40 @@ jobs:
       - uses: dorny/paths-filter@v4
         id: filter
         with:
-          # "build" is true if any code, dependency, proto, or CI definition changed.
+          # "build" is true if core Go code, its dependencies, proto contracts,
+          # or the build/CI toolchain config changed.
           # "deploy" is true if anything that affects the deployed artifact changed.
           filters: |
+            # Go packages compiled into the conveyord/conveyor binaries. The
+            # examples, benchmarks, and Python/TypeScript SDKs live in the same
+            # module but ship in neither binary, so they must not trigger a
+            # build; docs and unrelated tooling are excluded the same way.
+            code: &code
+              - 'cmd/**'
+              - 'internal/**'
+              - 'server/**'
+              - 'embedded/**'
+              - 'encryption/**'
+              - 'sdks/go/**'
             build:
-              - '**/*.go'
+              - *code
               - 'go.mod'
               - 'go.sum'
-              - '**/*.proto'
+              - 'protos/**/*.proto'
               - 'buf.yaml'
               - 'buf.gen.yaml'
               - 'Makefile'
               - '.golangci.yml'
               - '.github/workflows/ci.yml'
             deploy:
-              - '**/*.go'
+              - *code
               - 'go.mod'
               - 'go.sum'
+              - 'web/dashboard/**'
               - 'deploy/**'
               - 'hack/e2e-kind.sh'
               - 'hack/e2e-load.Dockerfile'
               - 'hack/e2e-load/**'
-              - 'web/dashboard/**'
-              - 'Makefile'
               - '.github/workflows/ci.yml'
 
   # Single heavy job: builds, regenerates and verifies protos, lints, runs the

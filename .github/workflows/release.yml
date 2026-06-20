@@ -38,10 +38,47 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Gate image publishing on the contents of the image. A push to main only
+  # rebuilds the :<sha> image when something that actually ends up inside it
+  # changed — Go sources, dependencies, the embedded dashboard, or the
+  # Dockerfile. Docs, examples, the Python/TypeScript SDKs, Helm charts, and
+  # other tooling never alter the binary, so they skip the build entirely.
+  # Version tags ignore this filter and always publish (see `publish`).
+  changes:
+    name: Changes Detection
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.filter.outputs.image }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            image:
+              - 'cmd/**'
+              - 'internal/**'
+              - 'server/**'
+              - 'embedded/**'
+              - 'encryption/**'
+              - 'sdks/go/**'
+              - 'go.mod'
+              - 'go.sum'
+              - 'web/dashboard/**'
+              - 'deploy/docker/Dockerfile'
+              - '.github/workflows/release.yml'
+
   publish:
     name: Build & publish image
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    needs: changes
+    # Always publish on a version tag — a release must produce its image
+    # regardless of which paths the tag points at. On a branch push, build only
+    # when something baked into the image changed.
+    if: startsWith(github.ref, 'refs/tags/v') || needs.changes.outputs.image == 'true'
     steps:
       - uses: actions/checkout@v6
         name: Checkout
