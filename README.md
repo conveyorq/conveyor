@@ -13,8 +13,6 @@
 Persistent tasks with at-least-once execution, retries with backoff, scheduling,
 and priorities — backed by Postgres or an in-memory broker, with **no Redis and no polling**.
 
-[Quickstart](#quickstart) · [Writing a worker](#writing-a-worker) · [SDKs](#sdks) · [Documentation](#documentation)
-
 </div>
 
 <p align="center">
@@ -22,6 +20,20 @@ and priorities — backed by Postgres or an in-memory broker, with **no Redis an
     <img src="docs/architecture.svg" width="100%" alt="Conveyor architecture: the SDK and CLI enqueue into named, prioritized queues held in a multi-node conveyord cluster backed by a durable Postgres or in-memory broker; the cluster pushes queued tasks to a worker's free concurrency slots, which acknowledge back.">
   </a>
 </p>
+
+## Contents
+
+- [Features](#features)
+- [Quickstart](#quickstart) · [Try it with Docker](#try-it-with-docker)
+- [How it works](#how-it-works)
+- [Writing a worker](#writing-a-worker)
+- [Enqueueing work](#enqueueing-work)
+- [SDKs](#sdks)
+- [Embedded mode](#embedded-mode)
+- [Dashboard](#dashboard)
+- [Documentation](#documentation)
+- [Contributing](#contributing)
+- [License](#license)
 
 ## Features
 
@@ -103,13 +115,49 @@ Or bring up a realistic stack (server + Postgres) with Compose:
 docker compose -f deploy/compose/quickstart.yaml up
 ```
 
-Either way the API is on `http://localhost:8080` (with `/healthz` and
-`/readyz`); the Compose stack also serves metrics on
+Either way, conveyord serves its API on `http://localhost:8080` (with `/healthz`
+and `/readyz`); the Compose stack also serves metrics on
 `http://localhost:9464/metrics`. Both run the API without authentication for
 local evaluation; a real deployment sets `api.auth_tokens` (see the
 [operations guide](docs/operations.md#security)).
 
+## How it works
+
+Conveyor has three moving parts: your **client** enqueues tasks, the
+**server** (`conveyord`) owns them, and your **workers** process them. A
+durable **broker** — Postgres in production, in-memory for dev — is the source
+of truth. Tasks are persisted *before* they're dispatched, so they survive any
+crash. The [architecture diagram](#conveyor) at the top of this README shows
+the whole flow.
+
+**Push, not poll.** The server pushes tasks to workers the instant work
+exists and a worker has free capacity — there's no poll interval to tune and
+no Redis. Each worker opens one persistent connection, tells the server which
+queues it serves and how much it can handle, and receives work over that
+stream. When a worker is saturated it simply stops accepting more, and the
+extra work waits safely in the broker.
+
+**At-least-once execution.** A task is delivered until a worker acknowledges
+it. If a worker dies mid-task, the task is redelivered — so **handlers must be
+idempotent**. Return `conveyor.SkipRetry(err)` to dead-letter immediately;
+panics are recovered and treated as retryable failures.
+
+**What the server gives you:** named queues with weights, bounded worker
+concurrency, retries with exponential backoff, per-task priorities, delayed
+and scheduled tasks, cron, unique tasks, retention/archival, and a read-only
+admin/inspection API — all enforced server-side. Your code only writes
+handlers and enqueues tasks.
+
+The server coordinates all of this across a cluster of `conveyord` nodes:
+queues, scheduling, and lease recovery rebalance automatically when a node is
+lost, and no task is dropped. Scale by adding nodes; the broker is the only
+stateful dependency.
+
 ## Writing a worker
+
+A worker registers a handler per task type, then runs — the same shape in every SDK.
+
+### Go
 
 ```go
 w, _ := conveyor.NewWorker("http://localhost:8080",
@@ -130,11 +178,72 @@ mux.HandleFunc("email:welcome", func(ctx context.Context, t *conveyor.Task) erro
 _ = w.Run(ctx, mux) // blocks; reconnects with jitter; drains on ctx cancel
 ```
 
-Handlers must be idempotent and should honor `ctx.Done()`. Panics are
-recovered and reported as retryable failures — a panicking handler never
-kills the worker.
+### TypeScript
+
+The shape of [`examples/typescript`](examples/typescript/src/worker.ts):
+
+```ts
+import { Mux, skipRetry, type Task, Worker } from "@conveyorq/conveyor";
+
+const mux = new Mux().handle("email:welcome", async (task: Task, { signal }) => {
+  const email = task.json<{ to: string; name: string }>();
+  if (!email.to) throw skipRetry("missing recipient");          // permanent → dead-letter
+  await sendEmail(email.to, `Welcome, ${email.name}!`, signal); // any other throw → retried
+});
+
+const stop = new AbortController();
+for (const sig of ["SIGTERM", "SIGINT"] as const) process.on(sig, () => stop.abort());
+
+const worker = new Worker("http://localhost:8080", {
+  queues: { email: 1 },
+  concurrency: 8,
+  token: process.env.CONVEYOR_TOKEN,
+});
+
+await worker.run(mux, stop.signal); // blocks; reconnects with jitter; drains on abort
+```
+
+### Python
+
+The shape of [`examples/python`](examples/python/worker.py); a synchronous `SyncWorker` exists too:
+
+```python
+import asyncio
+import os
+
+from conveyorq import Mux, SkipRetry, Worker
+
+
+async def main() -> None:
+    mux = Mux()
+
+    @mux.handler("email:welcome")
+    async def send_welcome(task, ctx) -> None:
+        email = task.json()
+        if not email.get("to"):
+            raise SkipRetry("missing recipient")             # permanent → dead-letter
+        await send_email(email["to"], f"Welcome, {email['name']}!")  # else retried
+
+
+    worker = Worker(
+        "http://localhost:8080",
+        queues={"email": 1},
+        concurrency=8,
+        token=os.environ.get("CONVEYOR_TOKEN") or None,
+    )
+    await worker.run(mux)  # drains gracefully on SIGTERM/SIGINT
+
+
+asyncio.run(main())
+```
+
+Handlers must be idempotent and should honor cancellation (`ctx.Done()` in Go,
+the abort signal in TypeScript and Python). A handler that panics or throws is
+recovered and reported as a retryable failure — it never kills the worker.
 
 ## Enqueueing work
+
+### Go
 
 ```go
 client, _ := conveyor.NewClient("http://localhost:8080")
@@ -147,7 +256,48 @@ info, _ := client.Enqueue(ctx,
 )
 ```
 
-Or from the command line:
+### TypeScript
+
+The shape of [`examples/typescript`](examples/typescript/src/producer.ts) — durations are milliseconds:
+
+```ts
+import { Client, json, newTask } from "@conveyorq/conveyor";
+
+const client = new Client("http://localhost:8080", { token: process.env.CONVEYOR_TOKEN });
+
+const info = await client.enqueue(newTask("email:welcome", json({ to: "ada@example.com", name: "Ada" })), {
+  queue: "email",
+  processIn: 5 * 60_000, // milliseconds
+  maxRetry: 10,
+});
+```
+
+### Python
+
+The shape of [`examples/python`](examples/python/client.py) — durations are `timedelta`:
+
+```python
+import asyncio
+from datetime import timedelta
+
+from conveyorq import Client, json, new_task
+
+
+async def main() -> None:
+    async with Client("http://localhost:8080") as client:
+        info = await client.enqueue(
+            new_task("email:welcome", json({"to": "ada@example.com", "name": "Ada"})),
+            queue="email",
+            process_in=timedelta(minutes=5),
+            max_retry=10,
+        )
+        print(info.id, info.state.value)
+
+
+asyncio.run(main())
+```
+
+### Command line
 
 ```sh
 go run ./cmd/conveyor enqueue email:welcome --queue critical --json '{"user_id":42}' --in 5m
@@ -214,38 +364,6 @@ deployment: multiple `conveyord` nodes clustered over a shared Postgres broker,
 where a lost node's work re-activates elsewhere with no task loss. See the
 [operations guide](docs/operations.md).
 
-## How it works
-
-Conveyor has three moving parts: your **client** enqueues tasks, the
-**server** (`conveyord`) owns them, and your **workers** process them. A
-durable **broker** — Postgres in production, in-memory for dev — is the source
-of truth. Tasks are persisted *before* they're dispatched, so they survive any
-crash. The [architecture diagram](#conveyor) at the top of this README shows
-the whole flow.
-
-**Push, not poll.** The server pushes tasks to workers the instant work
-exists and a worker has free capacity — there's no poll interval to tune and
-no Redis. Each worker opens one persistent connection, tells the server which
-queues it serves and how much it can handle, and receives work over that
-stream. When a worker is saturated it simply stops accepting more, and the
-extra work waits safely in the broker.
-
-**At-least-once execution.** A task is delivered until a worker acknowledges
-it. If a worker dies mid-task, the task is redelivered — so **handlers must be
-idempotent**. Return `conveyor.SkipRetry(err)` to dead-letter immediately;
-panics are recovered and treated as retryable failures.
-
-**What the server gives you:** named queues with weights, bounded worker
-concurrency, retries with exponential backoff, per-task priorities, delayed
-and scheduled tasks, cron, unique tasks, retention/archival, and a read-only
-admin/inspection API — all enforced server-side. Your code only writes
-handlers and enqueues tasks.
-
-The server coordinates all of this across a cluster of `conveyord` nodes:
-queues, scheduling, and lease recovery rebalance automatically when a node is
-lost, and no task is dropped. Scale by adding nodes; the broker is the only
-stateful dependency.
-
 ## Dashboard
 
 `conveyord` embeds a web operations console, served at the API root and **enabled
@@ -300,73 +418,14 @@ a different-origin UI, and `api.grafana_url` for the metrics link. See the
   changes.
 - [Changelog](CHANGELOG.md) — release history.
 
-## Development
+## Contributing
 
-```sh
-make help        # all targets
-make test        # race-enabled tests (Postgres tests need Docker)
-make lint        # golangci-lint via the pinned tools image
-make quickstart  # the scripted README quickstart
-make chaos       # 3-node kill test, repeated for the zero-loss gate (CHAOS_COUNT=20)
-make e2e         # kind-based end-to-end deployment test (KEEP=1 keeps the cluster)
-make e2e-demo    # live playground: cluster + continuous load + dashboard
-make dashboard   # rebuild the embedded dashboard bundle (needs Node)
-```
-
-### End-to-end deployment test
-
-`make e2e` runs `hack/e2e-kind.sh`, which stands up a throwaway [kind](https://kind.sigs.k8s.io)
-cluster close to a production setup: a Postgres broker, three server replicas in
-kubernetes mode discovering each other through the Kubernetes API, the database
-DSN and API tokens delivered as Secrets, and metrics on their own port. It
-builds the image, loads it into kind, installs the Helm chart, and asserts the
-rollout completes, the three nodes form one cluster, and the metrics endpoint
-serves. It then drives load through a **rolling restart** — an in-cluster
-producer/worker enqueues and processes tasks through the API Service while the
-StatefulSet is rolled one pod at a time — and asserts the cluster reforms and
-every task completes with zero loss. It needs `docker`, `kind`, `kubectl`, and
-`helm`, and runs the same way locally and in CI.
-
-The cluster is torn down automatically on exit. To watch it **live** instead —
-stand up the cluster, run a continuous producer/worker, and open the dashboard
-so you can see tasks flow — use the one-command playground:
-
-```sh
-make e2e-demo      # cluster + continuous load + live dashboard at http://localhost:8080/ (token: e2e-token)
-make e2e-clean     # tear the cluster down when finished
-```
-
-It runs the same health checks first, then goes live and blocks until Ctrl-C;
-turn on **Auto-refresh** in the UI to watch the queues, tasks, and workers
-update. The pieces are also available on their own: `KEEP=1 make e2e` (the
-assert-and-exit test, kept), `make e2e-dashboard` (port-forward + open an
-existing cluster's dashboard), and `make e2e-clean` (remove a cluster, including
-one left by an interrupted run).
-
-### Dashboard development
-
-The dashboard (`web/dashboard/`) is a React + TypeScript app built with Vite.
-Its built bundle (`dist/`) is **not committed** — it's built in CI and baked
-into the Docker image. `go build`/`go test` don't need Node (the dashboard
-tests skip when the bundle is absent, and the binary serves an empty dashboard
-until built). Build it locally with:
-
-```sh
-make dashboard       # build web/dashboard/dist (embedded by conveyord)
-make dashboard-test  # run the frontend unit tests (Vitest)
-make dashboard-gen   # regenerate the TypeScript API client from the protos
-```
-
-For a fast edit loop, run a dev server against a local `conveyord --dev`:
-
-```sh
-go run ./cmd/conveyord --dev                       # API + dashboard on :8080
-cd web/dashboard && npm install && npm run dev      # hot-reloading UI on :5173
-```
-
-Open the Vite dev server with `?api=http://localhost:8080` so it targets the
-running server. After changing the UI, run `make dashboard` to refresh the
-committed `dist/` that ships in the binary.
+Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for
+prerequisites, how to build, test, and submit changes, the `make` targets, the
+end-to-end test workflow, and the project conventions. Two checks run on every
+pull request worth knowing up front: commit messages must follow
+[Conventional Commits](https://www.conventionalcommits.org), and every commit
+must be signed off for the [DCO](https://developercertificate.org) (`git commit -s`).
 
 ## License
 

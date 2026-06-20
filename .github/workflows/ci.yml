@@ -114,6 +114,10 @@ jobs:
       - name: Download dependencies
         run: |
           go mod download
+      - uses: pnpm/action-setup@v4
+        name: Setup pnpm
+        with:
+          version: 10
       - uses: actions/setup-node@v4
         name: Setup Node
         with:

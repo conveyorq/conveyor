@@ -154,7 +154,10 @@ worker is free).
 
 - [Writing a worker](../README.md#writing-a-worker) — the minimal Go worker, with
   handler registration and graceful shutdown.
-- [Go SDK](../sdks/go/README.md) — the reference client and worker.
+- Build a client and worker in your language:
+  - [Go SDK](../sdks/go/README.md) — the reference client and worker.
+  - [TypeScript SDK](../sdks/typescript/README.md) — enqueue and process tasks from Node.
+  - [Python SDK](../sdks/python/README.md) — async and sync clients and workers.
 - [Architecture](architecture.md) — how the server implements all of this
   internally (for contributors and SDK authors).
 - [Wire protocol](protocol.md) — the normative session protocol for building a

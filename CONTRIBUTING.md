@@ -42,10 +42,41 @@ Other useful targets:
 
 ```sh
 make chaos       # 3-node kill test, repeated for the zero-loss gate
-make e2e         # kind-based end-to-end deployment test (KEEP=1 keeps the cluster)
-make e2e-demo    # run the e2e and open the dashboard, in one command
 make benchmark   # throughput/latency harness on the in-memory broker
 ```
+
+The kind-based `make e2e` deployment test and the live `make e2e-demo` playground
+have their own section [below](#end-to-end-deployment-test).
+
+## End-to-end deployment test
+
+`make e2e` runs `hack/e2e-kind.sh`, which stands up a throwaway [kind](https://kind.sigs.k8s.io)
+cluster close to a production setup: a Postgres broker, three server replicas in
+kubernetes mode discovering each other through the Kubernetes API, the database
+DSN and API tokens delivered as Secrets, and metrics on their own port. It
+builds the image, loads it into kind, installs the Helm chart, and asserts the
+rollout completes, the three nodes form one cluster, and the metrics endpoint
+serves. It then drives load through a **rolling restart** — an in-cluster
+producer/worker enqueues and processes tasks through the API Service while the
+StatefulSet is rolled one pod at a time — and asserts the cluster reforms and
+every task completes with zero loss. It needs `docker`, `kind`, `kubectl`, and
+`helm`, and runs the same way locally and in CI.
+
+The cluster is torn down automatically on exit. To watch it **live** instead —
+stand up the cluster, run a continuous producer/worker, and open the dashboard
+so you can see tasks flow — use the one-command playground:
+
+```sh
+make e2e-demo   # cluster + continuous load + live dashboard at http://localhost:8080/ (token: e2e-token)
+make e2e-clean  # tear the cluster down when finished
+```
+
+It runs the same health checks first, then goes live and blocks until Ctrl-C;
+turn on **Auto-refresh** in the UI to watch the queues, tasks, and workers
+update. The pieces are also available on their own: `KEEP=1 make e2e` (the
+assert-and-exit test, kept), `make e2e-dashboard` (port-forward + open an
+existing cluster's dashboard), and `make e2e-clean` (remove a cluster, including
+one left by an interrupted run).
 
 ## Protobuf
 
@@ -73,8 +104,16 @@ make dashboard       # build web/dashboard/dist (embedded by conveyord)
 make dashboard-test  # frontend unit tests (Vitest)
 ```
 
-For a fast edit loop, see the "Dashboard development" section of the
-[README](README.md#dashboard-development).
+For a fast edit loop, run a Vite dev server against a local `conveyord --dev`:
+
+```sh
+go run ./cmd/conveyord --dev                   # API + dashboard on :8080
+cd web/dashboard && npm install && npm run dev # hot-reloading UI on :5173
+```
+
+Open the dev server with `?api=http://localhost:8080` so it targets the running
+server. After changing the UI, run `make dashboard` to rebuild the `dist/` bundle
+that ships in the binary.
 
 ## Dependencies and vendoring
 

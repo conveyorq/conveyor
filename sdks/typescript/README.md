@@ -18,22 +18,22 @@ repository — building the SDK once produces the `dist/` that consumers import
 ```sh
 git clone https://github.com/conveyorq/conveyor.git
 cd conveyor/sdks/typescript
-npm install && npm run build
+pnpm install && pnpm run build
 ```
 
 Then reference it from your project in one of these ways:
 
 ```sh
-# A) file: dependency — add to your package.json and run npm install:
+# A) file: dependency — add to your package.json and run pnpm install:
 #    "dependencies": { "@conveyorq/conveyor": "file:../path/to/conveyor/sdks/typescript" }
 
-# B) npm link — best while actively editing the SDK:
-npm link                                   # run in conveyor/sdks/typescript
-npm link @conveyorq/conveyor               # run in your project
+# B) pnpm link — best while actively editing the SDK:
+pnpm link --global                                  # run in conveyor/sdks/typescript
+pnpm link --global @conveyorq/conveyor              # run in your project
 
 # C) tarball — portable, no path coupling:
-npm pack                                   # run in conveyor/sdks/typescript -> conveyorq-conveyor-0.1.0.tgz
-npm install /path/to/conveyorq-conveyor-0.1.0.tgz   # run in your project
+pnpm pack                                  # run in conveyor/sdks/typescript -> conveyorq-conveyor-0.1.0.tgz
+pnpm install /path/to/conveyorq-conveyor-0.1.0.tgz  # run in your project
 ```
 
 > npm git installs can't target a subdirectory, so `npm install github:conveyorq/conveyor`
@@ -134,9 +134,9 @@ The cross-SDK conformance suite is the executable form of this table.
 ## Develop
 
 ```sh
-npm install        # install deps
-npm run build      # tsc → dist
-npm test           # vitest: unit + an integration test against a live conveyord (needs Go)
+pnpm install       # install deps
+pnpm run build     # tsc → dist
+pnpm test          # vitest: unit + an integration test against a live conveyord (needs Go)
 ```
 
 The protobuf in `src/gen` is generated from `protos/` with

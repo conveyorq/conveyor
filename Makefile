@@ -132,21 +132,21 @@ benchmark: ## Run the throughput/latency benchmark (in-memory broker)
 # The dashboard SPA is built by Vite and its dist/ is committed, so `go build`
 # never needs Node. Run this to refresh the committed bundle after UI changes.
 dashboard: ## Rebuild the embedded dashboard bundle (needs Node) and commit dist/
-	cd $(DASHBOARD_DIR) && npm ci && npm run build
+	cd $(DASHBOARD_DIR) && pnpm install --frozen-lockfile && pnpm run build
 
 dashboard-gen: ## Regenerate the dashboard's TypeScript Connect client from the protos
-	cd $(DASHBOARD_DIR) && npm ci
+	cd $(DASHBOARD_DIR) && pnpm install --frozen-lockfile
 	buf generate --template buf.gen.web.yaml
 
 dashboard-test: ## Run the dashboard frontend unit tests (needs Node)
-	cd $(DASHBOARD_DIR) && npm ci && npm test
+	cd $(DASHBOARD_DIR) && pnpm install --frozen-lockfile && pnpm test
 
 sdk-ts-gen: ## Regenerate the TypeScript SDK's protobuf from the protos
-	cd $(SDK_TS_DIR) && npm install
+	cd $(SDK_TS_DIR) && pnpm install
 	buf generate --template buf.gen.ts.yaml
 
 sdk-ts-test: ## Run the TypeScript SDK unit tests (needs Node)
-	cd $(SDK_TS_DIR) && npm install && npm test
+	cd $(SDK_TS_DIR) && pnpm install && pnpm test
 
 sdk-gen: sdk-ts-gen sdk-py-gen ## Regenerate both SDKs' protobuf stubs from the protos
 

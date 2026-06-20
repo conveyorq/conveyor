@@ -7,20 +7,23 @@
 # docker-compose.yml builds it for you.
 FROM node:22-alpine
 
+# Enable pnpm via Corepack (bundled with Node 22).
+RUN corepack enable
+
 WORKDIR /app
 
 # Build the SDK first; the example depends on it via file:../../sdks/typescript.
-COPY sdks/typescript/package.json sdks/typescript/package-lock.json* ./sdks/typescript/
+COPY sdks/typescript/package.json sdks/typescript/pnpm-lock.yaml* ./sdks/typescript/
 COPY sdks/typescript/ ./sdks/typescript/
-RUN cd sdks/typescript && npm install && npm run build
+RUN cd sdks/typescript && pnpm install && pnpm run build
 
 # Install and typecheck the example (tsx runs the TypeScript directly).
 COPY examples/typescript/package.json ./examples/typescript/
-RUN cd examples/typescript && npm install
+RUN cd examples/typescript && pnpm install
 COPY examples/typescript/ ./examples/typescript/
-RUN cd examples/typescript && npm run typecheck
+RUN cd examples/typescript && pnpm run typecheck
 
 WORKDIR /app/examples/typescript
 
 # The worker drains in-flight tasks on SIGTERM, which `docker stop` sends.
-CMD ["npm", "run", "worker"]
+CMD ["pnpm", "run", "worker"]

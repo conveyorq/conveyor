@@ -37,19 +37,19 @@ In another terminal, enqueue some work (reusing the worker image):
 ```sh
 # a welcome email
 docker compose -f examples/typescript/docker-compose.yml run --rm worker \
-  npm run produce -- welcome ada@example.com Ada
+  pnpm run produce -- welcome ada@example.com Ada
 
 # re-running is a no-op (deduped for 24h)
 docker compose -f examples/typescript/docker-compose.yml run --rm worker \
-  npm run produce -- welcome ada@example.com Ada
+  pnpm run produce -- welcome ada@example.com Ada
 
 # a reminder, delayed 1 minute
 docker compose -f examples/typescript/docker-compose.yml run --rm worker \
-  npm run produce -- reminder ada@example.com "Finish your setup" 1
+  pnpm run produce -- reminder ada@example.com "Finish your setup" 1
 
 # an invalid address → dead-lettered, no retries
 docker compose -f examples/typescript/docker-compose.yml run --rm worker \
-  npm run produce -- welcome not-an-email Ada
+  pnpm run produce -- welcome not-an-email Ada
 ```
 
 Watch the worker logs: most sends succeed, ~15% fail transiently and retry, and
@@ -62,13 +62,13 @@ off), then:
 
 ```sh
 cd examples/typescript
-npm install
+pnpm install
 
 # worker
-CONVEYOR_ADDR=http://localhost:8080 npm run worker
+CONVEYOR_ADDR=http://localhost:8080 pnpm run worker
 
 # producer (another terminal)
-CONVEYOR_ADDR=http://localhost:8080 npm run produce -- welcome ada@example.com Ada
+CONVEYOR_ADDR=http://localhost:8080 pnpm run produce -- welcome ada@example.com Ada
 ```
 
 ## Configuration (env)

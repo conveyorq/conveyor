@@ -6,7 +6,7 @@
 # Enqueue work (reusing the worker image):
 #
 #   docker compose -f examples/typescript/docker-compose.yml run --rm worker \
-#     npm run produce -- welcome ada@example.com Ada
+#     pnpm run produce -- welcome ada@example.com Ada
 #
 # Auth is disabled for local evaluation only; a real deployment sets
 # CONVEYOR_API__AUTH_TOKENS on the server and CONVEYOR_TOKEN on the worker.
