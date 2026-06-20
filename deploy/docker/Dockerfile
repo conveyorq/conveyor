@@ -13,11 +13,14 @@ FROM --platform=$BUILDPLATFORM node:22-alpine AS web
 
 WORKDIR /web
 
+# pnpm is the project's package manager; enable it through corepack.
+RUN corepack enable
+
 # Install deps against the committed lockfile, then build the SPA into dist/.
-COPY web/dashboard/package.json web/dashboard/package-lock.json ./
-RUN npm ci
+COPY web/dashboard/package.json web/dashboard/pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
 COPY web/dashboard/ ./
-RUN npm run build
+RUN pnpm run build
 
 # The build stage runs on the native build platform and cross-compiles to the
 # target, so multi-arch images build without emulating the Go toolchain.
