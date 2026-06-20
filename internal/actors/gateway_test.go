@@ -513,6 +513,47 @@ func TestGatewayStopReleasesInflight(t *testing.T) {
 	require.Zero(t, envelope.GetRetried(), "release on close must not count as a retry")
 }
 
+// TestGatewayDrainBrokerError covers the release-failure branch of drain: when
+// the broker cannot return an in-flight task to pending on session close, the
+// error is logged and the task stays leased until the reaper reclaims it on
+// lease expiry, rather than the close path failing.
+func TestGatewayDrainBrokerError(t *testing.T) {
+	const queue = "drain-fault"
+
+	ctx := context.Background()
+	taskLog := newFaultBroker(memory.New(clock.System()))
+	pauseQueue(t, taskLog, queue)
+	engine := startEngine(t, taskLog)
+	recorder := newFrameRecorder()
+
+	handle, err := engine.SpawnGateway(ctx, GatewaySession{
+		SessionID:   "session-drain-fault",
+		Queues:      []string{queue},
+		Concurrency: 4,
+	}, recorder)
+	require.NoError(t, err)
+
+	execute := leaseOne(t, engine, queue, "task-drain-fault", "lease-df")
+	require.NoError(t, handle.Tell(ctx, execute))
+
+	// Wait for the dispatch so the task is tracked before the drain.
+	select {
+	case <-recorder.dispatched:
+	case <-time.After(10 * time.Second):
+		t.Fatal("task was never dispatched")
+	}
+
+	// The release during drain fails; the task stays active rather than
+	// returning to pending.
+	taskLog.fault(methodRelease, errors.New("release down"))
+	require.NoError(t, handle.Stop(ctx))
+
+	_, state, err := taskLog.GetTask(ctx, "task-drain-fault")
+	require.NoError(t, err)
+	require.Equal(t, conveyorv1.TaskState_TASK_STATE_ACTIVE, state,
+		"a failed release on drain leaves the task leased for the reaper")
+}
+
 // TestGatewayDispatchSendFailureReleases verifies that a broken stream
 // releases the task immediately instead of waiting for lease expiry.
 func TestGatewayDispatchSendFailureReleases(t *testing.T) {

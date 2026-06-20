@@ -138,9 +138,11 @@ jobs:
       - name: Test (race)
         shell: bash
         run: |
-          # Exclude the example and benchmark commands: they have no tests and
-          # would only drag the reported coverage number down.
-          PKGS=$(go list -mod=vendor ./... | grep -vE '/examples/|/benchmark$')
+          # Exclude the example and benchmark commands, the generated protobuf
+          # packages, and the broker test-scaffolding package: they have no
+          # tests of their own and would only drag the reported coverage number
+          # down.
+          PKGS=$(go list -mod=vendor ./... | grep -vE '/examples/|/benchmark$|/internal/proto/|/internal/broker/brokertest$')
           # -p 1: serialize packages so concurrent GoAkt clusters don't
           # oversubscribe the runner's 4 vCPUs — under -race they starve
           # otherwise. Do not raise this to "speed up" CI.

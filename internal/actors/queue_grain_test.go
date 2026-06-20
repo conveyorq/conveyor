@@ -6,6 +6,7 @@ package actors
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -294,6 +295,66 @@ func TestQueueGrainDrainAndResume(t *testing.T) {
 	require.False(t, paused)
 }
 
+// TestQueueGrainBroadcastsCancelToGateways drives the admin-cancel fan-out:
+// a CancelActive delivered to the queue grain is forwarded to every registered
+// gateway, and the session holding the task emits a worker Cancel frame.
+func TestQueueGrainBroadcastsCancelToGateways(t *testing.T) {
+	const queue = "grain-cancel"
+
+	ctx := context.Background()
+	taskLog := memory.New(clock.System())
+	pauseQueue(t, taskLog, queue)
+	engine := startEngine(t, taskLog)
+	recorder := newFrameRecorder()
+
+	handle, err := engine.SpawnGateway(ctx, GatewaySession{
+		SessionID:   "session-grain-cancel",
+		Queues:      []string{queue},
+		Concurrency: 4,
+	}, recorder)
+	require.NoError(t, err)
+
+	t.Cleanup(func() { _ = handle.Stop(ctx) })
+
+	// Put a task in flight on the gateway directly so it has something to cancel.
+	execute := leaseOne(t, engine, queue, "task-grain-cancel", "lease-gc")
+	require.NoError(t, handle.Tell(ctx, execute))
+
+	// Route the cancel through the queue grain. Once the gateway's registration
+	// has reached the grain, the broadcast lands on the owning session as a
+	// Cancel frame; retry the tell until that registration window closes.
+	require.Eventually(t, func() bool {
+		require.NoError(t, engine.TellQueue(ctx, queue, &conveyorv1.CancelActive{TaskId: "task-grain-cancel"}))
+
+		ids := recorder.cancels()
+
+		return len(ids) >= 1 && ids[0] == "task-grain-cancel"
+	}, 10*time.Second, 50*time.Millisecond, "the grain must broadcast the admin cancel to the owning gateway")
+}
+
+// TestQueueGrainBroadcastCancelToDeadGatewayIsBestEffort covers the failure
+// branch of broadcastCancel: a registered gateway with no live actor makes the
+// forwarding TellActor fail. The cancel is best-effort, so the error is logged
+// and the grain turn still completes cleanly rather than escalating.
+func TestQueueGrainBroadcastCancelToDeadGatewayIsBestEffort(t *testing.T) {
+	const queue = "cancel-dead-gateway"
+
+	ctx := context.Background()
+	taskLog := memory.New(clock.System())
+	engine := startEngine(t, taskLog)
+
+	// A phantom gateway: registered for credits but with no actor behind it,
+	// so the cancel broadcast's TellActor fails.
+	require.NoError(t, engine.TellQueue(ctx, queue, &conveyorv1.RegisterGateway{
+		Queue:       queue,
+		GatewayName: "ghost-gateway",
+		Capacity:    1,
+	}))
+
+	require.NoError(t, engine.TellQueue(ctx, queue, &conveyorv1.CancelActive{TaskId: "task-anything"}),
+		"a cancel that cannot reach its gateway is logged, not failed")
+}
+
 // TestQueueGrainReleasesUndispatchableTasks drives the dispatch-failure
 // path: a gateway registered with credits but no live actor makes the
 // grain's TellActor dispatch fail. The grain must drop the gateway and
@@ -331,4 +392,55 @@ func TestQueueGrainReleasesUndispatchableTasks(t *testing.T) {
 	spawnGateway(t, engine, &mockGateway{queue: queue, capacity: 1})
 
 	requireTaskState(t, engine, "task-ghost", conveyorv1.TaskState_TASK_STATE_COMPLETED)
+}
+
+// TestQueueGrainSetPausedBrokerError covers the persistence failure inside
+// setPaused: a DrainQueue whose pause write fails surfaces the broker error
+// back through the grain turn rather than flipping the flag, so the caller
+// learns the queue was not actually paused.
+func TestQueueGrainSetPausedBrokerError(t *testing.T) {
+	const queue = "pause-fault"
+
+	ctx := context.Background()
+	taskLog := newFaultBroker(memory.New(clock.System()))
+	engine := startEngine(t, taskLog)
+
+	taskLog.fault(methodSetQueuePaused, errors.New("pause write down"))
+
+	err := engine.TellQueue(ctx, queue, &conveyorv1.DrainQueue{Queue: queue})
+	require.Error(t, err, "a failed pause write must surface through the grain turn")
+}
+
+// TestQueueGrainReleaseLeasedBrokerError covers the failure branch of
+// releaseLeased: when an undispatchable batch cannot be released back to
+// pending, the members stay leased until the reaper reclaims them on lease
+// expiry rather than redelivering immediately.
+func TestQueueGrainReleaseLeasedBrokerError(t *testing.T) {
+	const queue = "release-fault"
+
+	ctx := context.Background()
+	taskLog := newFaultBroker(memory.New(clock.System()))
+	engine := startEngine(t, taskLog)
+
+	// A phantom gateway grants credits with no actor behind it, so the grain
+	// leases the task, fails to dispatch it, and tries to release it.
+	require.NoError(t, engine.TellQueue(ctx, queue, &conveyorv1.RegisterGateway{
+		Queue:       queue,
+		GatewayName: "ghost-gateway",
+		Capacity:    1,
+	}))
+
+	// The release itself fails, so the task cannot return to pending.
+	taskLog.fault(methodRelease, errors.New("release down"))
+
+	require.NoError(t, engine.Enqueue(ctx, newTask("task-stuck", queue, "test:ok", 4)))
+
+	// Settle the lease-and-failed-release cycle, then assert the task is held
+	// active under its lease rather than back in pending.
+	time.Sleep(500 * time.Millisecond)
+
+	_, state, err := taskLog.GetTask(ctx, "task-stuck")
+	require.NoError(t, err)
+	require.Equal(t, conveyorv1.TaskState_TASK_STATE_ACTIVE, state,
+		"a task whose release failed stays leased until the reaper reclaims it")
 }

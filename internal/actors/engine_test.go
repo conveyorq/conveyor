@@ -6,6 +6,7 @@ package actors
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -436,6 +437,45 @@ func TestEngineEnqueueSurfacesBrokerErrors(t *testing.T) {
 	duplicate.Options.UniqueKey = "singleton-job"
 	duplicate.Options.UniqueTtl = durationpb.New(time.Hour)
 	require.ErrorIs(t, engine.Enqueue(ctx, duplicate), broker.ErrDuplicateTask)
+}
+
+// TestMaintenanceLoopsSurviveBrokerFaults exercises the documented robustness
+// of the singleton maintenance loops: a broker that fails the reaper's reclaim,
+// purge, archive, and pending-count calls, the scheduler's promotion and cron
+// listing, and the group sweeper's stats scan must not stop those actors. Each
+// runs under the default Stop directive and skips the failed pass rather than
+// escalating, so once the broker recovers normal dispatch resumes.
+func TestMaintenanceLoopsSurviveBrokerFaults(t *testing.T) {
+	const queue = "recovered"
+
+	taskLog := newFaultBroker(memory.New(clock.System()))
+	engine := startEngine(t, taskLog)
+
+	maintenanceMethods := []string{
+		methodReapExpiredLeases, methodPurgeCompleted, methodArchiveExpired,
+		methodPendingCount, methodPromoteScheduled, methodListDueCronEntries,
+		methodGroupStats,
+	}
+
+	for _, method := range maintenanceMethods {
+		taskLog.fault(method, errors.New("broker down"))
+	}
+
+	// Let every maintenance tick fire repeatedly against the failing broker.
+	time.Sleep(time.Second)
+
+	require.True(t, engine.System().Running(), "broker faults must not stop the engine")
+
+	// The broker recovers; a fresh batch still flows through to completion.
+	for _, method := range maintenanceMethods {
+		taskLog.clear(method)
+	}
+
+	spawnGateway(t, engine, &mockGateway{queue: queue, capacity: 4})
+	enqueueTasks(t, engine, queue, 5)
+
+	require.Eventually(t, completedReaches(taskLog, 5),
+		time.Minute, 20*time.Millisecond, "dispatch resumes after the broker recovers")
 }
 
 // TestThreeNodeChaosLosesNothing is the Phase 5 chaos acceptance test: three

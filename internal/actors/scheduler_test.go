@@ -6,6 +6,7 @@ package actors
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -111,4 +112,45 @@ func TestSchedulerSkipsPausedCron(t *testing.T) {
 	count, err := taskLog.PendingCount(context.Background())
 	require.NoError(t, err)
 	require.Zero(t, count[cronQueue], "paused cron entry must not materialize tasks")
+}
+
+// TestSchedulerArmCronInvalidSpecIsSkipped covers arming an entry whose spec
+// does not parse: the error is logged and no next-run time is persisted, so the
+// entry never becomes due rather than crashing the promotion loop.
+func TestSchedulerArmCronInvalidSpecIsSkipped(t *testing.T) {
+	runtime := newTestRuntime(t)
+	scheduler := &Scheduler{runtime: runtime}
+
+	entry := &broker.CronEntry{ID: "cron-bad", Spec: "this is not a cron spec", Queue: "q"}
+
+	scheduler.armCron(context.Background(), entry, runtime.Clock().Now())
+
+	due, err := runtime.Broker().ListDueCronEntries(context.Background(), runtime.Clock().Now())
+	require.NoError(t, err)
+	require.Empty(t, due, "an unparseable spec must not be armed as due work")
+}
+
+// TestSchedulerArmCronPersistErrorLeavesEntryUnarmed covers the persistence
+// failure inside armCron: when storing the computed first-fire time fails, the
+// error is logged and the entry's next run stays zero, so the next tick retries
+// arming rather than the entry being silently lost.
+func TestSchedulerArmCronPersistErrorLeavesEntryUnarmed(t *testing.T) {
+	ctx := context.Background()
+	inner := memory.New(clock.System())
+	t.Cleanup(func() { _ = inner.Close() })
+
+	taskLog := newFaultBroker(inner)
+	runtime := NewRuntime(taskLog, clock.System(), testSettings, quietLogger())
+	scheduler := &Scheduler{runtime: runtime}
+
+	entry := &broker.CronEntry{ID: "cron-persist", Spec: "* * * * * *", TaskType: "test:ok", Queue: "q"}
+	require.NoError(t, inner.UpsertCronEntry(ctx, entry))
+
+	taskLog.fault(methodUpdateCronNextRun, errors.New("persist down"))
+	scheduler.armCron(ctx, entry, runtime.Clock().Now())
+
+	stored, err := inner.ListCronEntries(ctx)
+	require.NoError(t, err)
+	require.Len(t, stored, 1)
+	require.True(t, stored[0].NextRunAt.IsZero(), "a failed persist must leave the entry unarmed for a retry")
 }
