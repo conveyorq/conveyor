@@ -89,11 +89,13 @@ func runHealthcheck(addr string) error {
 
 	url := "http://" + addr + healthzPath
 
+	//nolint:gosec // G704: url targets this node's own operator-configured listen address, not user-controlled SSRF.
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
 	}
 
+	//nolint:gosec // G704: probing this node's own /healthz; the address is operator config, not user-controlled SSRF.
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
 		return err
