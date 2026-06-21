@@ -73,6 +73,11 @@ const LeaseExpiredMessage = "lease expired"
 // ever dispatched.
 const TaskExpiredMessage = "task expired before dispatch"
 
+// CascadeCanceledMessage is recorded as the task's last error when it is
+// canceled because a dependency it declared with the cascade-cancel policy
+// failed terminally.
+const CascadeCanceledMessage = "canceled by failed dependency"
+
 // CronEntry is a persisted cron schedule from which the scheduler
 // materializes tasks.
 type CronEntry struct {
@@ -130,6 +135,8 @@ type QueueStat struct {
 	Archived int64
 	// Aggregating counts group members accumulating before their group fires.
 	Aggregating int64
+	// Blocked counts tasks held until their dependencies reach terminal success.
+	Blocked int64
 }
 
 // GroupStat summarizes one aggregation group's accumulating members. It is the
@@ -267,6 +274,27 @@ type Broker interface {
 	// and returns the distinct queues that received work. A non-positive
 	// limit promotes nothing.
 	PromoteScheduled(ctx context.Context, limit int) (queues []string, err error)
+
+	// ResolveDependents reconciles the dependency edges that point at a task
+	// which has just reached a terminal state (completed, archived, or
+	// canceled). A completed dependency satisfies its edges; a terminally
+	// failed one applies each edge's on-failure policy (block keeps the
+	// dependent waiting, continue treats the dependency as satisfied, and
+	// cascade-cancel cancels the dependent and, transitively, its own
+	// dependents). Every dependent left with no unresolved dependency is
+	// promoted to pending (or scheduled, aggregating, when it is also delayed
+	// or grouped). It returns the distinct queues whose tasks became newly
+	// eligible so the caller can wake them. The task must already hold its
+	// terminal state; an unknown or non-terminal id is a no-op.
+	ResolveDependents(ctx context.Context, taskID string) (queues []string, err error)
+
+	// PromoteReadyDependents is the reaper safety net for ResolveDependents:
+	// it scans up to limit blocked tasks whose dependencies have since reached
+	// a terminal state — work an inline ResolveDependents missed or never ran
+	// for (an admin cancel, a lost wake) — reconciles them, and returns the
+	// distinct queues that received work. A non-positive limit promotes
+	// nothing.
+	PromoteReadyDependents(ctx context.Context, limit int) (queues []string, err error)
 
 	// PurgeCompleted deletes up to limit completed tasks whose retention
 	// has lapsed and releases lapsed unique-key claims. It returns the

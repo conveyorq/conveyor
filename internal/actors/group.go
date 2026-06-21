@@ -427,8 +427,14 @@ func (g *Gateway) batchResult(ctx *goakt.ReceiveContext, message *conveyorv1.Bat
 			result = &conveyorv1.Result{TaskId: taskID, Outcome: conveyorv1.TaskOutcome_TASK_OUTCOME_RELEASED}
 		}
 
-		if g.applyOutcome(goCtx, entry, result) {
+		success, terminal := g.applyOutcome(goCtx, entry, result)
+
+		if success {
 			succeeded++
+		}
+
+		if terminal {
+			g.resolveDependents(ctx, taskID)
 		}
 	}
 

@@ -36,6 +36,10 @@ const maxPriority = 9
 // storage with a reference in the payload.
 const maxPayloadBytes = 1 << 20
 
+// maxDependencies caps how many tasks one task may depend on, bounding the
+// dependency-edge fan-in committed per enqueue and the work one resolution does.
+const maxDependencies = 1000
+
 // maxBatchTasks caps the number of items in one EnqueueBatch request.
 const maxBatchTasks = 1000
 
@@ -191,6 +195,16 @@ func (s *TaskService) envelopeFromRequest(request *conveyorv1.EnqueueRequest) (*
 		return nil, fmt.Errorf("priority must be in 0..%d, got %d", maxPriority, request.GetPriority())
 	}
 
+	if len(request.GetDependsOn()) > maxDependencies {
+		return nil, fmt.Errorf("a task may depend on at most %d tasks, got %d", maxDependencies, len(request.GetDependsOn()))
+	}
+
+	for _, dependency := range request.GetDependsOn() {
+		if dependency.GetTaskId() == "" {
+			return nil, errors.New("a dependency must name a task id")
+		}
+	}
+
 	maxRetry := request.GetMaxRetry()
 	if maxRetry == 0 {
 		maxRetry = s.defaultMaxRetry
@@ -240,12 +254,19 @@ func (s *TaskService) envelopeFromRequest(request *conveyorv1.EnqueueRequest) (*
 			Priority:  priority,
 			Group:     request.GetGroup(),
 			ExpiresAt: expiresAt,
+			DependsOn: request.GetDependsOn(),
 		},
 	}, nil
 }
 
-// initialState reports the state a freshly committed task starts in.
+// initialState reports the state a freshly committed task starts in. A task
+// that declares dependencies starts blocked; the broker promotes it once every
+// dependency reaches a terminal success.
 func (s *TaskService) initialState(envelope *conveyorv1.TaskEnvelope) conveyorv1.TaskState {
+	if len(envelope.GetOptions().GetDependsOn()) > 0 {
+		return conveyorv1.TaskState_TASK_STATE_BLOCKED
+	}
+
 	if envelope.GetOptions().GetGroup() != "" {
 		return conveyorv1.TaskState_TASK_STATE_AGGREGATING
 	}

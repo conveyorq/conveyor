@@ -221,6 +221,16 @@ func (e *encryptedBroker) PromoteScheduled(ctx context.Context, limit int) ([]st
 	return e.inner.PromoteScheduled(ctx, limit)
 }
 
+// ResolveDependents delegates to the wrapped broker.
+func (e *encryptedBroker) ResolveDependents(ctx context.Context, taskID string) ([]string, error) {
+	return e.inner.ResolveDependents(ctx, taskID)
+}
+
+// PromoteReadyDependents delegates to the wrapped broker.
+func (e *encryptedBroker) PromoteReadyDependents(ctx context.Context, limit int) ([]string, error) {
+	return e.inner.PromoteReadyDependents(ctx, limit)
+}
+
 // PurgeCompleted delegates to the wrapped broker.
 func (e *encryptedBroker) PurgeCompleted(ctx context.Context, limit int) (int, error) {
 	return e.inner.PurgeCompleted(ctx, limit)

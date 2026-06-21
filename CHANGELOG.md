@@ -6,6 +6,22 @@ All notable changes to Conveyor are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Task dependencies (workflows)**: order work with chains ("run B after A")
+  and fan-out/fan-in (a continuation that waits on a whole batch). Declare
+  dependencies with `conveyor.DependsOn(ids...)`, or `conveyor.DependsOnTasks(...)`
+  for per-dependency failure policies. A dependent waits in the new `blocked`
+  state until every task it depends on reaches a terminal success, then is
+  promoted automatically; a dependency that fails terminally instead applies the
+  edge's policy — block (default), continue-on-failure, or cascade-cancel. The
+  broker tracks dependency edges and resolves them in `ResolveDependents`;
+  resolution runs off the dispatch path on a bounded resolver pool, with a reaper
+  sweep (`PromoteReadyDependents`) as the safety net, so completions never block
+  on it. A per-queue `blocked` count surfaces in the `AdminService` queue stats
+  and the dashboard. Available in the Go, TypeScript, and Python SDKs. See
+  `docs/workflows.md`.
+
 ## [v0.1.0] - 2026-06-19
 
 First public release: a distributed task queue for Go, a persistent,

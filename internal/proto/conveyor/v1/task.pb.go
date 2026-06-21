@@ -49,6 +49,10 @@ const (
 	// its group fires (by size, delay, or grace period), at which point the
 	// group's members are leased together and delivered to a worker as one batch.
 	TaskState_TASK_STATE_AGGREGATING TaskState = 8
+	// TASK_STATE_BLOCKED is a task held until every task it depends on reaches a
+	// terminal success. It is not eligible to lease while blocked; completing the
+	// last dependency promotes it to pending (or scheduled, if it is also delayed).
+	TaskState_TASK_STATE_BLOCKED TaskState = 9
 )
 
 // Enum value maps for TaskState.
@@ -63,6 +67,7 @@ var (
 		6: "TASK_STATE_ARCHIVED",
 		7: "TASK_STATE_CANCELED",
 		8: "TASK_STATE_AGGREGATING",
+		9: "TASK_STATE_BLOCKED",
 	}
 	TaskState_value = map[string]int32{
 		"TASK_STATE_UNSPECIFIED": 0,
@@ -74,6 +79,7 @@ var (
 		"TASK_STATE_ARCHIVED":    6,
 		"TASK_STATE_CANCELED":    7,
 		"TASK_STATE_AGGREGATING": 8,
+		"TASK_STATE_BLOCKED":     9,
 	}
 )
 
@@ -102,6 +108,123 @@ func (x TaskState) Number() protoreflect.EnumNumber {
 // Deprecated: Use TaskState.Descriptor instead.
 func (TaskState) EnumDescriptor() ([]byte, []int) {
 	return file_conveyor_v1_task_proto_rawDescGZIP(), []int{0}
+}
+
+// DependencyFailurePolicy decides what happens to a dependent task when one of
+// the tasks it depends on fails terminally (archived or canceled).
+type DependencyFailurePolicy int32
+
+const (
+	// DEPENDENCY_FAILURE_POLICY_UNSPECIFIED defaults to BLOCK.
+	DependencyFailurePolicy_DEPENDENCY_FAILURE_POLICY_UNSPECIFIED DependencyFailurePolicy = 0
+	// DEPENDENCY_FAILURE_POLICY_BLOCK keeps the dependent blocked indefinitely:
+	// the dependency never succeeded, so the dependent never becomes eligible.
+	DependencyFailurePolicy_DEPENDENCY_FAILURE_POLICY_BLOCK DependencyFailurePolicy = 1
+	// DEPENDENCY_FAILURE_POLICY_CASCADE_CANCEL cancels the dependent (and, in
+	// turn, its own dependents) when the dependency fails.
+	DependencyFailurePolicy_DEPENDENCY_FAILURE_POLICY_CASCADE_CANCEL DependencyFailurePolicy = 2
+	// DEPENDENCY_FAILURE_POLICY_CONTINUE treats the failed dependency as
+	// satisfied, so the dependent proceeds once its remaining dependencies clear.
+	DependencyFailurePolicy_DEPENDENCY_FAILURE_POLICY_CONTINUE DependencyFailurePolicy = 3
+)
+
+// Enum value maps for DependencyFailurePolicy.
+var (
+	DependencyFailurePolicy_name = map[int32]string{
+		0: "DEPENDENCY_FAILURE_POLICY_UNSPECIFIED",
+		1: "DEPENDENCY_FAILURE_POLICY_BLOCK",
+		2: "DEPENDENCY_FAILURE_POLICY_CASCADE_CANCEL",
+		3: "DEPENDENCY_FAILURE_POLICY_CONTINUE",
+	}
+	DependencyFailurePolicy_value = map[string]int32{
+		"DEPENDENCY_FAILURE_POLICY_UNSPECIFIED":    0,
+		"DEPENDENCY_FAILURE_POLICY_BLOCK":          1,
+		"DEPENDENCY_FAILURE_POLICY_CASCADE_CANCEL": 2,
+		"DEPENDENCY_FAILURE_POLICY_CONTINUE":       3,
+	}
+)
+
+func (x DependencyFailurePolicy) Enum() *DependencyFailurePolicy {
+	p := new(DependencyFailurePolicy)
+	*p = x
+	return p
+}
+
+func (x DependencyFailurePolicy) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (DependencyFailurePolicy) Descriptor() protoreflect.EnumDescriptor {
+	return file_conveyor_v1_task_proto_enumTypes[1].Descriptor()
+}
+
+func (DependencyFailurePolicy) Type() protoreflect.EnumType {
+	return &file_conveyor_v1_task_proto_enumTypes[1]
+}
+
+func (x DependencyFailurePolicy) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use DependencyFailurePolicy.Descriptor instead.
+func (DependencyFailurePolicy) EnumDescriptor() ([]byte, []int) {
+	return file_conveyor_v1_task_proto_rawDescGZIP(), []int{1}
+}
+
+// TaskDependency is one edge of a workflow: the enclosing task must wait for the
+// referenced task to reach a terminal state before it becomes eligible to run.
+type TaskDependency struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// task_id is the id of the task that must finish first.
+	TaskId string `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	// on_failure decides the dependent's fate if this dependency fails terminally.
+	OnFailure     DependencyFailurePolicy `protobuf:"varint,2,opt,name=on_failure,json=onFailure,proto3,enum=conveyor.v1.DependencyFailurePolicy" json:"on_failure,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TaskDependency) Reset() {
+	*x = TaskDependency{}
+	mi := &file_conveyor_v1_task_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TaskDependency) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TaskDependency) ProtoMessage() {}
+
+func (x *TaskDependency) ProtoReflect() protoreflect.Message {
+	mi := &file_conveyor_v1_task_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TaskDependency.ProtoReflect.Descriptor instead.
+func (*TaskDependency) Descriptor() ([]byte, []int) {
+	return file_conveyor_v1_task_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *TaskDependency) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *TaskDependency) GetOnFailure() DependencyFailurePolicy {
+	if x != nil {
+		return x.OnFailure
+	}
+	return DependencyFailurePolicy_DEPENDENCY_FAILURE_POLICY_UNSPECIFIED
 }
 
 // TaskEnvelope is the internal, durable representation of a task.
@@ -145,7 +268,7 @@ type TaskEnvelope struct {
 
 func (x *TaskEnvelope) Reset() {
 	*x = TaskEnvelope{}
-	mi := &file_conveyor_v1_task_proto_msgTypes[0]
+	mi := &file_conveyor_v1_task_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -157,7 +280,7 @@ func (x *TaskEnvelope) String() string {
 func (*TaskEnvelope) ProtoMessage() {}
 
 func (x *TaskEnvelope) ProtoReflect() protoreflect.Message {
-	mi := &file_conveyor_v1_task_proto_msgTypes[0]
+	mi := &file_conveyor_v1_task_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -170,7 +293,7 @@ func (x *TaskEnvelope) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskEnvelope.ProtoReflect.Descriptor instead.
 func (*TaskEnvelope) Descriptor() ([]byte, []int) {
-	return file_conveyor_v1_task_proto_rawDescGZIP(), []int{0}
+	return file_conveyor_v1_task_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *TaskEnvelope) GetId() string {
@@ -287,14 +410,19 @@ type TaskOptions struct {
 	// which cancels a task already running, and from retention, which purges a
 	// task already completed. Unset leaves the task with no expiry. The server
 	// resolves the relative EnqueueRequest.expires_in to this absolute time.
-	ExpiresAt     *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
+	ExpiresAt *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
+	// depends_on lists the tasks this task waits for. While any dependency has
+	// not reached a terminal success the task stays blocked and is not eligible
+	// to lease. An empty list (the default) leaves the task immediately eligible.
+	// Fan-in is a continuation that depends on every task of a fan-out batch.
+	DependsOn     []*TaskDependency `protobuf:"bytes,11,rep,name=depends_on,json=dependsOn,proto3" json:"depends_on,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *TaskOptions) Reset() {
 	*x = TaskOptions{}
-	mi := &file_conveyor_v1_task_proto_msgTypes[1]
+	mi := &file_conveyor_v1_task_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -306,7 +434,7 @@ func (x *TaskOptions) String() string {
 func (*TaskOptions) ProtoMessage() {}
 
 func (x *TaskOptions) ProtoReflect() protoreflect.Message {
-	mi := &file_conveyor_v1_task_proto_msgTypes[1]
+	mi := &file_conveyor_v1_task_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -319,7 +447,7 @@ func (x *TaskOptions) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskOptions.ProtoReflect.Descriptor instead.
 func (*TaskOptions) Descriptor() ([]byte, []int) {
-	return file_conveyor_v1_task_proto_rawDescGZIP(), []int{1}
+	return file_conveyor_v1_task_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *TaskOptions) GetMaxRetry() int32 {
@@ -392,11 +520,22 @@ func (x *TaskOptions) GetExpiresAt() *timestamppb.Timestamp {
 	return nil
 }
 
+func (x *TaskOptions) GetDependsOn() []*TaskDependency {
+	if x != nil {
+		return x.DependsOn
+	}
+	return nil
+}
+
 var File_conveyor_v1_task_proto protoreflect.FileDescriptor
 
 const file_conveyor_v1_task_proto_rawDesc = "" +
 	"\n" +
-	"\x16conveyor/v1/task.proto\x12\vconveyor.v1\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xab\x04\n" +
+	"\x16conveyor/v1/task.proto\x12\vconveyor.v1\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"n\n" +
+	"\x0eTaskDependency\x12\x17\n" +
+	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12C\n" +
+	"\n" +
+	"on_failure\x18\x02 \x01(\x0e2$.conveyor.v1.DependencyFailurePolicyR\tonFailure\"\xab\x04\n" +
 	"\fTaskEnvelope\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x14\n" +
 	"\x05queue\x18\x02 \x01(\tR\x05queue\x12\x12\n" +
@@ -416,7 +555,7 @@ const file_conveyor_v1_task_proto_rawDesc = "" +
 	"\fcompleted_at\x18\f \x01(\v2\x1a.google.protobuf.TimestampR\vcompletedAt\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xd7\x03\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x93\x04\n" +
 	"\vTaskOptions\x12\x1b\n" +
 	"\tmax_retry\x18\x01 \x01(\x05R\bmaxRetry\x123\n" +
 	"\atimeout\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\atimeout\x126\n" +
@@ -432,7 +571,9 @@ const file_conveyor_v1_task_proto_rawDesc = "" +
 	"\x05group\x18\t \x01(\tR\x05group\x129\n" +
 	"\n" +
 	"expires_at\x18\n" +
-	" \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAtJ\x04\b\v\x10\x10*\xee\x01\n" +
+	" \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\x12:\n" +
+	"\n" +
+	"depends_on\x18\v \x03(\v2\x1b.conveyor.v1.TaskDependencyR\tdependsOnJ\x04\b\f\x10\x10*\x86\x02\n" +
 	"\tTaskState\x12\x1a\n" +
 	"\x16TASK_STATE_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14TASK_STATE_SCHEDULED\x10\x01\x12\x16\n" +
@@ -442,7 +583,13 @@ const file_conveyor_v1_task_proto_rawDesc = "" +
 	"\x14TASK_STATE_COMPLETED\x10\x05\x12\x17\n" +
 	"\x13TASK_STATE_ARCHIVED\x10\x06\x12\x17\n" +
 	"\x13TASK_STATE_CANCELED\x10\a\x12\x1a\n" +
-	"\x16TASK_STATE_AGGREGATING\x10\bB\xae\x01\n" +
+	"\x16TASK_STATE_AGGREGATING\x10\b\x12\x16\n" +
+	"\x12TASK_STATE_BLOCKED\x10\t*\xbf\x01\n" +
+	"\x17DependencyFailurePolicy\x12)\n" +
+	"%DEPENDENCY_FAILURE_POLICY_UNSPECIFIED\x10\x00\x12#\n" +
+	"\x1fDEPENDENCY_FAILURE_POLICY_BLOCK\x10\x01\x12,\n" +
+	"(DEPENDENCY_FAILURE_POLICY_CASCADE_CANCEL\x10\x02\x12&\n" +
+	"\"DEPENDENCY_FAILURE_POLICY_CONTINUE\x10\x03B\xae\x01\n" +
 	"\x0fcom.conveyor.v1B\tTaskProtoP\x01ZCgithub.com/conveyorq/conveyor/internal/proto/conveyor/v1;conveyorv1\xa2\x02\x03CXX\xaa\x02\vConveyor.V1\xca\x02\vConveyor\\V1\xe2\x02\x17Conveyor\\V1\\GPBMetadata\xea\x02\fConveyor::V1b\x06proto3"
 
 var (
@@ -457,33 +604,37 @@ func file_conveyor_v1_task_proto_rawDescGZIP() []byte {
 	return file_conveyor_v1_task_proto_rawDescData
 }
 
-var file_conveyor_v1_task_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_conveyor_v1_task_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_conveyor_v1_task_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
+var file_conveyor_v1_task_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
 var file_conveyor_v1_task_proto_goTypes = []any{
 	(TaskState)(0),                // 0: conveyor.v1.TaskState
-	(*TaskEnvelope)(nil),          // 1: conveyor.v1.TaskEnvelope
-	(*TaskOptions)(nil),           // 2: conveyor.v1.TaskOptions
-	nil,                           // 3: conveyor.v1.TaskEnvelope.MetadataEntry
-	(*timestamppb.Timestamp)(nil), // 4: google.protobuf.Timestamp
-	(*durationpb.Duration)(nil),   // 5: google.protobuf.Duration
+	(DependencyFailurePolicy)(0),  // 1: conveyor.v1.DependencyFailurePolicy
+	(*TaskDependency)(nil),        // 2: conveyor.v1.TaskDependency
+	(*TaskEnvelope)(nil),          // 3: conveyor.v1.TaskEnvelope
+	(*TaskOptions)(nil),           // 4: conveyor.v1.TaskOptions
+	nil,                           // 5: conveyor.v1.TaskEnvelope.MetadataEntry
+	(*timestamppb.Timestamp)(nil), // 6: google.protobuf.Timestamp
+	(*durationpb.Duration)(nil),   // 7: google.protobuf.Duration
 }
 var file_conveyor_v1_task_proto_depIdxs = []int32{
-	3,  // 0: conveyor.v1.TaskEnvelope.metadata:type_name -> conveyor.v1.TaskEnvelope.MetadataEntry
-	2,  // 1: conveyor.v1.TaskEnvelope.options:type_name -> conveyor.v1.TaskOptions
-	4,  // 2: conveyor.v1.TaskEnvelope.enqueued_at:type_name -> google.protobuf.Timestamp
-	4,  // 3: conveyor.v1.TaskEnvelope.started_at:type_name -> google.protobuf.Timestamp
-	4,  // 4: conveyor.v1.TaskEnvelope.completed_at:type_name -> google.protobuf.Timestamp
-	5,  // 5: conveyor.v1.TaskOptions.timeout:type_name -> google.protobuf.Duration
-	4,  // 6: conveyor.v1.TaskOptions.deadline:type_name -> google.protobuf.Timestamp
-	4,  // 7: conveyor.v1.TaskOptions.process_at:type_name -> google.protobuf.Timestamp
-	5,  // 8: conveyor.v1.TaskOptions.unique_ttl:type_name -> google.protobuf.Duration
-	5,  // 9: conveyor.v1.TaskOptions.retention:type_name -> google.protobuf.Duration
-	4,  // 10: conveyor.v1.TaskOptions.expires_at:type_name -> google.protobuf.Timestamp
-	11, // [11:11] is the sub-list for method output_type
-	11, // [11:11] is the sub-list for method input_type
-	11, // [11:11] is the sub-list for extension type_name
-	11, // [11:11] is the sub-list for extension extendee
-	0,  // [0:11] is the sub-list for field type_name
+	1,  // 0: conveyor.v1.TaskDependency.on_failure:type_name -> conveyor.v1.DependencyFailurePolicy
+	5,  // 1: conveyor.v1.TaskEnvelope.metadata:type_name -> conveyor.v1.TaskEnvelope.MetadataEntry
+	4,  // 2: conveyor.v1.TaskEnvelope.options:type_name -> conveyor.v1.TaskOptions
+	6,  // 3: conveyor.v1.TaskEnvelope.enqueued_at:type_name -> google.protobuf.Timestamp
+	6,  // 4: conveyor.v1.TaskEnvelope.started_at:type_name -> google.protobuf.Timestamp
+	6,  // 5: conveyor.v1.TaskEnvelope.completed_at:type_name -> google.protobuf.Timestamp
+	7,  // 6: conveyor.v1.TaskOptions.timeout:type_name -> google.protobuf.Duration
+	6,  // 7: conveyor.v1.TaskOptions.deadline:type_name -> google.protobuf.Timestamp
+	6,  // 8: conveyor.v1.TaskOptions.process_at:type_name -> google.protobuf.Timestamp
+	7,  // 9: conveyor.v1.TaskOptions.unique_ttl:type_name -> google.protobuf.Duration
+	7,  // 10: conveyor.v1.TaskOptions.retention:type_name -> google.protobuf.Duration
+	6,  // 11: conveyor.v1.TaskOptions.expires_at:type_name -> google.protobuf.Timestamp
+	2,  // 12: conveyor.v1.TaskOptions.depends_on:type_name -> conveyor.v1.TaskDependency
+	13, // [13:13] is the sub-list for method output_type
+	13, // [13:13] is the sub-list for method input_type
+	13, // [13:13] is the sub-list for extension type_name
+	13, // [13:13] is the sub-list for extension extendee
+	0,  // [0:13] is the sub-list for field type_name
 }
 
 func init() { file_conveyor_v1_task_proto_init() }
@@ -496,8 +647,8 @@ func file_conveyor_v1_task_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_conveyor_v1_task_proto_rawDesc), len(file_conveyor_v1_task_proto_rawDesc)),
-			NumEnums:      1,
-			NumMessages:   3,
+			NumEnums:      2,
+			NumMessages:   4,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

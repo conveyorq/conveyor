@@ -1216,6 +1216,55 @@ func (*GroupSweepTick) Descriptor() ([]byte, []int) {
 	return file_conveyor_v1_messages_proto_rawDescGZIP(), []int{20}
 }
 
+// ResolveDependents asks a dependency resolver to reconcile the tasks waiting on
+// one just-finished task and wake any queue whose work became eligible. It is
+// dispatched off the gateway's turn so the resolving broker transaction never
+// blocks task delivery.
+type ResolveDependents struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// task_id is the finished task whose dependents are to be reconciled.
+	TaskId        string `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ResolveDependents) Reset() {
+	*x = ResolveDependents{}
+	mi := &file_conveyor_v1_messages_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResolveDependents) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResolveDependents) ProtoMessage() {}
+
+func (x *ResolveDependents) ProtoReflect() protoreflect.Message {
+	mi := &file_conveyor_v1_messages_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ResolveDependents.ProtoReflect.Descriptor instead.
+func (*ResolveDependents) Descriptor() ([]byte, []int) {
+	return file_conveyor_v1_messages_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *ResolveDependents) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
 var File_conveyor_v1_messages_proto protoreflect.FileDescriptor
 
 const file_conveyor_v1_messages_proto_rawDesc = "" +
@@ -1292,7 +1341,9 @@ const file_conveyor_v1_messages_proto_rawDesc = "" +
 	"\vPromoteTick\"\n" +
 	"\n" +
 	"\bReapTick\"\x10\n" +
-	"\x0eGroupSweepTickB\xb2\x01\n" +
+	"\x0eGroupSweepTick\",\n" +
+	"\x11ResolveDependents\x12\x17\n" +
+	"\atask_id\x18\x01 \x01(\tR\x06taskIdB\xb2\x01\n" +
 	"\x0fcom.conveyor.v1B\rMessagesProtoP\x01ZCgithub.com/conveyorq/conveyor/internal/proto/conveyor/v1;conveyorv1\xa2\x02\x03CXX\xaa\x02\vConveyor.V1\xca\x02\vConveyor\\V1\xe2\x02\x17Conveyor\\V1\\GPBMetadata\xea\x02\fConveyor::V1b\x06proto3"
 
 var (
@@ -1307,7 +1358,7 @@ func file_conveyor_v1_messages_proto_rawDescGZIP() []byte {
 	return file_conveyor_v1_messages_proto_rawDescData
 }
 
-var file_conveyor_v1_messages_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
+var file_conveyor_v1_messages_proto_msgTypes = make([]protoimpl.MessageInfo, 22)
 var file_conveyor_v1_messages_proto_goTypes = []any{
 	(*TaskEnqueued)(nil),          // 0: conveyor.v1.TaskEnqueued
 	(*TasksAvailable)(nil),        // 1: conveyor.v1.TasksAvailable
@@ -1330,18 +1381,19 @@ var file_conveyor_v1_messages_proto_goTypes = []any{
 	(*PromoteTick)(nil),           // 18: conveyor.v1.PromoteTick
 	(*ReapTick)(nil),              // 19: conveyor.v1.ReapTick
 	(*GroupSweepTick)(nil),        // 20: conveyor.v1.GroupSweepTick
-	(*TaskEnvelope)(nil),          // 21: conveyor.v1.TaskEnvelope
-	(*timestamppb.Timestamp)(nil), // 22: google.protobuf.Timestamp
+	(*ResolveDependents)(nil),     // 21: conveyor.v1.ResolveDependents
+	(*TaskEnvelope)(nil),          // 22: conveyor.v1.TaskEnvelope
+	(*timestamppb.Timestamp)(nil), // 23: google.protobuf.Timestamp
 }
 var file_conveyor_v1_messages_proto_depIdxs = []int32{
-	21, // 0: conveyor.v1.ExecuteTask.task:type_name -> conveyor.v1.TaskEnvelope
-	22, // 1: conveyor.v1.ExecuteTask.lease_expires_at:type_name -> google.protobuf.Timestamp
-	21, // 2: conveyor.v1.ExecuteBatch.tasks:type_name -> conveyor.v1.TaskEnvelope
-	22, // 3: conveyor.v1.ExecuteBatch.lease_expires_at:type_name -> google.protobuf.Timestamp
-	21, // 4: conveyor.v1.GroupLeaseCompleted.tasks:type_name -> conveyor.v1.TaskEnvelope
-	22, // 5: conveyor.v1.GroupLeaseCompleted.lease_expires_at:type_name -> google.protobuf.Timestamp
-	21, // 6: conveyor.v1.LeaseCycleCompleted.tasks:type_name -> conveyor.v1.TaskEnvelope
-	22, // 7: conveyor.v1.LeaseCycleCompleted.lease_expires_at:type_name -> google.protobuf.Timestamp
+	22, // 0: conveyor.v1.ExecuteTask.task:type_name -> conveyor.v1.TaskEnvelope
+	23, // 1: conveyor.v1.ExecuteTask.lease_expires_at:type_name -> google.protobuf.Timestamp
+	22, // 2: conveyor.v1.ExecuteBatch.tasks:type_name -> conveyor.v1.TaskEnvelope
+	23, // 3: conveyor.v1.ExecuteBatch.lease_expires_at:type_name -> google.protobuf.Timestamp
+	22, // 4: conveyor.v1.GroupLeaseCompleted.tasks:type_name -> conveyor.v1.TaskEnvelope
+	23, // 5: conveyor.v1.GroupLeaseCompleted.lease_expires_at:type_name -> google.protobuf.Timestamp
+	22, // 6: conveyor.v1.LeaseCycleCompleted.tasks:type_name -> conveyor.v1.TaskEnvelope
+	23, // 7: conveyor.v1.LeaseCycleCompleted.lease_expires_at:type_name -> google.protobuf.Timestamp
 	8,  // [8:8] is the sub-list for method output_type
 	8,  // [8:8] is the sub-list for method input_type
 	8,  // [8:8] is the sub-list for extension type_name
@@ -1361,7 +1413,7 @@ func file_conveyor_v1_messages_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_conveyor_v1_messages_proto_rawDesc), len(file_conveyor_v1_messages_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   21,
+			NumMessages:   22,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

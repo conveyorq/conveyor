@@ -35,4 +35,6 @@ export type {
   EnqueueFn,
   TaskInfo,
   TaskState,
+  Dependency,
+  DependencyFailure,
 } from "./options.js";

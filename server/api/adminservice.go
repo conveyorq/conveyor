@@ -80,6 +80,7 @@ func (s *AdminService) ListQueues(ctx context.Context, _ *connect.Request[convey
 			Completed:   stat.Completed,
 			Archived:    stat.Archived,
 			Aggregating: stat.Aggregating,
+			Blocked:     stat.Blocked,
 		})
 	}
 

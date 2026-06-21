@@ -152,6 +152,26 @@ func (e *Engine) Start(ctx context.Context) error {
 		return fmt.Errorf("spawning group sweeper singleton: %w", err)
 	}
 
+	// Per-node dependency-resolver pool: completion-time dependency resolution
+	// runs here, off the gateway and grain turns, with bounded concurrency. The
+	// pool is local to each node; the reaper singleton backstops any node that
+	// has none.
+	if poolSize := e.runtime.Settings().ResolverPoolSize; poolSize > 0 {
+		// The router is node-local but GoAkt registers actor names
+		// cluster-wide, so the name is qualified by the node's remoting address
+		// to stay unique across the cluster. Callers reach it by the PID held in
+		// the runtime, never by name.
+		resolverName := fmt.Sprintf("%s-%s-%d", resolverRouterName, e.config.BindAddr, e.config.RemotingPort)
+
+		resolver, spawnErr := system.SpawnRouter(ctx, resolverName, poolSize, NewDependencyResolver(),
+			goakt.WithRoutingStrategy(goakt.RoundRobinRouting))
+		if spawnErr != nil {
+			return fmt.Errorf("spawning dependency resolver router: %w", spawnErr)
+		}
+
+		e.runtime.SetResolver(resolver)
+	}
+
 	e.runtime.Logger().Info("engine started", "system", e.config.Name, "bind", e.config.BindAddr, "discovery", e.config.Provider.ID())
 
 	return nil

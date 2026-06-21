@@ -91,6 +91,7 @@ const (
 	defaultPeersPortName     = "cluster"
 	defaultLeaseTTL          = 60 * time.Second
 	defaultLeaseBatchMax     = 100
+	defaultResolverPoolSize  = 8
 	defaultReapInterval      = 15 * time.Second
 	defaultPromoteInterval   = time.Second
 	defaultPassivateAfter    = 5 * time.Minute
@@ -249,6 +250,8 @@ type EngineConfig struct {
 	LeaseTTL time.Duration `koanf:"lease_ttl"`
 	// LeaseBatchMax caps how many tasks one lease cycle may claim.
 	LeaseBatchMax int `koanf:"lease_batch_max"`
+	// ResolverPoolSize is the number of dependency-resolver routees per node.
+	ResolverPoolSize int `koanf:"resolver_pool_size"`
 	// ReapInterval is the cadence of the reaper singleton tick.
 	ReapInterval time.Duration `koanf:"reap_interval"`
 	// PromoteInterval is the cadence of scheduled-task promotion.
@@ -316,6 +319,7 @@ func DefaultConfig() *Config {
 		Engine: EngineConfig{
 			LeaseTTL:           defaultLeaseTTL,
 			LeaseBatchMax:      defaultLeaseBatchMax,
+			ResolverPoolSize:   defaultResolverPoolSize,
 			ReapInterval:       defaultReapInterval,
 			PromoteInterval:    defaultPromoteInterval,
 			PassivateAfter:     defaultPassivateAfter,

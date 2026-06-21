@@ -22,6 +22,8 @@ export function taskStateLabel(state: TaskState): string {
       return "canceled";
     case TaskState.AGGREGATING:
       return "aggregating";
+    case TaskState.BLOCKED:
+      return "blocked";
     default:
       return "unknown";
   }
@@ -44,6 +46,8 @@ export function taskStateTone(state: TaskState): Tone {
       return "rose";
     case TaskState.AGGREGATING:
       return "indigo";
+    case TaskState.BLOCKED:
+      return "zinc";
     default:
       return "zinc";
   }

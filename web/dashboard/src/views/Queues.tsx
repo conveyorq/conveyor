@@ -9,9 +9,10 @@ import { Badge } from "../components/Badge.tsx";
 import { formatNumber } from "../lib/format.ts";
 
 // columns are the per-queue depth counters, in the order shown.
-const columns: { key: "scheduled" | "aggregating" | "pending" | "active" | "retry" | "completed" | "archived"; label: string }[] = [
+const columns: { key: "scheduled" | "aggregating" | "blocked" | "pending" | "active" | "retry" | "completed" | "archived"; label: string }[] = [
   { key: "scheduled", label: "Scheduled" },
   { key: "aggregating", label: "Aggregating" },
+  { key: "blocked", label: "Blocked" },
   { key: "pending", label: "Pending" },
   { key: "active", label: "Active" },
   { key: "retry", label: "Retry" },

@@ -83,6 +83,15 @@ func Run(t *testing.T, factory Factory) {
 		{"GroupedScheduleRejected", testGroupedScheduleRejected},
 		{"GroupStatsReportsMembers", testGroupStatsReportsMembers},
 		{"LeaseGroupClaimsBatch", testLeaseGroupClaimsBatch},
+		{"DependencyBlocksUntilResolved", testDependencyBlocksUntilResolved},
+		{"DependencyAlreadyCompletedAtEnqueue", testDependencyAlreadyCompletedAtEnqueue},
+		{"FanInWaitsForAllDependencies", testFanInWaitsForAllDependencies},
+		{"DependencyFailurePolicyBlock", testDependencyFailurePolicyBlock},
+		{"DependencyFailurePolicyContinue", testDependencyFailurePolicyContinue},
+		{"DependencyFailureCascadeCancels", testDependencyFailureCascadeCancels},
+		{"PromoteReadyDependentsSafetyNet", testPromoteReadyDependentsSafetyNet},
+		{"ConcurrentFanInResolves", testConcurrentFanInResolves},
+		{"DependencyCycleStaysBlocked", testDependencyCycleStaysBlocked},
 	}
 
 	for _, entry := range suite {
@@ -163,6 +172,24 @@ func withEnqueuedAt(at time.Time) taskOption {
 	return func(task *conveyorv1.TaskEnvelope) {
 		task.EnqueuedAt = timestamppb.New(at)
 	}
+}
+
+// withDependsOn declares the tasks this task waits for; until each reaches a
+// terminal success the task stays blocked.
+func withDependsOn(deps ...*conveyorv1.TaskDependency) taskOption {
+	return func(task *conveyorv1.TaskEnvelope) {
+		task.Options.DependsOn = deps
+	}
+}
+
+// dependsOn builds a dependency edge carrying the block-on-failure default.
+func dependsOn(taskID string) *conveyorv1.TaskDependency {
+	return &conveyorv1.TaskDependency{TaskId: taskID}
+}
+
+// dependsOnFailing builds a dependency edge with an explicit failure policy.
+func dependsOnFailing(taskID string, policy conveyorv1.DependencyFailurePolicy) *conveyorv1.TaskDependency {
+	return &conveyorv1.TaskDependency{TaskId: taskID, OnFailure: policy}
 }
 
 // newTask builds a minimal valid envelope; ids must sort lexicographically
@@ -1291,4 +1318,258 @@ func testLeaseGroupClaimsBatch(t *testing.T, b broker.Broker, _ *clock.Fake) {
 	if err := b.Ack(context.Background(), "task-001", "batch-1", nil); err != nil {
 		t.Fatalf("Ack member under batch lease: %v", err)
 	}
+}
+
+// mustAck acks a task under its lease or fails the test.
+func mustAck(t *testing.T, b broker.Broker, id, leaseID string) {
+	t.Helper()
+
+	if err := b.Ack(context.Background(), id, leaseID, nil); err != nil {
+		t.Fatalf("Ack(%s): %v", id, err)
+	}
+}
+
+// mustResolve reconciles a terminal task's dependents and returns the woken
+// queues, or fails the test.
+func mustResolve(t *testing.T, b broker.Broker, id string) []string {
+	t.Helper()
+
+	queues, err := b.ResolveDependents(context.Background(), id)
+	if err != nil {
+		t.Fatalf("ResolveDependents(%s): %v", id, err)
+	}
+
+	return queues
+}
+
+// completeOnly leases the single due task, asserts it is the expected id, acks
+// it, then resolves its dependents and returns the woken queues. It is the
+// success path for a dependency that has no due siblings.
+func completeOnly(t *testing.T, b broker.Broker, id string) []string {
+	t.Helper()
+
+	leaseID := "lease-" + id
+
+	leased := mustLease(t, b, queueName, batchLimit, leaseID)
+	if ids := leasedIDs(leased); !slices.Equal(ids, []string{id}) {
+		t.Fatalf("complete: leased %v, want only [%s]", ids, id)
+	}
+
+	mustAck(t, b, id, leaseID)
+
+	return mustResolve(t, b, id)
+}
+
+// testDependencyBlocksUntilResolved verifies a task that depends on another is
+// held blocked and unleasable until its dependency completes, then promoted.
+func testDependencyBlocksUntilResolved(t *testing.T, b broker.Broker, _ *clock.Fake) {
+	mustEnqueue(t, b, newTask("task-001"))
+	mustEnqueue(t, b, newTask("task-002", withDependsOn(dependsOn("task-001"))))
+
+	mustState(t, b, "task-002", conveyorv1.TaskState_TASK_STATE_BLOCKED)
+
+	queues := completeOnly(t, b, "task-001")
+	if !slices.Contains(queues, queueName) {
+		t.Fatalf("ResolveDependents woke %v, want to include %q", queues, queueName)
+	}
+
+	mustState(t, b, "task-002", conveyorv1.TaskState_TASK_STATE_PENDING)
+
+	leased := mustLease(t, b, queueName, batchLimit, "lease-final")
+	if ids := leasedIDs(leased); !slices.Equal(ids, []string{"task-002"}) {
+		t.Fatalf("unblocked dependent not leasable: leased %v", ids)
+	}
+}
+
+// testDependencyAlreadyCompletedAtEnqueue verifies a task whose dependency
+// already completed before it was enqueued is immediately eligible, not blocked.
+func testDependencyAlreadyCompletedAtEnqueue(t *testing.T, b broker.Broker, _ *clock.Fake) {
+	mustEnqueue(t, b, newTask("task-001"))
+	completeOnly(t, b, "task-001")
+
+	mustEnqueue(t, b, newTask("task-002", withDependsOn(dependsOn("task-001"))))
+
+	mustState(t, b, "task-002", conveyorv1.TaskState_TASK_STATE_PENDING)
+}
+
+// testFanInWaitsForAllDependencies verifies a continuation that depends on a
+// fan-out batch stays blocked until every member completes, then unblocks.
+func testFanInWaitsForAllDependencies(t *testing.T, b broker.Broker, _ *clock.Fake) {
+	mustEnqueue(t, b, newTask("task-001"))
+	mustEnqueue(t, b, newTask("task-002"))
+	mustEnqueue(t, b, newTask("task-003"))
+	mustEnqueue(t, b, newTask("task-004",
+		withDependsOn(dependsOn("task-001"), dependsOn("task-002"), dependsOn("task-003"))))
+
+	mustState(t, b, "task-004", conveyorv1.TaskState_TASK_STATE_BLOCKED)
+
+	leased := mustLease(t, b, queueName, batchLimit, "lease-1")
+	if ids := leasedIDs(leased); !slices.Equal(ids, []string{"task-001", "task-002", "task-003"}) {
+		t.Fatalf("fan-out leased %v, want the three independent members", ids)
+	}
+
+	mustAck(t, b, "task-001", "lease-1")
+	mustResolve(t, b, "task-001")
+	mustState(t, b, "task-004", conveyorv1.TaskState_TASK_STATE_BLOCKED)
+
+	mustAck(t, b, "task-002", "lease-1")
+	mustResolve(t, b, "task-002")
+	mustState(t, b, "task-004", conveyorv1.TaskState_TASK_STATE_BLOCKED)
+
+	mustAck(t, b, "task-003", "lease-1")
+	mustResolve(t, b, "task-003")
+	mustState(t, b, "task-004", conveyorv1.TaskState_TASK_STATE_PENDING)
+}
+
+// testDependencyFailurePolicyBlock verifies the default policy keeps a dependent
+// blocked when its dependency fails terminally.
+func testDependencyFailurePolicyBlock(t *testing.T, b broker.Broker, _ *clock.Fake) {
+	mustEnqueue(t, b, newTask("task-001"))
+	mustEnqueue(t, b, newTask("task-002", withDependsOn(dependsOn("task-001"))))
+
+	mustLease(t, b, queueName, batchLimit, "lease-1")
+
+	if err := b.Archive(context.Background(), "task-001", "lease-1", "boom"); err != nil {
+		t.Fatalf("Archive(task-001): %v", err)
+	}
+
+	mustResolve(t, b, "task-001")
+	mustState(t, b, "task-002", conveyorv1.TaskState_TASK_STATE_BLOCKED)
+}
+
+// testDependencyFailurePolicyContinue verifies the continue policy promotes a
+// dependent even though its dependency failed terminally.
+func testDependencyFailurePolicyContinue(t *testing.T, b broker.Broker, _ *clock.Fake) {
+	mustEnqueue(t, b, newTask("task-001"))
+	mustEnqueue(t, b, newTask("task-002",
+		withDependsOn(dependsOnFailing("task-001", conveyorv1.DependencyFailurePolicy_DEPENDENCY_FAILURE_POLICY_CONTINUE))))
+
+	mustLease(t, b, queueName, batchLimit, "lease-1")
+
+	if err := b.Archive(context.Background(), "task-001", "lease-1", "boom"); err != nil {
+		t.Fatalf("Archive(task-001): %v", err)
+	}
+
+	mustResolve(t, b, "task-001")
+	mustState(t, b, "task-002", conveyorv1.TaskState_TASK_STATE_PENDING)
+}
+
+// testDependencyFailureCascadeCancels verifies the cascade-cancel policy cancels
+// a dependent on dependency failure and propagates through its own dependents.
+func testDependencyFailureCascadeCancels(t *testing.T, b broker.Broker, _ *clock.Fake) {
+	cascade := conveyorv1.DependencyFailurePolicy_DEPENDENCY_FAILURE_POLICY_CASCADE_CANCEL
+
+	mustEnqueue(t, b, newTask("task-001"))
+	mustEnqueue(t, b, newTask("task-002", withDependsOn(dependsOnFailing("task-001", cascade))))
+	mustEnqueue(t, b, newTask("task-003", withDependsOn(dependsOnFailing("task-002", cascade))))
+
+	mustLease(t, b, queueName, batchLimit, "lease-1")
+
+	if err := b.Archive(context.Background(), "task-001", "lease-1", "boom"); err != nil {
+		t.Fatalf("Archive(task-001): %v", err)
+	}
+
+	mustResolve(t, b, "task-001")
+	mustState(t, b, "task-002", conveyorv1.TaskState_TASK_STATE_CANCELED)
+	mustState(t, b, "task-003", conveyorv1.TaskState_TASK_STATE_CANCELED)
+}
+
+// testPromoteReadyDependentsSafetyNet verifies the reaper sweep promotes a
+// dependent whose dependency completed without an inline ResolveDependents.
+func testPromoteReadyDependentsSafetyNet(t *testing.T, b broker.Broker, _ *clock.Fake) {
+	mustEnqueue(t, b, newTask("task-001"))
+	mustEnqueue(t, b, newTask("task-002", withDependsOn(dependsOn("task-001"))))
+
+	mustLease(t, b, queueName, batchLimit, "lease-1")
+	mustAck(t, b, "task-001", "lease-1")
+
+	// No inline ResolveDependents: the dependent is still blocked.
+	mustState(t, b, "task-002", conveyorv1.TaskState_TASK_STATE_BLOCKED)
+
+	queues, err := b.PromoteReadyDependents(context.Background(), batchLimit)
+	if err != nil {
+		t.Fatalf("PromoteReadyDependents: %v", err)
+	}
+
+	if !slices.Contains(queues, queueName) {
+		t.Fatalf("PromoteReadyDependents woke %v, want to include %q", queues, queueName)
+	}
+
+	mustState(t, b, "task-002", conveyorv1.TaskState_TASK_STATE_PENDING)
+}
+
+// testConcurrentFanInResolves drives the fan-in join under concurrency: many
+// sibling dependencies of one continuation complete and resolve at the same
+// time. Each resolver deletes only its own edge, so a broker that gates
+// promotion on a stale "no edges remain" snapshot would let every resolver miss
+// the others' deletes and strand the continuation blocked forever. The join must
+// end pending no matter how the resolutions interleave. Run under -race.
+func testConcurrentFanInResolves(t *testing.T, b broker.Broker, _ *clock.Fake) {
+	const siblings = 8
+
+	deps := make([]*conveyorv1.TaskDependency, siblings)
+
+	for i := range siblings {
+		id := fmt.Sprintf("task-%03d", i+1)
+		mustEnqueue(t, b, newTask(id))
+		deps[i] = dependsOn(id)
+	}
+
+	const joinID = "task-099"
+
+	mustEnqueue(t, b, newTask(joinID, withDependsOn(deps...)))
+	mustState(t, b, joinID, conveyorv1.TaskState_TASK_STATE_BLOCKED)
+
+	leased := mustLease(t, b, queueName, batchLimit, "lease-1")
+	if len(leased) != siblings {
+		t.Fatalf("leased %d sibling tasks, want %d", len(leased), siblings)
+	}
+
+	var waitGroup sync.WaitGroup
+
+	for i := range siblings {
+		id := fmt.Sprintf("task-%03d", i+1)
+
+		waitGroup.Add(1)
+
+		go func() {
+			defer waitGroup.Done()
+
+			if err := b.Ack(context.Background(), id, "lease-1", nil); err != nil {
+				t.Errorf("Ack(%s): %v", id, err)
+
+				return
+			}
+
+			if _, err := b.ResolveDependents(context.Background(), id); err != nil {
+				t.Errorf("ResolveDependents(%s): %v", id, err)
+			}
+		}()
+	}
+
+	waitGroup.Wait()
+
+	mustState(t, b, joinID, conveyorv1.TaskState_TASK_STATE_PENDING)
+}
+
+// testDependencyCycleStaysBlocked verifies a dependency cycle is handled
+// gracefully: two tasks that depend on each other can never satisfy their
+// dependency, so both stay blocked, and resolution neither loops nor hangs.
+func testDependencyCycleStaysBlocked(t *testing.T, b broker.Broker, _ *clock.Fake) {
+	mustEnqueue(t, b, newTask("task-001", withDependsOn(dependsOn("task-002"))))
+	mustEnqueue(t, b, newTask("task-002", withDependsOn(dependsOn("task-001"))))
+
+	mustState(t, b, "task-001", conveyorv1.TaskState_TASK_STATE_BLOCKED)
+	mustState(t, b, "task-002", conveyorv1.TaskState_TASK_STATE_BLOCKED)
+
+	// Neither dependency is terminal, so an inline resolve and the sweep are
+	// both no-ops that must return without looping.
+	mustResolve(t, b, "task-001")
+
+	if _, err := b.PromoteReadyDependents(context.Background(), batchLimit); err != nil {
+		t.Fatalf("PromoteReadyDependents: %v", err)
+	}
+
+	mustState(t, b, "task-001", conveyorv1.TaskState_TASK_STATE_BLOCKED)
+	mustState(t, b, "task-002", conveyorv1.TaskState_TASK_STATE_BLOCKED)
 }
