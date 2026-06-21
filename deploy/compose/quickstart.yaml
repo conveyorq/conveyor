@@ -10,6 +10,7 @@
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: conveyor
       POSTGRES_PASSWORD: conveyor
@@ -22,6 +23,7 @@ services:
 
   conveyord:
     image: ghcr.io/conveyorq/conveyor:edge
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
@@ -35,6 +37,8 @@ services:
       # Evaluation-only: run the API without bearer-token auth. Drop this and
       # set CONVEYOR_API__AUTH_TOKENS for anything reachable beyond localhost.
       CONVEYOR_API__ALLOW_UNAUTHENTICATED: "true"
+    # Bound to loopback only: this stack runs the API with auth off, so it must
+    # not be reachable from the LAN. Use a real auth token to expose it wider.
     ports:
-      - "8080:8080" # API + health (/healthz, /readyz)
-      - "9464:9464" # Prometheus metrics
+      - "127.0.0.1:8080:8080" # API + health (/healthz, /readyz)
+      - "127.0.0.1:9464:9464" # Prometheus metrics

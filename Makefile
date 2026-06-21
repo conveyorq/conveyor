@@ -1,9 +1,13 @@
-# Toolchain targets (proto, lint) run inside a Docker image built from
-# Dockerfile.tools, so contributors only need Docker, Make, and Go.
+# The Go toolchain targets (proto, lint-go) run inside a Docker image built from
+# Dockerfile.tools, so contributors only need Docker, Make, and Go for them.
 #
 # Tests and builds run on the host Go toolchain: the Postgres tests start
 # their database through testcontainers-go, which needs the host Docker
 # daemon — running them inside the tools image would mean docker-in-docker.
+#
+# The TypeScript and Python lint steps (lint-ts, lint-py) run on the host like
+# the SDK and dashboard targets do: lint-ts needs Node + pnpm, lint-py needs
+# Python + uv. `make lint` runs all three (Go, TypeScript, Python).
 
 GO      ?= go
 IMAGE   := conveyor-tools
@@ -25,9 +29,10 @@ DOCKER_RUN := docker run --rm \
 	-w $(WORKDIR) \
 	$(IMAGE)
 
-DASHBOARD_DIR := web/dashboard
-SDK_TS_DIR    := sdks/typescript
-SDK_PY_DIR    := sdks/python
+DASHBOARD_DIR   := web/dashboard
+SDK_TS_DIR      := sdks/typescript
+SDK_PY_DIR      := sdks/python
+EXAMPLES_TS_DIR := examples/typescript
 
 # License-header tooling. addlicense is fetched on demand with GOFLAGS cleared,
 # so it resolves even when the build runs under -mod=vendor/-mod=readonly. The
@@ -37,7 +42,7 @@ COPYRIGHT_HOLDER   := ConveyorQ
 GO_SOURCES         := $(shell find . -path ./vendor -prune -o -name '*.go' -print)
 ADDLICENSE         := GOFLAGS= $(GO) run github.com/google/addlicense@$(ADDLICENSE_VERSION) -l apache -s -c "$(COPYRIGHT_HOLDER)"
 
-.PHONY: help all image build test lint license-check license-fix licenses proto proto-format proto-lint proto-breaking quickstart chaos e2e e2e-clean e2e-dashboard e2e-demo benchmark helm-lint release clean dashboard dashboard-gen dashboard-test sdk-gen sdk-ts-gen sdk-ts-test sdk-py-gen sdk-py-test
+.PHONY: help all image build test lint lint-go lint-ts lint-py license-check license-fix licenses proto proto-format proto-lint proto-breaking quickstart chaos e2e e2e-clean e2e-dashboard e2e-demo benchmark helm-lint release clean dashboard dashboard-gen dashboard-test sdk-gen sdk-ts-gen sdk-ts-test sdk-py-gen sdk-py-test
 
 help: ## Show available targets
 	@awk 'BEGIN{FS=":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -57,8 +62,26 @@ quickstart: ## Run the scripted README quickstart (CI enforces a 60s budget)
 test: ## Run all tests with the race detector (needs the host Docker daemon)
 	$(GO) test -race ./...
 
-lint: image ## Run golangci-lint in the tools image
+lint: lint-go lint-ts lint-py ## Lint every language (Go, TypeScript, Python)
+
+lint-go: image ## Run golangci-lint in the tools image
 	$(DOCKER_RUN) golangci-lint run --timeout 10m
+
+# lint-ts type-checks every TypeScript package with the strict compiler (the
+# project's enforced standard). pnpm install is frozen so a stale lockfile is a
+# lint failure, not a silent update.
+lint-ts: ## Type-check the TypeScript packages (dashboard, SDK, examples)
+	cd $(DASHBOARD_DIR) && pnpm install --frozen-lockfile && pnpm exec tsc --noEmit
+	cd $(SDK_TS_DIR) && pnpm install --frozen-lockfile && pnpm run typecheck
+	cd $(EXAMPLES_TS_DIR) && pnpm install --frozen-lockfile && pnpm run typecheck
+
+# lint-py lints the Python SDK with ruff and type-checks it with mypy, both
+# configured in sdks/python/pyproject.toml. The venv is created on demand, the
+# same way the codegen target builds it.
+lint-py: ## Lint the Python SDK with ruff + mypy
+	cd $(SDK_PY_DIR) && { test -d .venv || uv venv .venv; } && uv pip install --python .venv -e ".[dev]"
+	cd $(SDK_PY_DIR) && .venv/bin/ruff check .
+	cd $(SDK_PY_DIR) && .venv/bin/mypy src
 
 license-check: ## Verify the Apache-2.0 SPDX header on every Go source file
 	$(ADDLICENSE) -check $(GO_SOURCES)
@@ -129,9 +152,10 @@ BENCH_TASKS ?= 20000
 benchmark: ## Run the throughput/latency benchmark (in-memory broker)
 	$(GO) run ./benchmark --tasks=$(BENCH_TASKS)
 
-# The dashboard SPA is built by Vite and its dist/ is committed, so `go build`
-# never needs Node. Run this to refresh the committed bundle after UI changes.
-dashboard: ## Rebuild the embedded dashboard bundle (needs Node) and commit dist/
+# The dashboard SPA is built by Vite into a git-ignored dist/ (only dist/.gitkeep
+# is committed, which keeps the go:embed compiling), so `go build` never needs
+# Node. CI and the Docker build run this; run it locally to preview UI changes.
+dashboard: ## Rebuild the embedded dashboard bundle (needs Node)
 	cd $(DASHBOARD_DIR) && pnpm install --frozen-lockfile && pnpm run build
 
 dashboard-gen: ## Regenerate the dashboard's TypeScript Connect client from the protos

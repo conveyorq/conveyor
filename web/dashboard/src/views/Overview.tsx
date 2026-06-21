@@ -38,20 +38,33 @@ export function Overview() {
   return (
     <QueryView query={query}>
       {(data) => {
-        const total = (key: (typeof queueColumns)[number]["key"]) =>
-          data.queues.reduce((sum, queue) => sum + queue[key], 0n);
+        // Sum every state in a single pass over the queues rather than one
+        // reduce per stat card.
+        const totals = data.queues.reduce(
+          (acc, queue) => {
+            for (const column of queueColumns) {
+              acc[column.key] += queue[column.key];
+            }
+
+            return acc;
+          },
+          { pending: 0n, active: 0n, retry: 0n, completed: 0n, archived: 0n } as Record<
+            (typeof queueColumns)[number]["key"],
+            bigint
+          >,
+        );
 
         return (
           <div className="space-y-5">
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
               <Stat label="Queues" value={formatNumber(data.queues.length)} tone="indigo" hint="Named queues with work." />
-              <Stat label="Workers" value={formatNumber(data.workers.length)} tone="indigo" hint="Worker sessions connected to this node." />
+              <Stat label="Workers (node)" value={formatNumber(data.workers.length)} tone="indigo" hint="Worker sessions connected to the node serving this request, not the whole cluster." />
               <Stat label="Nodes" value={formatNumber(data.nodes.length)} tone="indigo" hint="conveyord nodes in the cluster." />
               {queueColumns.map((column) => (
                 <Stat
                   key={column.key}
                   label={`Tasks ${column.label}`}
-                  value={formatNumber(total(column.key))}
+                  value={formatNumber(totals[column.key])}
                   tone={column.tone}
                   hint={column.hint}
                 />

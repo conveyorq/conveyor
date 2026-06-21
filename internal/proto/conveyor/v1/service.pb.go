@@ -1071,7 +1071,7 @@ func (x *Hello) GetBatchTypes() []string {
 // credits equal to Hello.concurrency and refills one per Result, so a worker
 // that simply answers every Dispatch with a Result needs no Credit frame.
 // When sent, n must be in 1..concurrency; the server caps total credits at the
-// declared concurrency. See docs/protocol.md §5.5.
+// declared concurrency.
 type Credit struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	N             int32                  `protobuf:"varint,1,opt,name=n,proto3" json:"n,omitempty"`

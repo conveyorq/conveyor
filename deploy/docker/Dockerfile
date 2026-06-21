@@ -63,10 +63,15 @@ LABEL org.opencontainers.image.title="conveyor" \
 COPY --from=build /out/conveyord /usr/local/bin/conveyord
 COPY --from=build /out/conveyor /usr/local/bin/conveyor
 
-# api (health + ConnectRPC), remoting, gossip bootstrap, peers protocol.
-EXPOSE 8080 9000 9001 9002
+# api (health + ConnectRPC), metrics, remoting, gossip bootstrap, peers protocol.
+EXPOSE 8080 9464 9000 9001 9002
 
 # distroless nonroot runs as uid 65532; never run as root.
 USER nonroot:nonroot
+
+# Self-probe via the binary's own subcommand: the distroless image has no shell
+# or curl. start-period covers broker connect and listener bind on first start.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD ["/usr/local/bin/conveyord", "healthcheck"]
 
 ENTRYPOINT ["/usr/local/bin/conveyord"]

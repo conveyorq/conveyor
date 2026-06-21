@@ -5,14 +5,15 @@ and submit changes.
 
 ## Prerequisites
 
-- **Go 1.26+** — the toolchain for the server, SDK, and CLI.
-- **Docker** — required for several workflows: the lint/proto tools run in a
+- **Go 1.26+**, the toolchain for the server, SDK, and CLI.
+- **Docker**, required for several workflows: the lint/proto tools run in a
   pinned image, the Postgres tests start a database through testcontainers, and
   the end-to-end test builds the container image.
-- **Node 20+** — only needed to rebuild the web dashboard (`web/dashboard/`).
-  The built bundle is committed, so `go build` and the test suite do **not**
-  need Node.
-- **kind, kubectl, helm** — only needed for the Kubernetes end-to-end test.
+- **Node 20+**, only needed to rebuild the web dashboard (`web/dashboard/`).
+  `go build` and the test suite do **not** need Node: a `.gitkeep` placeholder
+  keeps the `go:embed` of `dist/` compiling, and CI builds the real bundle into
+  the image.
+- **kind, kubectl, helm**, only needed for the Kubernetes end-to-end test.
 
 `buf` is invoked inside the tools image, so you don't need it installed locally.
 
@@ -56,15 +57,15 @@ kubernetes mode discovering each other through the Kubernetes API, the database
 DSN and API tokens delivered as Secrets, and metrics on their own port. It
 builds the image, loads it into kind, installs the Helm chart, and asserts the
 rollout completes, the three nodes form one cluster, and the metrics endpoint
-serves. It then drives load through a **rolling restart** — an in-cluster
+serves. It then drives load through a **rolling restart**: an in-cluster
 producer/worker enqueues and processes tasks through the API Service while the
-StatefulSet is rolled one pod at a time — and asserts the cluster reforms and
+StatefulSet is rolled one pod at a time, and asserts the cluster reforms and
 every task completes with zero loss. It needs `docker`, `kind`, `kubectl`, and
 `helm`, and runs the same way locally and in CI.
 
-The cluster is torn down automatically on exit. To watch it **live** instead —
-stand up the cluster, run a continuous producer/worker, and open the dashboard
-so you can see tasks flow — use the one-command playground:
+The cluster is torn down automatically on exit. To watch it **live** instead
+(stand up the cluster, run a continuous producer/worker, and open the dashboard
+so you can see tasks flow), use the one-command playground:
 
 ```sh
 make e2e-demo   # cluster + continuous load + live dashboard at http://localhost:8080/ (token: e2e-token)
@@ -94,7 +95,7 @@ Keep the wire contract backward compatible (`make proto-breaking` checks against
 ## Dashboard
 
 The dashboard is a React + TypeScript app (`web/dashboard/`) built with Vite.
-Its built bundle (`dist/`) is **not committed** — it is built in CI and baked
+Its built bundle (`dist/`) is **not committed**; it is built in CI and baked
 into the Docker image (a Node stage). `go build`/`go test` work without Node;
 the dashboard tests simply skip when the bundle is absent, and the binary serves
 an empty dashboard until you build it. To build it locally (needs Node):
@@ -159,7 +160,7 @@ Do not commit `vendor/`.
 ## Developer Certificate of Origin
 
 Conveyor is released under the [Apache License 2.0](LICENSE). Contributions are
-accepted under the same license — there is no separate contributor agreement to
+accepted under the same license; there is no separate contributor agreement to
 sign. Instead, we use the [Developer Certificate of Origin](https://developercertificate.org)
 (DCO): a lightweight statement that you wrote the contribution, or otherwise have
 the right to submit it under the project's license.

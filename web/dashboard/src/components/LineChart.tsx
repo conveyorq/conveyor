@@ -1,3 +1,5 @@
+import { memo } from "react";
+
 // Series is one labelled line in a LineChart.
 export interface Series {
   label: string;
@@ -26,7 +28,10 @@ function linePoints(values: number[], max: number): string {
   return values
     .map((value, index) => {
       const x = padding + index * step;
-      const y = padding + plotHeight - (value / max) * plotHeight;
+      // Clamp into [0, max] so an out-of-range value (a negative, or a stale
+      // sample above the current max) never draws outside the plot area.
+      const clamped = Math.max(0, Math.min(value, max));
+      const y = padding + plotHeight - (clamped / max) * plotHeight;
 
       return `${x.toFixed(1)},${y.toFixed(1)}`;
     })
@@ -34,8 +39,11 @@ function linePoints(values: number[], max: number): string {
 }
 
 // LineChart renders one or more value series as overlaid SVG lines with a
-// legend. It is dependency-free: a hand-rolled SVG keeps the bundle small.
-export function LineChart({ series, ariaLabel }: { series: Series[]; ariaLabel: string }) {
+// legend. It is dependency-free: a hand-rolled SVG keeps the bundle small. It is
+// memoized so a parent re-render (e.g. the 2s refresh tick) only repaints the
+// chart when the series array identity actually changes; callers should pass a
+// memoized series array.
+export const LineChart = memo(function LineChart({ series, ariaLabel }: { series: Series[]; ariaLabel: string }) {
   // A shared max keeps the lines comparable; the floor of 1 avoids divide-by-zero
   // and gives an empty chart a flat baseline.
   const max = Math.max(1, ...series.flatMap((line) => line.values));
@@ -75,4 +83,4 @@ export function LineChart({ series, ariaLabel }: { series: Series[]; ariaLabel: 
       </div>
     </div>
   );
-}
+});

@@ -79,6 +79,21 @@ func TestHandlerServesBuiltAsset(t *testing.T) {
 	require.NotContains(t, resp.Header().Get("Content-Type"), "text/html")
 }
 
+// TestHandlerMissingAssetIs404 verifies that a missing path that looks like an
+// asset (it has an extension) returns 404 rather than masking a broken deploy
+// by serving the SPA shell with a 200.
+func TestHandlerMissingAssetIs404(t *testing.T) {
+	requireBuilt(t)
+
+	handler, err := dashboard.Handler()
+	require.NoError(t, err)
+
+	resp := serve(t, handler, "/assets/does-not-exist.js")
+
+	require.Equal(t, http.StatusNotFound, resp.Code)
+	require.NotContains(t, resp.Body.String(), `id="root"`)
+}
+
 // serve runs one GET request against the handler and returns the recorder.
 func serve(t *testing.T, handler http.Handler, path string) *httptest.ResponseRecorder {
 	t.Helper()

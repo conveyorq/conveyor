@@ -58,6 +58,10 @@ standalone, in-memory broker, auth disabled, and debug logs.`,
 	flags.StringVar(&mode, "mode", "", "deployment mode: standalone | cluster | kubernetes (overrides config)")
 	flags.BoolVar(&dev, "dev", false, "development mode: standalone, in-memory broker, auth disabled, debug logs")
 
+	// Running conveyord with no subcommand still starts the node (root.RunE);
+	// `conveyord healthcheck` is the container self-probe.
+	root.AddCommand(newHealthcheckCommand())
+
 	return root
 }
 

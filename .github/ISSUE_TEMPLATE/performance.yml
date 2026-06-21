@@ -1,0 +1,82 @@
+name: Performance issue
+description: Report a throughput, latency, or resource-usage problem with reproducible numbers.
+title: "perf: "
+labels: ["performance"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Performance reports are most actionable with **numbers and a reproducible workload**. The repo ships a benchmark harness (`make benchmark`, see [benchmark/README.md](https://github.com/conveyorq/conveyor/blob/main/benchmark/README.md)) you can adapt.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What is slow or expensive, in one or two sentences.
+    validations:
+      required: true
+  - type: textarea
+    id: workload
+    attributes:
+      label: Workload
+      description: The scenario you measured. Include task rate, payload size, concurrency, number of queues, and queue depth.
+      placeholder: |
+        - Enqueue rate: 5,000 tasks/s
+        - Payload: ~2 KB JSON
+        - Worker concurrency: 100
+        - Queues: 4
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed numbers
+      description: What you measured and how (throughput, p50/p99 latency, CPU/memory). State the measurement method.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected or target numbers
+      description: What you hoped for, and why (a prior version, another queue, a back-of-envelope estimate).
+  - type: dropdown
+    id: broker
+    attributes:
+      label: Broker
+      options:
+        - Postgres
+        - In-memory
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Deployment mode
+      options:
+        - standalone
+        - cluster
+        - kubernetes
+        - embedded
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Hardware (CPU cores, memory), node count, Postgres version and sizing, and the Conveyor version.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Profiles and metrics
+      description: Attach pprof profiles, the `conveyor_*` Prometheus metrics, Grafana screenshots, or `EXPLAIN ANALYZE` for broker queries where relevant.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Confirmations
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: The numbers above are reproducible and I described how I measured them.
+          required: true

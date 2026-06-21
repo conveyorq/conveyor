@@ -2,7 +2,7 @@
 
 Group aggregation lets you **coalesce many tasks into one batch** and process
 them together in a single handler call. It is the answer to "100 of these events
-arrived in a minute — handle them once" (debounce/digest) and to "process 1,000
+arrived in a minute, handle them once" (debounce/digest) and to "process 1,000
 of these in one bulk API call" (batching).
 
 A producer tags tasks with a **group**; the server accumulates members of the
@@ -22,7 +22,7 @@ client.Enqueue(ctx,
 
 A grouped task lands in the **`aggregating`** state instead of `pending`; it is
 not dispatched until its group fires. `Group` is mutually exclusive with
-`ProcessAt`/`ProcessIn`, and a group is **single-type** — every member shares the
+`ProcessAt`/`ProcessIn`, and a group is **single-type**: every member shares the
 task's type.
 
 ## Handle a batch
@@ -84,6 +84,6 @@ bounds worst-case latency; the max-size bounds batch size.
 
 ## Observability
 
-Grouped tasks show up as the **Aggregating** count per queue in the dashboard
-and in `AdminService.ListQueues`, and as `conveyor_aggregating`-style state
-counts — so you can see a group filling up before it fires.
+Grouped tasks show up as the **Aggregating** count per queue, both in the
+dashboard and in `AdminService.ListQueues`, so you can see a group filling up
+before it fires.

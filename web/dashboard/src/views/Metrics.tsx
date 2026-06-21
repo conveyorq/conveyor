@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useApi } from "../api/context.tsx";
 import { useRefreshTick } from "../api/refresh.ts";
 import { Panel } from "../components/Panel.tsx";
@@ -54,17 +54,25 @@ export function Metrics() {
     };
   }, [api, tick]);
 
-  const backlog: Series[] = [
-    { label: "Pending", color: "#0ea5e9", values: samples.map((s) => s.pending) },
-    { label: "Active", color: "#f59e0b", values: samples.map((s) => s.active) },
-    { label: "Scheduled", color: "#8b5cf6", values: samples.map((s) => s.scheduled) },
-    { label: "Retry", color: "#f97316", values: samples.map((s) => s.retry) },
-  ];
+  // Rebuild the series only when the sample window changes, not on every parent
+  // render, so the memoized charts repaint only when there is new data.
+  const backlog = useMemo<Series[]>(
+    () => [
+      { label: "Pending", color: "#0ea5e9", values: samples.map((s) => s.pending) },
+      { label: "Active", color: "#f59e0b", values: samples.map((s) => s.active) },
+      { label: "Scheduled", color: "#8b5cf6", values: samples.map((s) => s.scheduled) },
+      { label: "Retry", color: "#f97316", values: samples.map((s) => s.retry) },
+    ],
+    [samples],
+  );
 
-  const outcomes: Series[] = [
-    { label: "Completed", color: "#10b981", values: samples.map((s) => s.completed) },
-    { label: "Archived", color: "#f43f5e", values: samples.map((s) => s.archived) },
-  ];
+  const outcomes = useMemo<Series[]>(
+    () => [
+      { label: "Completed", color: "#10b981", values: samples.map((s) => s.completed) },
+      { label: "Archived", color: "#f43f5e", values: samples.map((s) => s.archived) },
+    ],
+    [samples],
+  );
 
   return (
     <div className="space-y-4">

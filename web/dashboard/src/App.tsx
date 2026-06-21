@@ -14,6 +14,7 @@ import { loadDashboardConfig } from "./api/config.ts";
 import { apiBaseUrl } from "./api/transport.ts";
 import { applyTheme, getTheme, setTheme, type Theme } from "./lib/theme.ts";
 import { Badge } from "./components/Badge.tsx";
+import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
 import {
   IconBroker,
   IconCron,
@@ -186,7 +187,9 @@ export function App() {
 
         <RefreshTickContext.Provider value={tick}>
           <ReadOnlyProvider value={readOnly}>
-            <main className="flex-1 overflow-auto p-6">{current.render()}</main>
+            <main className="flex-1 overflow-auto p-6">
+              <ErrorBoundary key={active}>{current.render()}</ErrorBoundary>
+            </main>
           </ReadOnlyProvider>
         </RefreshTickContext.Provider>
       </div>

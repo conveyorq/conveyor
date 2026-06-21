@@ -80,13 +80,18 @@ function humanizeDuration(ms: number): string {
     return `${seconds.toFixed(seconds < 10 ? 2 : 1)}s`;
   }
 
-  const minutes = Math.floor(seconds / 60);
+  // Round to whole seconds first, then divide, so a value like 119.6s renders
+  // "2m 0s" rather than "1m 60s" (and 3599.6s rolls up to "1h 0m").
+  const totalSeconds = Math.round(seconds);
+  const minutes = Math.floor(totalSeconds / 60);
   if (minutes < 60) {
-    return `${minutes}m ${Math.round(seconds % 60)}s`;
+    return `${minutes}m ${totalSeconds % 60}s`;
   }
 
-  const hours = Math.floor(minutes / 60);
-  return `${hours}h ${minutes % 60}m`;
+  const totalMinutes = Math.round(totalSeconds / 60);
+  const hours = Math.floor(totalMinutes / 60);
+
+  return `${hours}h ${totalMinutes % 60}m`;
 }
 
 // formatDuration renders a task's execution duration: the span from its start

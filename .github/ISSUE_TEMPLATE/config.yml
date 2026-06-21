@@ -1,0 +1,13 @@
+# Force issues through the structured forms below; route everything else to a
+# more appropriate channel.
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/conveyorq/conveyor/blob/main/SECURITY.md
+    about: Do not open a public issue for a security problem. Follow the security policy to report it privately.
+  - name: Question or usage help
+    url: https://github.com/conveyorq/conveyor/discussions
+    about: For "how do I…" questions and open-ended discussion, please start a discussion instead of an issue.
+  - name: Documentation
+    url: https://github.com/conveyorq/conveyor/tree/main/docs
+    about: Browse the concepts, architecture, operations, and protocol guides before filing.

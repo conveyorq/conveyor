@@ -38,13 +38,26 @@ export function Cron() {
   }
 
   function save() {
+    const id = form.id.trim();
+    const spec = form.spec.trim();
+    const taskType = form.taskType.trim();
+
+    // Require the fields the entry cannot exist without before the round-trip,
+    // so a missing id/spec/type gives an immediate message rather than a server
+    // invalid-argument error.
+    if (id === "" || spec === "" || taskType === "") {
+      return action.run(() =>
+        Promise.reject(new Error("ID, schedule spec, and task type are required.")),
+      );
+    }
+
     return action
       .run(() =>
         api.admin.upsertCron({
           entry: {
-            id: form.id.trim(),
-            spec: form.spec.trim(),
-            taskType: form.taskType.trim(),
+            id,
+            spec,
+            taskType,
             queue: form.queue.trim(),
             contentType: form.contentType.trim(),
             payload: new TextEncoder().encode(form.payload),

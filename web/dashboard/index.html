@@ -4,6 +4,18 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Conveyor</title>
+    <script>
+      // Apply the saved theme before first paint so the page does not flash the
+      // wrong color scheme. Mirrors lib/theme.ts: dark unless explicitly light.
+      try {
+        document.documentElement.classList.toggle(
+          "dark",
+          localStorage.getItem("conveyor.theme") !== "light",
+        );
+      } catch (e) {
+        document.documentElement.classList.add("dark");
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>
