@@ -92,7 +92,7 @@ class TaskEnvelope(_message.Message):
         ...
 
 class TaskOptions(_message.Message):
-    __slots__ = ('max_retry', 'timeout', 'deadline', 'process_at', 'unique_key', 'unique_ttl', 'retention', 'priority', 'group', 'expires_at', 'depends_on')
+    __slots__ = ('max_retry', 'timeout', 'deadline', 'process_at', 'unique_key', 'unique_ttl', 'retention', 'priority', 'group', 'expires_at', 'depends_on', 'concurrency_key')
     MAX_RETRY_FIELD_NUMBER: _ClassVar[int]
     TIMEOUT_FIELD_NUMBER: _ClassVar[int]
     DEADLINE_FIELD_NUMBER: _ClassVar[int]
@@ -104,6 +104,7 @@ class TaskOptions(_message.Message):
     GROUP_FIELD_NUMBER: _ClassVar[int]
     EXPIRES_AT_FIELD_NUMBER: _ClassVar[int]
     DEPENDS_ON_FIELD_NUMBER: _ClassVar[int]
+    CONCURRENCY_KEY_FIELD_NUMBER: _ClassVar[int]
     max_retry: int
     timeout: _duration_pb2.Duration
     deadline: _timestamp_pb2.Timestamp
@@ -115,6 +116,7 @@ class TaskOptions(_message.Message):
     group: str
     expires_at: _timestamp_pb2.Timestamp
     depends_on: _containers.RepeatedCompositeFieldContainer[TaskDependency]
+    concurrency_key: str
 
-    def __init__(self, max_retry: _Optional[int]=..., timeout: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., deadline: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., process_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., unique_key: _Optional[str]=..., unique_ttl: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., retention: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., priority: _Optional[int]=..., group: _Optional[str]=..., expires_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., depends_on: _Optional[_Iterable[_Union[TaskDependency, _Mapping]]]=...) -> None:
+    def __init__(self, max_retry: _Optional[int]=..., timeout: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., deadline: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., process_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., unique_key: _Optional[str]=..., unique_ttl: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., retention: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., priority: _Optional[int]=..., group: _Optional[str]=..., expires_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., depends_on: _Optional[_Iterable[_Union[TaskDependency, _Mapping]]]=..., concurrency_key: _Optional[str]=...) -> None:
         ...

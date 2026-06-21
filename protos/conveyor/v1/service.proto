@@ -37,6 +37,12 @@ service AdminService {
   rpc SetQueueRateLimit(SetQueueRateLimitRequest) returns (SetQueueRateLimitResponse) {}
   // DeleteQueueRateLimit clears a queue's override, reverting it to the default.
   rpc DeleteQueueRateLimit(DeleteQueueRateLimitRequest) returns (DeleteQueueRateLimitResponse) {}
+  // ListConcurrencyLimits returns every per-queue concurrency limit.
+  rpc ListConcurrencyLimits(ListConcurrencyLimitsRequest) returns (ListConcurrencyLimitsResponse) {}
+  // SetQueueConcurrencyLimit sets a queue's per-key concurrency limit.
+  rpc SetQueueConcurrencyLimit(SetQueueConcurrencyLimitRequest) returns (SetQueueConcurrencyLimitResponse) {}
+  // DeleteQueueConcurrencyLimit clears a queue's concurrency limit, leaving its keys unbounded.
+  rpc DeleteQueueConcurrencyLimit(DeleteQueueConcurrencyLimitRequest) returns (DeleteQueueConcurrencyLimitResponse) {}
   rpc ListTasks(ListTasksRequest) returns (ListTasksResponse) {}
   rpc CancelTask(CancelTaskRequest) returns (CancelTaskResponse) {}
   rpc DeleteTask(DeleteTaskRequest) returns (DeleteTaskResponse) {}
@@ -108,6 +114,9 @@ message EnqueueRequest {
   // is not eligible to lease until every dependency reaches a terminal success;
   // each dependency carries the policy applied if it instead fails terminally.
   repeated TaskDependency depends_on = 19;
+  // concurrency_key caps how many tasks sharing it the queue runs at once, up to
+  // the queue's configured concurrency limit. Mutually exclusive with group.
+  string concurrency_key = 20;
 }
 
 message EnqueueResponse {
@@ -361,6 +370,37 @@ message DeleteQueueRateLimitRequest {
 }
 
 message DeleteQueueRateLimitResponse {}
+
+// ConcurrencyLimitInfo reports one queue's per-key concurrency limit.
+message ConcurrencyLimitInfo {
+  // queue is the queue the limit applies to.
+  string queue = 1;
+  // max_active is the most tasks sharing a concurrency key the queue runs at once.
+  int32 max_active = 2;
+}
+
+message ListConcurrencyLimitsRequest {}
+
+message ListConcurrencyLimitsResponse {
+  repeated ConcurrencyLimitInfo limits = 1;
+}
+
+message SetQueueConcurrencyLimitRequest {
+  // queue is the queue to limit.
+  string queue = 1;
+  // max_active is the most tasks sharing a concurrency key that may be active at
+  // once; must be at least one.
+  int32 max_active = 2;
+}
+
+message SetQueueConcurrencyLimitResponse {}
+
+message DeleteQueueConcurrencyLimitRequest {
+  // queue is the queue whose limit to clear; clearing an absent limit succeeds.
+  string queue = 1;
+}
+
+message DeleteQueueConcurrencyLimitResponse {}
 
 message ListTasksRequest {
   string queue = 1;

@@ -165,6 +165,7 @@ class Client:
             priority=options.priority or 0,
             unique_key=unique_key,
             group=options.group or "",
+            concurrency_key=options.concurrency_key or "",
         )
 
         if options.timeout is not None:

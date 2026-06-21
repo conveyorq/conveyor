@@ -281,6 +281,26 @@ func (e *encryptedBroker) QueueRateLimits(ctx context.Context) ([]broker.RateLim
 	return e.inner.QueueRateLimits(ctx)
 }
 
+// SetQueueConcurrencyLimit delegates to the wrapped broker.
+func (e *encryptedBroker) SetQueueConcurrencyLimit(ctx context.Context, queue string, maxActive int) error {
+	return e.inner.SetQueueConcurrencyLimit(ctx, queue, maxActive)
+}
+
+// DeleteQueueConcurrencyLimit delegates to the wrapped broker.
+func (e *encryptedBroker) DeleteQueueConcurrencyLimit(ctx context.Context, queue string) error {
+	return e.inner.DeleteQueueConcurrencyLimit(ctx, queue)
+}
+
+// QueueConcurrencyLimit delegates to the wrapped broker.
+func (e *encryptedBroker) QueueConcurrencyLimit(ctx context.Context, queue string) (broker.ConcurrencyLimit, bool, error) {
+	return e.inner.QueueConcurrencyLimit(ctx, queue)
+}
+
+// QueueConcurrencyLimits delegates to the wrapped broker.
+func (e *encryptedBroker) QueueConcurrencyLimits(ctx context.Context) ([]broker.ConcurrencyLimit, error) {
+	return e.inner.QueueConcurrencyLimits(ctx)
+}
+
 // Info delegates to the wrapped broker.
 func (e *encryptedBroker) Info(ctx context.Context) (broker.Info, error) {
 	return e.inner.Info(ctx)

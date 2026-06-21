@@ -84,6 +84,8 @@ type Broker struct {
 	pausedQueues map[string]bool
 	// rateLimits holds per-queue dispatch-rate overrides by queue name.
 	rateLimits map[string]broker.RateLimit
+	// concurrencyLimits holds per-queue per-key concurrency caps by queue name.
+	concurrencyLimits map[string]broker.ConcurrencyLimit
 	// cronEntries maps entry id to the stored entry.
 	cronEntries map[string]*broker.CronEntry
 	// dependents is the reverse dependency index: each dependency task id maps
@@ -100,12 +102,13 @@ var _ broker.Broker = (*Broker)(nil)
 // New returns an empty in-memory broker reading time from the given clock.
 func New(timeSource clock.Clock) *Broker {
 	return &Broker{
-		clock:        timeSource,
-		tasks:        make(map[string]*taskRow),
-		pausedQueues: make(map[string]bool),
-		rateLimits:   make(map[string]broker.RateLimit),
-		cronEntries:  make(map[string]*broker.CronEntry),
-		dependents:   make(map[string]map[string]struct{}),
+		clock:             timeSource,
+		tasks:             make(map[string]*taskRow),
+		pausedQueues:      make(map[string]bool),
+		rateLimits:        make(map[string]broker.RateLimit),
+		concurrencyLimits: make(map[string]broker.ConcurrencyLimit),
+		cronEntries:       make(map[string]*broker.CronEntry),
+		dependents:        make(map[string]map[string]struct{}),
 	}
 }
 
@@ -1081,6 +1084,57 @@ func (b *Broker) QueueRateLimits(_ context.Context) ([]broker.RateLimit, error) 
 	return limits, nil
 }
 
+// SetQueueConcurrencyLimit persists a per-queue per-key concurrency cap; see broker.Broker.
+func (b *Broker) SetQueueConcurrencyLimit(_ context.Context, queue string, maxActive int) error {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	b.concurrencyLimits[queue] = broker.ConcurrencyLimit{
+		Queue:     queue,
+		MaxActive: maxActive,
+		UpdatedAt: b.clock.Now(),
+	}
+
+	return nil
+}
+
+// DeleteQueueConcurrencyLimit removes a queue's concurrency limit; see broker.Broker.
+func (b *Broker) DeleteQueueConcurrencyLimit(_ context.Context, queue string) error {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	delete(b.concurrencyLimits, queue)
+
+	return nil
+}
+
+// QueueConcurrencyLimit returns a queue's limit and whether one is set; see broker.Broker.
+func (b *Broker) QueueConcurrencyLimit(_ context.Context, queue string) (broker.ConcurrencyLimit, bool, error) {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	limit, ok := b.concurrencyLimits[queue]
+
+	return limit, ok, nil
+}
+
+// QueueConcurrencyLimits returns every limit ordered by queue name; see broker.Broker.
+func (b *Broker) QueueConcurrencyLimits(_ context.Context) ([]broker.ConcurrencyLimit, error) {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	limits := make([]broker.ConcurrencyLimit, 0, len(b.concurrencyLimits))
+	for _, limit := range b.concurrencyLimits {
+		limits = append(limits, limit)
+	}
+
+	slices.SortFunc(limits, func(a, b broker.ConcurrencyLimit) int {
+		return strings.Compare(a.Queue, b.Queue)
+	})
+
+	return limits, nil
+}
+
 // Info reports the in-memory engine's driver and row counts; see broker.Broker.
 func (b *Broker) Info(_ context.Context) (broker.Info, error) {
 	b.mutex.Lock()
@@ -1089,10 +1143,11 @@ func (b *Broker) Info(_ context.Context) (broker.Info, error) {
 	return broker.Info{
 		Driver: "memory",
 		Metrics: map[string]string{
-			"tasks":         strconv.Itoa(len(b.tasks)),
-			"cron_entries":  strconv.Itoa(len(b.cronEntries)),
-			"paused_queues": strconv.Itoa(len(b.pausedQueues)),
-			"rate_limits":   strconv.Itoa(len(b.rateLimits)),
+			"tasks":              strconv.Itoa(len(b.tasks)),
+			"cron_entries":       strconv.Itoa(len(b.cronEntries)),
+			"paused_queues":      strconv.Itoa(len(b.pausedQueues)),
+			"rate_limits":        strconv.Itoa(len(b.rateLimits)),
+			"concurrency_limits": strconv.Itoa(len(b.concurrencyLimits)),
 		},
 	}, nil
 }

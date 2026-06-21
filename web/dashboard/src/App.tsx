@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Overview } from "./views/Overview.tsx";
 import { Queues } from "./views/Queues.tsx";
 import { Limits } from "./views/Limits.tsx";
+import { ConcurrencyLimits } from "./views/ConcurrencyLimits.tsx";
 import { Tasks } from "./views/Tasks.tsx";
 import { Cron } from "./views/Cron.tsx";
 import { Workers } from "./views/Workers.tsx";
@@ -17,6 +18,7 @@ import { Badge } from "./components/Badge.tsx";
 import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
 import {
   IconBroker,
+  IconConcurrency,
   IconCron,
   IconExternal,
   IconLimits,
@@ -38,6 +40,7 @@ const tabs = [
   { id: "overview", label: "Overview", icon: <IconOverview />, render: () => <Overview /> },
   { id: "queues", label: "Queues", icon: <IconQueues />, render: () => <Queues /> },
   { id: "limits", label: "Limits", icon: <IconLimits />, render: () => <Limits /> },
+  { id: "concurrency", label: "Concurrency", icon: <IconConcurrency />, render: () => <ConcurrencyLimits /> },
   { id: "tasks", label: "Tasks", icon: <IconTasks />, render: () => <Tasks /> },
   { id: "cron", label: "Cron", icon: <IconCron />, render: () => <Cron /> },
   { id: "workers", label: "Workers", icon: <IconWorkers />, render: () => <Workers /> },

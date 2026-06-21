@@ -149,6 +149,43 @@ func TestRateLimitSetListDelete(t *testing.T) {
 	require.False(t, ok, "delete clears the override")
 }
 
+func TestSetQueueConcurrencyLimitValidation(t *testing.T) {
+	admin, _, _ := newTestAdminService(t)
+	ctx := context.Background()
+
+	_, err := admin.SetQueueConcurrencyLimit(ctx, connect.NewRequest(&conveyorv1.SetQueueConcurrencyLimitRequest{MaxActive: 5}))
+	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err), "empty queue is rejected")
+
+	_, err = admin.SetQueueConcurrencyLimit(ctx, connect.NewRequest(&conveyorv1.SetQueueConcurrencyLimitRequest{Queue: defaultQueueName, MaxActive: 0}))
+	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err), "a max-active below one is rejected")
+}
+
+func TestConcurrencyLimitSetListDelete(t *testing.T) {
+	admin, _, taskLog := newTestAdminService(t)
+	ctx := context.Background()
+
+	_, err := admin.SetQueueConcurrencyLimit(ctx, connect.NewRequest(&conveyorv1.SetQueueConcurrencyLimitRequest{Queue: defaultQueueName, MaxActive: 5}))
+	require.NoError(t, err)
+
+	limit, ok, err := taskLog.QueueConcurrencyLimit(ctx, defaultQueueName)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, 5, limit.MaxActive)
+
+	list, err := admin.ListConcurrencyLimits(ctx, connect.NewRequest(&conveyorv1.ListConcurrencyLimitsRequest{}))
+	require.NoError(t, err)
+	require.Len(t, list.Msg.GetLimits(), 1)
+	require.Equal(t, defaultQueueName, list.Msg.GetLimits()[0].GetQueue())
+	require.EqualValues(t, 5, list.Msg.GetLimits()[0].GetMaxActive())
+
+	_, err = admin.DeleteQueueConcurrencyLimit(ctx, connect.NewRequest(&conveyorv1.DeleteQueueConcurrencyLimitRequest{Queue: defaultQueueName}))
+	require.NoError(t, err)
+
+	_, ok, err = taskLog.QueueConcurrencyLimit(ctx, defaultQueueName)
+	require.NoError(t, err)
+	require.False(t, ok, "delete clears the limit")
+}
+
 func TestListTasksPaginationAndFilters(t *testing.T) {
 	admin, tasks, _ := newTestAdminService(t)
 	ctx := context.Background()

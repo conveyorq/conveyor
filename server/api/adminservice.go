@@ -198,6 +198,71 @@ func (s *AdminService) DeleteQueueRateLimit(ctx context.Context, request *connec
 	return connect.NewResponse(&conveyorv1.DeleteQueueRateLimitResponse{}), nil
 }
 
+// ListConcurrencyLimits returns every per-queue concurrency limit, ordered by
+// queue name.
+func (s *AdminService) ListConcurrencyLimits(ctx context.Context, _ *connect.Request[conveyorv1.ListConcurrencyLimitsRequest]) (*connect.Response[conveyorv1.ListConcurrencyLimitsResponse], error) {
+	limits, err := s.taskLog.QueueConcurrencyLimits(ctx)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+
+	infos := make([]*conveyorv1.ConcurrencyLimitInfo, 0, len(limits))
+
+	for _, limit := range limits {
+		infos = append(infos, &conveyorv1.ConcurrencyLimitInfo{
+			Queue:     limit.Queue,
+			MaxActive: int32(limit.MaxActive),
+		})
+	}
+
+	return connect.NewResponse(&conveyorv1.ListConcurrencyLimitsResponse{Limits: infos}), nil
+}
+
+// SetQueueConcurrencyLimit persists a queue's per-key concurrency limit and
+// pushes the new value to the live queue grain so it takes effect immediately.
+func (s *AdminService) SetQueueConcurrencyLimit(ctx context.Context, request *connect.Request[conveyorv1.SetQueueConcurrencyLimitRequest]) (*connect.Response[conveyorv1.SetQueueConcurrencyLimitResponse], error) {
+	queue, err := validQueueName(request.Msg.GetQueue())
+	if err != nil {
+		return nil, err
+	}
+
+	maxActive := request.Msg.GetMaxActive()
+	if maxActive < 1 {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("max_active must be at least 1, got %d", maxActive))
+	}
+
+	if err := s.taskLog.SetQueueConcurrencyLimit(ctx, queue, int(maxActive)); err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+
+	if err := s.engine.TellQueue(ctx, queue, &conveyorv1.ConcurrencyLimitChanged{Queue: queue, MaxActive: maxActive}); err != nil {
+		return nil, connect.NewError(connect.CodeInternal,
+			fmt.Errorf("concurrency limit persisted but updating the live dispatcher failed, retry to take effect immediately: %w", err))
+	}
+
+	return connect.NewResponse(&conveyorv1.SetQueueConcurrencyLimitResponse{}), nil
+}
+
+// DeleteQueueConcurrencyLimit clears a queue's concurrency limit and reverts the
+// live queue grain to unbounded keys (a zero max-active in the change message).
+func (s *AdminService) DeleteQueueConcurrencyLimit(ctx context.Context, request *connect.Request[conveyorv1.DeleteQueueConcurrencyLimitRequest]) (*connect.Response[conveyorv1.DeleteQueueConcurrencyLimitResponse], error) {
+	queue, err := validQueueName(request.Msg.GetQueue())
+	if err != nil {
+		return nil, err
+	}
+
+	if err := s.taskLog.DeleteQueueConcurrencyLimit(ctx, queue); err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+
+	if err := s.engine.TellQueue(ctx, queue, &conveyorv1.ConcurrencyLimitChanged{Queue: queue}); err != nil {
+		return nil, connect.NewError(connect.CodeInternal,
+			fmt.Errorf("concurrency limit cleared but updating the live dispatcher failed, retry to take effect immediately: %w", err))
+	}
+
+	return connect.NewResponse(&conveyorv1.DeleteQueueConcurrencyLimitResponse{}), nil
+}
+
 // ListTasks pages through tasks newest first, optionally filtered by queue
 // and state.
 func (s *AdminService) ListTasks(ctx context.Context, request *connect.Request[conveyorv1.ListTasksRequest]) (*connect.Response[conveyorv1.ListTasksResponse], error) {
@@ -447,6 +512,10 @@ func (s *AdminService) UpsertCron(ctx context.Context, request *connect.Request[
 
 	if !queueNamePattern.MatchString(queue) {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("invalid queue name %q", queue))
+	}
+
+	if entry.GetOptions().GetGroup() != "" && entry.GetOptions().GetConcurrencyKey() != "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("group and concurrency_key are mutually exclusive"))
 	}
 
 	err := s.taskLog.UpsertCronEntry(ctx, &broker.CronEntry{

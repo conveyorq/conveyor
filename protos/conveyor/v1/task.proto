@@ -135,6 +135,14 @@ message TaskOptions {
   // Fan-in is a continuation that depends on every task of a fan-out batch.
   repeated TaskDependency depends_on = 11;
 
+  // concurrency_key caps how many tasks sharing it run at once: the queue
+  // dispatches at most its configured concurrency limit of tasks with this key
+  // simultaneously, holding the rest pending until an active one finishes. Empty
+  // (the default) leaves the task unbounded. It is distinct from unique_key,
+  // which forbids a duplicate outright. Mutually exclusive with group, which is
+  // dispatched as a batch on a separate path.
+  string concurrency_key = 12;
+
   // Reserved for future options.
-  reserved 12 to 15;
+  reserved 13 to 15;
 }

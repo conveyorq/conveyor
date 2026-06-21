@@ -8,6 +8,18 @@ All notable changes to Conveyor are documented here. The format is based on
 
 ### Added
 
+- **Per-key concurrency limits**: cap how many tasks run at once per key,
+  distinct from rate limiting (tasks/second). Tag a task with
+  `conveyor.ConcurrencyKey("customer:42")` and set a per-queue limit with
+  `conveyor concurrency set <queue> --max N` (or the dashboard's Concurrency tab,
+  or `AdminService.SetQueueConcurrencyLimit`); the queue then dispatches at most
+  N tasks sharing a key at once and holds the rest pending until an active one
+  finishes, with no retry penalty. Enforced as a keyed semaphore in the queue
+  grain beside the rate limiter, off the dispatch hot path; limits persist in the
+  broker and apply live on change. `ConcurrencyKey` is mutually exclusive with
+  `Group`. Available in the Go, TypeScript, and Python SDKs, with a
+  `conveyor_concurrency_throttled` metric. See `docs/concurrency.md`.
+
 - **Task dependencies (workflows)**: order work with chains ("run B after A")
   and fan-out/fan-in (a continuation that waits on a whole batch). Declare
   dependencies with `conveyor.DependsOn(ids...)`, or `conveyor.DependsOnTasks(...)`

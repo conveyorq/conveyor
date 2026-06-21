@@ -18,6 +18,7 @@
 //	stats
 //	queues pause|resume <name>
 //	ratelimit set <queue> --rate N [--burst N] | rm <queue> | ls
+//	concurrency set <queue> --max N | rm <queue> | ls
 //	tasks get <id>
 //	tasks list [--queue NAME] [--state STATE] [--limit N] [--page TOKEN]
 //	tasks run|cancel|delete <id>
@@ -140,6 +141,7 @@ CONVEYOR_ADDR/CONVEYOR_TOKEN environment variables; flags win.`,
 		newStatsCommand(conn),
 		newQueuesCommand(conn),
 		newRateLimitCommand(conn),
+		newConcurrencyLimitCommand(conn),
 		newCronCommand(conn),
 		newClusterCommand(conn),
 	)

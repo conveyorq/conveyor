@@ -28,12 +28,13 @@ const queueAttr = "queue"
 // sites. They record into the process-global meter provider — the server
 // installs a Prometheus-backed one; without it the records are no-ops.
 type Engine struct {
-	processDuration metric.Float64Histogram
-	queueLatency    metric.Float64Histogram
-	leaseExpired    metric.Int64Counter
-	wakeupsSwept    metric.Int64Counter
-	breakerOpen     metric.Int64Counter
-	rateLimited     metric.Int64Counter
+	processDuration    metric.Float64Histogram
+	queueLatency       metric.Float64Histogram
+	leaseExpired       metric.Int64Counter
+	wakeupsSwept       metric.Int64Counter
+	breakerOpen        metric.Int64Counter
+	rateLimited        metric.Int64Counter
+	concurrencyLimited metric.Int64Counter
 }
 
 // NewEngine creates the engine instruments from the global meter. The returned
@@ -54,15 +55,18 @@ func NewEngine() (*Engine, error) {
 		metric.WithDescription("Completions deferred because a task type's circuit breaker was open."))
 	rateLimited, e6 := meter.Int64Counter("conveyor.ratelimit.throttled",
 		metric.WithDescription("Lease cycles a queue deferred because its dispatch rate limit was exhausted."))
+	concurrencyLimited, e7 := meter.Int64Counter("conveyor.concurrency.throttled",
+		metric.WithDescription("Lease cycles in which a queue held a task back because its concurrency key was saturated."))
 
 	return &Engine{
-		processDuration: processDuration,
-		queueLatency:    queueLatency,
-		leaseExpired:    leaseExpired,
-		wakeupsSwept:    wakeupsSwept,
-		breakerOpen:     breakerOpen,
-		rateLimited:     rateLimited,
-	}, errors.Join(e1, e2, e3, e4, e5, e6)
+		processDuration:    processDuration,
+		queueLatency:       queueLatency,
+		leaseExpired:       leaseExpired,
+		wakeupsSwept:       wakeupsSwept,
+		breakerOpen:        breakerOpen,
+		rateLimited:        rateLimited,
+		concurrencyLimited: concurrencyLimited,
+	}, errors.Join(e1, e2, e3, e4, e5, e6, e7)
 }
 
 // RecordProcessDuration records one execution's dispatch→completion time.
@@ -94,4 +98,10 @@ func (e *Engine) BreakerOpen(ctx context.Context) {
 // limit, labeled by queue.
 func (e *Engine) RateLimited(ctx context.Context, queue string) {
 	e.rateLimited.Add(ctx, 1, metric.WithAttributes(attribute.String(queueAttr, queue)))
+}
+
+// ConcurrencyLimited counts one lease cycle in which a queue held a task back
+// because its concurrency key was saturated, labeled by queue.
+func (e *Engine) ConcurrencyLimited(ctx context.Context, queue string) {
+	e.concurrencyLimited.Add(ctx, 1, metric.WithAttributes(attribute.String(queueAttr, queue)))
 }

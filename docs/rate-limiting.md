@@ -49,11 +49,11 @@ ConnectRPC client (script them in CI to manage limits as code).
 
 In `conveyor.yaml` (engine config) or `CONVEYOR_*` env:
 
-| Setting | Meaning | Default |
-|---|---|---|
-| `rate_limit_enabled` | master switch; `false` disables all rate limiting (overrides are kept but ignored) | `true` |
-| `rate_limit_rate_per_sec` | global default rate in tasks/second; `0` means no default (queues unlimited unless overridden) | `0` |
-| `rate_limit_burst` | global default burst, used when the default rate is set | `0` |
+| Setting                   | Meaning                                                                                        | Default |
+|---------------------------|------------------------------------------------------------------------------------------------|---------|
+| `rate_limit_enabled`      | master switch; `false` disables all rate limiting (overrides are kept but ignored)             | `true`  |
+| `rate_limit_rate_per_sec` | global default rate in tasks/second; `0` means no default (queues unlimited unless overridden) | `0`     |
+| `rate_limit_burst`        | global default burst, used when the default rate is set                                        | `0`     |
 
 `rate_limit_enabled: false` is the production safety valve: if a misconfigured
 limit is starving a queue, flip it and every queue runs unthrottled again, with
