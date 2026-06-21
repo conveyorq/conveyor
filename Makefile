@@ -108,7 +108,7 @@ proto: image ## Format and lint protos, then regenerate Go code
 		rm -rf gen'
 
 proto-format: image ## Format proto files with buf
-	$(DOCKER_RUN) buf format -w
+	$(DOCKER_RUN) buf format -w .
 
 proto-lint: image ## Lint proto files with buf
 	$(DOCKER_RUN) buf lint

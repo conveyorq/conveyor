@@ -56,6 +56,9 @@ and priorities, backed by Postgres or an in-memory broker, with **no Redis and n
 - **Rate limiting**: cap a queue's dispatch rate (token bucket: rate + burst) to
   protect a downstream; a global default plus per-queue overrides, tunable live
   from the CLI, dashboard, or API.
+- **Per-key concurrency limits**: cap how many tasks run at once per key (e.g.
+  ≤ 5 in flight per `customer_id`, or one active per resource), set per queue and
+  tunable live.
 - **SDK middleware** wraps both sides: decorate enqueues
   (`WithEnqueueMiddleware`) and handlers (`Mux.Use`, `Mux.UseBatch`) for
   logging, metrics, or policy, without touching task code.
@@ -400,6 +403,8 @@ a different-origin UI, and `api.grafana_url` for the metrics link. See the
   batch handlers, and tune the firing policy.
 - [Rate limiting](docs/rate-limiting.md): cap per-queue dispatch rate with a
   global default and live per-queue overrides.
+- [Concurrency limits](docs/concurrency.md): cap how many tasks run at once per
+  concurrency key, set per queue and tunable live.
 - [End-to-end encryption](docs/encryption.md): seal task payloads in the
   SDK/CLI so the server stores ciphertext only and holds no keys.
 - [Expiring tasks](docs/expiring-jobs.md): a pre-dispatch TTL, and how it

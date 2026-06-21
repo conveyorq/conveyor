@@ -62,6 +62,15 @@ const (
 	// AdminServiceDeleteQueueRateLimitProcedure is the fully-qualified name of the AdminService's
 	// DeleteQueueRateLimit RPC.
 	AdminServiceDeleteQueueRateLimitProcedure = "/conveyor.v1.AdminService/DeleteQueueRateLimit"
+	// AdminServiceListConcurrencyLimitsProcedure is the fully-qualified name of the AdminService's
+	// ListConcurrencyLimits RPC.
+	AdminServiceListConcurrencyLimitsProcedure = "/conveyor.v1.AdminService/ListConcurrencyLimits"
+	// AdminServiceSetQueueConcurrencyLimitProcedure is the fully-qualified name of the AdminService's
+	// SetQueueConcurrencyLimit RPC.
+	AdminServiceSetQueueConcurrencyLimitProcedure = "/conveyor.v1.AdminService/SetQueueConcurrencyLimit"
+	// AdminServiceDeleteQueueConcurrencyLimitProcedure is the fully-qualified name of the
+	// AdminService's DeleteQueueConcurrencyLimit RPC.
+	AdminServiceDeleteQueueConcurrencyLimitProcedure = "/conveyor.v1.AdminService/DeleteQueueConcurrencyLimit"
 	// AdminServiceListTasksProcedure is the fully-qualified name of the AdminService's ListTasks RPC.
 	AdminServiceListTasksProcedure = "/conveyor.v1.AdminService/ListTasks"
 	// AdminServiceCancelTaskProcedure is the fully-qualified name of the AdminService's CancelTask RPC.
@@ -316,6 +325,12 @@ type AdminServiceClient interface {
 	SetQueueRateLimit(context.Context, *connect.Request[v1.SetQueueRateLimitRequest]) (*connect.Response[v1.SetQueueRateLimitResponse], error)
 	// DeleteQueueRateLimit clears a queue's override, reverting it to the default.
 	DeleteQueueRateLimit(context.Context, *connect.Request[v1.DeleteQueueRateLimitRequest]) (*connect.Response[v1.DeleteQueueRateLimitResponse], error)
+	// ListConcurrencyLimits returns every per-queue concurrency limit.
+	ListConcurrencyLimits(context.Context, *connect.Request[v1.ListConcurrencyLimitsRequest]) (*connect.Response[v1.ListConcurrencyLimitsResponse], error)
+	// SetQueueConcurrencyLimit sets a queue's per-key concurrency limit.
+	SetQueueConcurrencyLimit(context.Context, *connect.Request[v1.SetQueueConcurrencyLimitRequest]) (*connect.Response[v1.SetQueueConcurrencyLimitResponse], error)
+	// DeleteQueueConcurrencyLimit clears a queue's concurrency limit, leaving its keys unbounded.
+	DeleteQueueConcurrencyLimit(context.Context, *connect.Request[v1.DeleteQueueConcurrencyLimitRequest]) (*connect.Response[v1.DeleteQueueConcurrencyLimitResponse], error)
 	ListTasks(context.Context, *connect.Request[v1.ListTasksRequest]) (*connect.Response[v1.ListTasksResponse], error)
 	CancelTask(context.Context, *connect.Request[v1.CancelTaskRequest]) (*connect.Response[v1.CancelTaskResponse], error)
 	DeleteTask(context.Context, *connect.Request[v1.DeleteTaskRequest]) (*connect.Response[v1.DeleteTaskResponse], error)
@@ -389,6 +404,24 @@ func NewAdminServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			httpClient,
 			baseURL+AdminServiceDeleteQueueRateLimitProcedure,
 			connect.WithSchema(adminServiceMethods.ByName("DeleteQueueRateLimit")),
+			connect.WithClientOptions(opts...),
+		),
+		listConcurrencyLimits: connect.NewClient[v1.ListConcurrencyLimitsRequest, v1.ListConcurrencyLimitsResponse](
+			httpClient,
+			baseURL+AdminServiceListConcurrencyLimitsProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("ListConcurrencyLimits")),
+			connect.WithClientOptions(opts...),
+		),
+		setQueueConcurrencyLimit: connect.NewClient[v1.SetQueueConcurrencyLimitRequest, v1.SetQueueConcurrencyLimitResponse](
+			httpClient,
+			baseURL+AdminServiceSetQueueConcurrencyLimitProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("SetQueueConcurrencyLimit")),
+			connect.WithClientOptions(opts...),
+		),
+		deleteQueueConcurrencyLimit: connect.NewClient[v1.DeleteQueueConcurrencyLimitRequest, v1.DeleteQueueConcurrencyLimitResponse](
+			httpClient,
+			baseURL+AdminServiceDeleteQueueConcurrencyLimitProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("DeleteQueueConcurrencyLimit")),
 			connect.WithClientOptions(opts...),
 		),
 		listTasks: connect.NewClient[v1.ListTasksRequest, v1.ListTasksResponse](
@@ -498,29 +531,32 @@ func NewAdminServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 
 // adminServiceClient implements AdminServiceClient.
 type adminServiceClient struct {
-	listQueues           *connect.Client[v1.ListQueuesRequest, v1.ListQueuesResponse]
-	pauseQueue           *connect.Client[v1.PauseQueueRequest, v1.PauseQueueResponse]
-	resumeQueue          *connect.Client[v1.ResumeQueueRequest, v1.ResumeQueueResponse]
-	listRateLimits       *connect.Client[v1.ListRateLimitsRequest, v1.ListRateLimitsResponse]
-	setQueueRateLimit    *connect.Client[v1.SetQueueRateLimitRequest, v1.SetQueueRateLimitResponse]
-	deleteQueueRateLimit *connect.Client[v1.DeleteQueueRateLimitRequest, v1.DeleteQueueRateLimitResponse]
-	listTasks            *connect.Client[v1.ListTasksRequest, v1.ListTasksResponse]
-	cancelTask           *connect.Client[v1.CancelTaskRequest, v1.CancelTaskResponse]
-	deleteTask           *connect.Client[v1.DeleteTaskRequest, v1.DeleteTaskResponse]
-	runTask              *connect.Client[v1.RunTaskRequest, v1.RunTaskResponse]
-	archiveTask          *connect.Client[v1.ArchiveTaskRequest, v1.ArchiveTaskResponse]
-	batchDeleteTasks     *connect.Client[v1.BatchTasksRequest, v1.BatchTasksResponse]
-	batchRunTasks        *connect.Client[v1.BatchTasksRequest, v1.BatchTasksResponse]
-	batchCancelTasks     *connect.Client[v1.BatchTasksRequest, v1.BatchTasksResponse]
-	batchArchiveTasks    *connect.Client[v1.BatchTasksRequest, v1.BatchTasksResponse]
-	listCron             *connect.Client[v1.ListCronRequest, v1.ListCronResponse]
-	upsertCron           *connect.Client[v1.UpsertCronRequest, v1.UpsertCronResponse]
-	pauseCron            *connect.Client[v1.PauseCronRequest, v1.PauseCronResponse]
-	resumeCron           *connect.Client[v1.ResumeCronRequest, v1.ResumeCronResponse]
-	deleteCron           *connect.Client[v1.DeleteCronRequest, v1.DeleteCronResponse]
-	clusterInfo          *connect.Client[v1.ClusterInfoRequest, v1.ClusterInfoResponse]
-	listWorkerSessions   *connect.Client[v1.ListWorkerSessionsRequest, v1.ListWorkerSessionsResponse]
-	brokerInfo           *connect.Client[v1.BrokerInfoRequest, v1.BrokerInfoResponse]
+	listQueues                  *connect.Client[v1.ListQueuesRequest, v1.ListQueuesResponse]
+	pauseQueue                  *connect.Client[v1.PauseQueueRequest, v1.PauseQueueResponse]
+	resumeQueue                 *connect.Client[v1.ResumeQueueRequest, v1.ResumeQueueResponse]
+	listRateLimits              *connect.Client[v1.ListRateLimitsRequest, v1.ListRateLimitsResponse]
+	setQueueRateLimit           *connect.Client[v1.SetQueueRateLimitRequest, v1.SetQueueRateLimitResponse]
+	deleteQueueRateLimit        *connect.Client[v1.DeleteQueueRateLimitRequest, v1.DeleteQueueRateLimitResponse]
+	listConcurrencyLimits       *connect.Client[v1.ListConcurrencyLimitsRequest, v1.ListConcurrencyLimitsResponse]
+	setQueueConcurrencyLimit    *connect.Client[v1.SetQueueConcurrencyLimitRequest, v1.SetQueueConcurrencyLimitResponse]
+	deleteQueueConcurrencyLimit *connect.Client[v1.DeleteQueueConcurrencyLimitRequest, v1.DeleteQueueConcurrencyLimitResponse]
+	listTasks                   *connect.Client[v1.ListTasksRequest, v1.ListTasksResponse]
+	cancelTask                  *connect.Client[v1.CancelTaskRequest, v1.CancelTaskResponse]
+	deleteTask                  *connect.Client[v1.DeleteTaskRequest, v1.DeleteTaskResponse]
+	runTask                     *connect.Client[v1.RunTaskRequest, v1.RunTaskResponse]
+	archiveTask                 *connect.Client[v1.ArchiveTaskRequest, v1.ArchiveTaskResponse]
+	batchDeleteTasks            *connect.Client[v1.BatchTasksRequest, v1.BatchTasksResponse]
+	batchRunTasks               *connect.Client[v1.BatchTasksRequest, v1.BatchTasksResponse]
+	batchCancelTasks            *connect.Client[v1.BatchTasksRequest, v1.BatchTasksResponse]
+	batchArchiveTasks           *connect.Client[v1.BatchTasksRequest, v1.BatchTasksResponse]
+	listCron                    *connect.Client[v1.ListCronRequest, v1.ListCronResponse]
+	upsertCron                  *connect.Client[v1.UpsertCronRequest, v1.UpsertCronResponse]
+	pauseCron                   *connect.Client[v1.PauseCronRequest, v1.PauseCronResponse]
+	resumeCron                  *connect.Client[v1.ResumeCronRequest, v1.ResumeCronResponse]
+	deleteCron                  *connect.Client[v1.DeleteCronRequest, v1.DeleteCronResponse]
+	clusterInfo                 *connect.Client[v1.ClusterInfoRequest, v1.ClusterInfoResponse]
+	listWorkerSessions          *connect.Client[v1.ListWorkerSessionsRequest, v1.ListWorkerSessionsResponse]
+	brokerInfo                  *connect.Client[v1.BrokerInfoRequest, v1.BrokerInfoResponse]
 }
 
 // ListQueues calls conveyor.v1.AdminService.ListQueues.
@@ -551,6 +587,21 @@ func (c *adminServiceClient) SetQueueRateLimit(ctx context.Context, req *connect
 // DeleteQueueRateLimit calls conveyor.v1.AdminService.DeleteQueueRateLimit.
 func (c *adminServiceClient) DeleteQueueRateLimit(ctx context.Context, req *connect.Request[v1.DeleteQueueRateLimitRequest]) (*connect.Response[v1.DeleteQueueRateLimitResponse], error) {
 	return c.deleteQueueRateLimit.CallUnary(ctx, req)
+}
+
+// ListConcurrencyLimits calls conveyor.v1.AdminService.ListConcurrencyLimits.
+func (c *adminServiceClient) ListConcurrencyLimits(ctx context.Context, req *connect.Request[v1.ListConcurrencyLimitsRequest]) (*connect.Response[v1.ListConcurrencyLimitsResponse], error) {
+	return c.listConcurrencyLimits.CallUnary(ctx, req)
+}
+
+// SetQueueConcurrencyLimit calls conveyor.v1.AdminService.SetQueueConcurrencyLimit.
+func (c *adminServiceClient) SetQueueConcurrencyLimit(ctx context.Context, req *connect.Request[v1.SetQueueConcurrencyLimitRequest]) (*connect.Response[v1.SetQueueConcurrencyLimitResponse], error) {
+	return c.setQueueConcurrencyLimit.CallUnary(ctx, req)
+}
+
+// DeleteQueueConcurrencyLimit calls conveyor.v1.AdminService.DeleteQueueConcurrencyLimit.
+func (c *adminServiceClient) DeleteQueueConcurrencyLimit(ctx context.Context, req *connect.Request[v1.DeleteQueueConcurrencyLimitRequest]) (*connect.Response[v1.DeleteQueueConcurrencyLimitResponse], error) {
+	return c.deleteQueueConcurrencyLimit.CallUnary(ctx, req)
 }
 
 // ListTasks calls conveyor.v1.AdminService.ListTasks.
@@ -649,6 +700,12 @@ type AdminServiceHandler interface {
 	SetQueueRateLimit(context.Context, *connect.Request[v1.SetQueueRateLimitRequest]) (*connect.Response[v1.SetQueueRateLimitResponse], error)
 	// DeleteQueueRateLimit clears a queue's override, reverting it to the default.
 	DeleteQueueRateLimit(context.Context, *connect.Request[v1.DeleteQueueRateLimitRequest]) (*connect.Response[v1.DeleteQueueRateLimitResponse], error)
+	// ListConcurrencyLimits returns every per-queue concurrency limit.
+	ListConcurrencyLimits(context.Context, *connect.Request[v1.ListConcurrencyLimitsRequest]) (*connect.Response[v1.ListConcurrencyLimitsResponse], error)
+	// SetQueueConcurrencyLimit sets a queue's per-key concurrency limit.
+	SetQueueConcurrencyLimit(context.Context, *connect.Request[v1.SetQueueConcurrencyLimitRequest]) (*connect.Response[v1.SetQueueConcurrencyLimitResponse], error)
+	// DeleteQueueConcurrencyLimit clears a queue's concurrency limit, leaving its keys unbounded.
+	DeleteQueueConcurrencyLimit(context.Context, *connect.Request[v1.DeleteQueueConcurrencyLimitRequest]) (*connect.Response[v1.DeleteQueueConcurrencyLimitResponse], error)
 	ListTasks(context.Context, *connect.Request[v1.ListTasksRequest]) (*connect.Response[v1.ListTasksResponse], error)
 	CancelTask(context.Context, *connect.Request[v1.CancelTaskRequest]) (*connect.Response[v1.CancelTaskResponse], error)
 	DeleteTask(context.Context, *connect.Request[v1.DeleteTaskRequest]) (*connect.Response[v1.DeleteTaskResponse], error)
@@ -718,6 +775,24 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 		AdminServiceDeleteQueueRateLimitProcedure,
 		svc.DeleteQueueRateLimit,
 		connect.WithSchema(adminServiceMethods.ByName("DeleteQueueRateLimit")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceListConcurrencyLimitsHandler := connect.NewUnaryHandler(
+		AdminServiceListConcurrencyLimitsProcedure,
+		svc.ListConcurrencyLimits,
+		connect.WithSchema(adminServiceMethods.ByName("ListConcurrencyLimits")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceSetQueueConcurrencyLimitHandler := connect.NewUnaryHandler(
+		AdminServiceSetQueueConcurrencyLimitProcedure,
+		svc.SetQueueConcurrencyLimit,
+		connect.WithSchema(adminServiceMethods.ByName("SetQueueConcurrencyLimit")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceDeleteQueueConcurrencyLimitHandler := connect.NewUnaryHandler(
+		AdminServiceDeleteQueueConcurrencyLimitProcedure,
+		svc.DeleteQueueConcurrencyLimit,
+		connect.WithSchema(adminServiceMethods.ByName("DeleteQueueConcurrencyLimit")),
 		connect.WithHandlerOptions(opts...),
 	)
 	adminServiceListTasksHandler := connect.NewUnaryHandler(
@@ -836,6 +911,12 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 			adminServiceSetQueueRateLimitHandler.ServeHTTP(w, r)
 		case AdminServiceDeleteQueueRateLimitProcedure:
 			adminServiceDeleteQueueRateLimitHandler.ServeHTTP(w, r)
+		case AdminServiceListConcurrencyLimitsProcedure:
+			adminServiceListConcurrencyLimitsHandler.ServeHTTP(w, r)
+		case AdminServiceSetQueueConcurrencyLimitProcedure:
+			adminServiceSetQueueConcurrencyLimitHandler.ServeHTTP(w, r)
+		case AdminServiceDeleteQueueConcurrencyLimitProcedure:
+			adminServiceDeleteQueueConcurrencyLimitHandler.ServeHTTP(w, r)
 		case AdminServiceListTasksProcedure:
 			adminServiceListTasksHandler.ServeHTTP(w, r)
 		case AdminServiceCancelTaskProcedure:
@@ -901,6 +982,18 @@ func (UnimplementedAdminServiceHandler) SetQueueRateLimit(context.Context, *conn
 
 func (UnimplementedAdminServiceHandler) DeleteQueueRateLimit(context.Context, *connect.Request[v1.DeleteQueueRateLimitRequest]) (*connect.Response[v1.DeleteQueueRateLimitResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("conveyor.v1.AdminService.DeleteQueueRateLimit is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) ListConcurrencyLimits(context.Context, *connect.Request[v1.ListConcurrencyLimitsRequest]) (*connect.Response[v1.ListConcurrencyLimitsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("conveyor.v1.AdminService.ListConcurrencyLimits is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) SetQueueConcurrencyLimit(context.Context, *connect.Request[v1.SetQueueConcurrencyLimitRequest]) (*connect.Response[v1.SetQueueConcurrencyLimitResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("conveyor.v1.AdminService.SetQueueConcurrencyLimit is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) DeleteQueueConcurrencyLimit(context.Context, *connect.Request[v1.DeleteQueueConcurrencyLimitRequest]) (*connect.Response[v1.DeleteQueueConcurrencyLimitResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("conveyor.v1.AdminService.DeleteQueueConcurrencyLimit is not implemented"))
 }
 
 func (UnimplementedAdminServiceHandler) ListTasks(context.Context, *connect.Request[v1.ListTasksRequest]) (*connect.Response[v1.ListTasksResponse], error) {

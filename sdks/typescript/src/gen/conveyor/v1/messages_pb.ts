@@ -14,7 +14,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file conveyor/v1/messages.proto.
  */
 export const file_conveyor_v1_messages: GenFile = /*@__PURE__*/
-  fileDesc("Chpjb252ZXlvci92MS9tZXNzYWdlcy5wcm90bxILY29udmV5b3IudjEiHQoMVGFza0VucXVldWVkEg0KBXF1ZXVlGAEgASgJIi0KDlRhc2tzQXZhaWxhYmxlEg0KBXF1ZXVlGAEgASgJEgwKBGhpbnQYAiABKAMiXQoPUmVnaXN0ZXJHYXRld2F5Eg0KBXF1ZXVlGAEgASgJEhQKDGdhdGV3YXlfbmFtZRgCIAEoCRIQCghjYXBhY2l0eRgDIAEoBRITCgtiYXRjaF90eXBlcxgEIAMoCSJFCg1HYXRld2F5Q3JlZGl0Eg0KBXF1ZXVlGAEgASgJEhQKDGdhdGV3YXlfbmFtZRgCIAEoCRIPCgdjcmVkaXRzGAMgASgFIn4KC0V4ZWN1dGVUYXNrEicKBHRhc2sYASABKAsyGS5jb252ZXlvci52MS5UYXNrRW52ZWxvcGUSEAoIbGVhc2VfaWQYAiABKAkSNAoQbGVhc2VfZXhwaXJlc19hdBgDIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAijwEKDEV4ZWN1dGVCYXRjaBIoCgV0YXNrcxgBIAMoCzIZLmNvbnZleW9yLnYxLlRhc2tFbnZlbG9wZRIQCghsZWFzZV9pZBgCIAEoCRI0ChBsZWFzZV9leHBpcmVzX2F0GAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBINCgVncm91cBgEIAEoCSI3CglGaXJlR3JvdXASDQoFcXVldWUYASABKAkSDQoFZ3JvdXAYAiABKAkSDAoEdHlwZRgDIAEoCSKzAQoTR3JvdXBMZWFzZUNvbXBsZXRlZBIoCgV0YXNrcxgBIAMoCzIZLmNvbnZleW9yLnYxLlRhc2tFbnZlbG9wZRIQCghsZWFzZV9pZBgCIAEoCRI0ChBsZWFzZV9leHBpcmVzX2F0GAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBINCgVncm91cBgEIAEoCRIMCgR0eXBlGAUgASgJEg0KBWVycm9yGAYgASgJIlYKDVRhc2tDb21wbGV0ZWQSDwoHdGFza19pZBgBIAEoCRINCgVxdWV1ZRgCIAEoCRIPCgdzdWNjZXNzGAMgASgIEhQKDGdhdGV3YXlfbmFtZRgEIAEoCSJXCg5CYXRjaENvbXBsZXRlZBINCgVxdWV1ZRgBIAEoCRIUCgxnYXRld2F5X25hbWUYAiABKAkSDQoFdG90YWwYAyABKAUSEQoJc3VjY2VlZGVkGAQgASgFIhsKCkRyYWluUXVldWUSDQoFcXVldWUYASABKAkiHAoLUmVzdW1lUXVldWUSDQoFcXVldWUYASABKAkiHwoMQ2FuY2VsQWN0aXZlEg8KB3Rhc2tfaWQYASABKAkiRgoQUmF0ZUxpbWl0Q2hhbmdlZBINCgVxdWV1ZRgBIAEoCRIUCgxyYXRlX3Blcl9zZWMYAiABKAESDQoFYnVyc3QYAyABKAUiHAoIRmlyZUNyb24SEAoIZW50cnlfaWQYASABKAkiFAoSQ3JvbkVudHJpZXNDaGFuZ2VkIpYBChNMZWFzZUN5Y2xlQ29tcGxldGVkEigKBXRhc2tzGAEgAygLMhkuY29udmV5b3IudjEuVGFza0VudmVsb3BlEhAKCGxlYXNlX2lkGAIgASgJEjQKEGxlYXNlX2V4cGlyZXNfYXQYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEg0KBWVycm9yGAQgASgJIjcKE0xlYXNlZFRhc2tzUmVsZWFzZWQSEAoIcmVsZWFzZWQYASABKAUSDgoGZmFpbGVkGAIgASgFIg0KC1Byb21vdGVUaWNrIgoKCFJlYXBUaWNrIhAKDkdyb3VwU3dlZXBUaWNrIiQKEVJlc29sdmVEZXBlbmRlbnRzEg8KB3Rhc2tfaWQYASABKAliBnByb3RvMw", [file_conveyor_v1_task, file_google_protobuf_timestamp]);
+  fileDesc("Chpjb252ZXlvci92MS9tZXNzYWdlcy5wcm90bxILY29udmV5b3IudjEiHQoMVGFza0VucXVldWVkEg0KBXF1ZXVlGAEgASgJIi0KDlRhc2tzQXZhaWxhYmxlEg0KBXF1ZXVlGAEgASgJEgwKBGhpbnQYAiABKAMiXQoPUmVnaXN0ZXJHYXRld2F5Eg0KBXF1ZXVlGAEgASgJEhQKDGdhdGV3YXlfbmFtZRgCIAEoCRIQCghjYXBhY2l0eRgDIAEoBRITCgtiYXRjaF90eXBlcxgEIAMoCSJFCg1HYXRld2F5Q3JlZGl0Eg0KBXF1ZXVlGAEgASgJEhQKDGdhdGV3YXlfbmFtZRgCIAEoCRIPCgdjcmVkaXRzGAMgASgFIn4KC0V4ZWN1dGVUYXNrEicKBHRhc2sYASABKAsyGS5jb252ZXlvci52MS5UYXNrRW52ZWxvcGUSEAoIbGVhc2VfaWQYAiABKAkSNAoQbGVhc2VfZXhwaXJlc19hdBgDIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAijwEKDEV4ZWN1dGVCYXRjaBIoCgV0YXNrcxgBIAMoCzIZLmNvbnZleW9yLnYxLlRhc2tFbnZlbG9wZRIQCghsZWFzZV9pZBgCIAEoCRI0ChBsZWFzZV9leHBpcmVzX2F0GAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBINCgVncm91cBgEIAEoCSI3CglGaXJlR3JvdXASDQoFcXVldWUYASABKAkSDQoFZ3JvdXAYAiABKAkSDAoEdHlwZRgDIAEoCSKzAQoTR3JvdXBMZWFzZUNvbXBsZXRlZBIoCgV0YXNrcxgBIAMoCzIZLmNvbnZleW9yLnYxLlRhc2tFbnZlbG9wZRIQCghsZWFzZV9pZBgCIAEoCRI0ChBsZWFzZV9leHBpcmVzX2F0GAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBINCgVncm91cBgEIAEoCRIMCgR0eXBlGAUgASgJEg0KBWVycm9yGAYgASgJIlYKDVRhc2tDb21wbGV0ZWQSDwoHdGFza19pZBgBIAEoCRINCgVxdWV1ZRgCIAEoCRIPCgdzdWNjZXNzGAMgASgIEhQKDGdhdGV3YXlfbmFtZRgEIAEoCSJXCg5CYXRjaENvbXBsZXRlZBINCgVxdWV1ZRgBIAEoCRIUCgxnYXRld2F5X25hbWUYAiABKAkSDQoFdG90YWwYAyABKAUSEQoJc3VjY2VlZGVkGAQgASgFIhsKCkRyYWluUXVldWUSDQoFcXVldWUYASABKAkiHAoLUmVzdW1lUXVldWUSDQoFcXVldWUYASABKAkiHwoMQ2FuY2VsQWN0aXZlEg8KB3Rhc2tfaWQYASABKAkiRgoQUmF0ZUxpbWl0Q2hhbmdlZBINCgVxdWV1ZRgBIAEoCRIUCgxyYXRlX3Blcl9zZWMYAiABKAESDQoFYnVyc3QYAyABKAUiPAoXQ29uY3VycmVuY3lMaW1pdENoYW5nZWQSDQoFcXVldWUYASABKAkSEgoKbWF4X2FjdGl2ZRgCIAEoBSIcCghGaXJlQ3JvbhIQCghlbnRyeV9pZBgBIAEoCSIUChJDcm9uRW50cmllc0NoYW5nZWQilgEKE0xlYXNlQ3ljbGVDb21wbGV0ZWQSKAoFdGFza3MYASADKAsyGS5jb252ZXlvci52MS5UYXNrRW52ZWxvcGUSEAoIbGVhc2VfaWQYAiABKAkSNAoQbGVhc2VfZXhwaXJlc19hdBgDIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDQoFZXJyb3IYBCABKAkiNwoTTGVhc2VkVGFza3NSZWxlYXNlZBIQCghyZWxlYXNlZBgBIAEoBRIOCgZmYWlsZWQYAiABKAUiDQoLUHJvbW90ZVRpY2siCgoIUmVhcFRpY2siEAoOR3JvdXBTd2VlcFRpY2siJAoRUmVzb2x2ZURlcGVuZGVudHMSDwoHdGFza19pZBgBIAEoCWIGcHJvdG8z", [file_conveyor_v1_task, file_google_protobuf_timestamp]);
 
 /**
  * TaskEnqueued tells a queue grain that one new task was committed.
@@ -451,6 +451,33 @@ export const RateLimitChangedSchema: GenMessage<RateLimitChanged> = /*@__PURE__*
   messageDesc(file_conveyor_v1_messages, 13);
 
 /**
+ * ConcurrencyLimitChanged tells a queue grain that its per-key concurrency limit
+ * changed through the Admin API. It carries the new value so the grain updates
+ * its keyed semaphore without a broker read: max_active greater than zero sets
+ * the limit, while zero clears it and leaves the queue's keys unbounded.
+ *
+ * @generated from message conveyor.v1.ConcurrencyLimitChanged
+ */
+export type ConcurrencyLimitChanged = Message<"conveyor.v1.ConcurrencyLimitChanged"> & {
+  /**
+   * @generated from field: string queue = 1;
+   */
+  queue: string;
+
+  /**
+   * @generated from field: int32 max_active = 2;
+   */
+  maxActive: number;
+};
+
+/**
+ * Describes the message conveyor.v1.ConcurrencyLimitChanged.
+ * Use `create(ConcurrencyLimitChangedSchema)` to create a new message.
+ */
+export const ConcurrencyLimitChangedSchema: GenMessage<ConcurrencyLimitChanged> = /*@__PURE__*/
+  messageDesc(file_conveyor_v1_messages, 14);
+
+/**
  * FireCron tells the scheduler singleton that a cron entry is due.
  *
  * @generated from message conveyor.v1.FireCron
@@ -467,7 +494,7 @@ export type FireCron = Message<"conveyor.v1.FireCron"> & {
  * Use `create(FireCronSchema)` to create a new message.
  */
 export const FireCronSchema: GenMessage<FireCron> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_messages, 14);
+  messageDesc(file_conveyor_v1_messages, 15);
 
 /**
  * CronEntriesChanged tells the scheduler singleton to reload cron entries
@@ -483,7 +510,7 @@ export type CronEntriesChanged = Message<"conveyor.v1.CronEntriesChanged"> & {
  * Use `create(CronEntriesChangedSchema)` to create a new message.
  */
 export const CronEntriesChangedSchema: GenMessage<CronEntriesChanged> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_messages, 15);
+  messageDesc(file_conveyor_v1_messages, 16);
 
 /**
  * LeaseCycleCompleted delivers the outcome of an asynchronous lease cycle
@@ -521,7 +548,7 @@ export type LeaseCycleCompleted = Message<"conveyor.v1.LeaseCycleCompleted"> & {
  * Use `create(LeaseCycleCompletedSchema)` to create a new message.
  */
 export const LeaseCycleCompletedSchema: GenMessage<LeaseCycleCompleted> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_messages, 16);
+  messageDesc(file_conveyor_v1_messages, 17);
 
 /**
  * LeasedTasksReleased delivers the outcome of an asynchronous release back
@@ -555,7 +582,7 @@ export type LeasedTasksReleased = Message<"conveyor.v1.LeasedTasksReleased"> & {
  * Use `create(LeasedTasksReleasedSchema)` to create a new message.
  */
 export const LeasedTasksReleasedSchema: GenMessage<LeasedTasksReleased> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_messages, 17);
+  messageDesc(file_conveyor_v1_messages, 18);
 
 /**
  * PromoteTick triggers one scheduled-task promotion pass on the scheduler.
@@ -570,7 +597,7 @@ export type PromoteTick = Message<"conveyor.v1.PromoteTick"> & {
  * Use `create(PromoteTickSchema)` to create a new message.
  */
 export const PromoteTickSchema: GenMessage<PromoteTick> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_messages, 18);
+  messageDesc(file_conveyor_v1_messages, 19);
 
 /**
  * ReapTick triggers one maintenance pass on the reaper.
@@ -585,7 +612,7 @@ export type ReapTick = Message<"conveyor.v1.ReapTick"> & {
  * Use `create(ReapTickSchema)` to create a new message.
  */
 export const ReapTickSchema: GenMessage<ReapTick> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_messages, 19);
+  messageDesc(file_conveyor_v1_messages, 20);
 
 /**
  * GroupSweepTick triggers one firing pass on the group-aggregation sweeper.
@@ -600,7 +627,7 @@ export type GroupSweepTick = Message<"conveyor.v1.GroupSweepTick"> & {
  * Use `create(GroupSweepTickSchema)` to create a new message.
  */
 export const GroupSweepTickSchema: GenMessage<GroupSweepTick> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_messages, 20);
+  messageDesc(file_conveyor_v1_messages, 21);
 
 /**
  * ResolveDependents asks a dependency resolver to reconcile the tasks waiting on
@@ -624,5 +651,5 @@ export type ResolveDependents = Message<"conveyor.v1.ResolveDependents"> & {
  * Use `create(ResolveDependentsSchema)` to create a new message.
  */
 export const ResolveDependentsSchema: GenMessage<ResolveDependents> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_messages, 21);
+  messageDesc(file_conveyor_v1_messages, 22);
 

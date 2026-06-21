@@ -173,6 +173,19 @@ type RateLimit struct {
 	UpdatedAt time.Time
 }
 
+// ConcurrencyLimit is a per-queue per-key concurrency cap: the most tasks
+// sharing a concurrency key the queue runs at once. It is config only — the live
+// in-flight count lives in the dispatching queue grain, not the broker.
+type ConcurrencyLimit struct {
+	// Queue is the queue the limit applies to.
+	Queue string
+	// MaxActive is the most tasks sharing a concurrency key that may be active
+	// at once (>= 1).
+	MaxActive int
+	// UpdatedAt is when the limit was last written.
+	UpdatedAt time.Time
+}
+
 // TaskRecord pairs a task envelope with its current lifecycle state in
 // ListTasks results.
 type TaskRecord struct {
@@ -339,6 +352,22 @@ type Broker interface {
 	// QueueRateLimits returns every persisted override, ordered by queue
 	// name, for the management API and dashboard.
 	QueueRateLimits(ctx context.Context) ([]RateLimit, error)
+
+	// SetQueueConcurrencyLimit persists a per-queue per-key concurrency cap.
+	// maxActive must be >= 1.
+	SetQueueConcurrencyLimit(ctx context.Context, queue string, maxActive int) error
+
+	// DeleteQueueConcurrencyLimit removes a queue's concurrency limit, leaving
+	// its keys unbounded. Removing a missing limit is not an error.
+	DeleteQueueConcurrencyLimit(ctx context.Context, queue string) error
+
+	// QueueConcurrencyLimit returns a queue's limit and whether one is set; an
+	// unset queue returns ok=false. The queue grain reads this at activation.
+	QueueConcurrencyLimit(ctx context.Context, queue string) (ConcurrencyLimit, bool, error)
+
+	// QueueConcurrencyLimits returns every persisted limit, ordered by queue
+	// name, for the management API and dashboard.
+	QueueConcurrencyLimits(ctx context.Context) ([]ConcurrencyLimit, error)
 
 	// Info reports the storage engine's driver and runtime statistics for
 	// the dashboard's broker-info view.

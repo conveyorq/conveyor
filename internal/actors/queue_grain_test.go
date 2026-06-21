@@ -7,6 +7,7 @@ package actors
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -443,4 +444,169 @@ func TestQueueGrainReleaseLeasedBrokerError(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, conveyorv1.TaskState_TASK_STATE_ACTIVE, state,
 		"a task whose release failed stays leased until the reaper reclaims it")
+}
+
+// concurrencyGrain builds a bare grain backed by a fake clock and empty memory
+// broker, with the per-key maps initialized as OnActivate would.
+func concurrencyGrain(t *testing.T) (*QueueGrain, *memory.Broker) {
+	t.Helper()
+
+	fake := clock.NewFake(time.Date(2026, 6, 16, 12, 0, 0, 0, time.UTC))
+	taskLog := memory.New(fake)
+	t.Cleanup(func() { _ = taskLog.Close() })
+
+	runtime := NewRuntime(taskLog, fake, testSettings, quietLogger())
+
+	return &QueueGrain{
+		runtime:     runtime,
+		queue:       "default",
+		activeByKey: map[string]int{},
+		inFlightKey: map[string]string{},
+	}, taskLog
+}
+
+func TestLoadConcurrencyLimit(t *testing.T) {
+	grain, taskLog := concurrencyGrain(t)
+	require.NoError(t, taskLog.SetQueueConcurrencyLimit(context.Background(), "default", 5))
+
+	require.NoError(t, grain.loadConcurrencyLimit(context.Background()))
+	require.Equal(t, 5, grain.concurrencyLimit)
+}
+
+func TestLoadConcurrencyLimitUnsetIsUnbounded(t *testing.T) {
+	grain, _ := concurrencyGrain(t)
+
+	require.NoError(t, grain.loadConcurrencyLimit(context.Background()))
+	require.Equal(t, 0, grain.concurrencyLimit, "no override leaves keys unbounded")
+}
+
+func TestApplyConcurrencyLimitChange(t *testing.T) {
+	grain, _ := concurrencyGrain(t)
+
+	grain.applyConcurrencyLimitChange(&conveyorv1.ConcurrencyLimitChanged{Queue: "default", MaxActive: 7})
+	require.Equal(t, 7, grain.concurrencyLimit)
+
+	grain.applyConcurrencyLimitChange(&conveyorv1.ConcurrencyLimitChanged{Queue: "default"})
+	require.Equal(t, 0, grain.concurrencyLimit, "a zero max-active clears the limit")
+}
+
+func TestReleaseConcurrencyKey(t *testing.T) {
+	grain, _ := concurrencyGrain(t)
+	grain.activeByKey = map[string]int{"k": 2}
+	grain.inFlightKey = map[string]string{"t1": "k", "t2": "k"}
+
+	grain.releaseConcurrencyKey("t1")
+	require.Equal(t, 1, grain.activeByKey["k"])
+
+	grain.releaseConcurrencyKey("t2")
+	_, ok := grain.activeByKey["k"]
+	require.False(t, ok, "the key is dropped once it reaches zero")
+
+	// Unknown task ids and keyless tasks are no-ops.
+	grain.releaseConcurrencyKey("unknown")
+	require.Empty(t, grain.inFlightKey)
+}
+
+// receiveDispatch waits up to within for the next dispatch frame.
+func receiveDispatch(recorder *frameRecorder, within time.Duration) (*conveyorv1.Dispatch, bool) {
+	select {
+	case dispatch := <-recorder.dispatched:
+		return dispatch, true
+	case <-time.After(within):
+		return nil, false
+	}
+}
+
+// TestConcurrencyLimitCapsActivePerKey drives the full enforcement path: with a
+// limit of 2, only two tasks sharing a key dispatch at once, the rest are held
+// back, and completing one frees a slot for the next.
+func TestConcurrencyLimitCapsActivePerKey(t *testing.T) {
+	ctx := context.Background()
+	taskLog := memory.New(clock.System())
+	require.NoError(t, taskLog.SetQueueConcurrencyLimit(ctx, "default", 2))
+
+	engine := startEngine(t, taskLog)
+	recorder := newFrameRecorder()
+
+	handle, err := engine.SpawnGateway(ctx, GatewaySession{
+		SessionID:   "session-concurrency",
+		Queues:      []string{"default"},
+		Concurrency: 10,
+	}, recorder)
+	require.NoError(t, err)
+
+	t.Cleanup(func() { _ = handle.Stop(ctx) })
+
+	// Five tasks share one concurrency key; the gateway has ample credits, so
+	// only the key limit can hold them back.
+	for i := range 5 {
+		task := newTask(fmt.Sprintf("task-%02d", i), "default", "test:ok", 5)
+		task.Options.ConcurrencyKey = "tenant-1"
+		require.NoError(t, engine.Enqueue(ctx, task))
+	}
+
+	// Exactly two dispatch.
+	first, ok := receiveDispatch(recorder, 2*time.Second)
+	require.True(t, ok, "the first task should dispatch")
+	_, ok = receiveDispatch(recorder, 2*time.Second)
+	require.True(t, ok, "the second task should dispatch")
+
+	// No third while the key is at its limit, even across a reaper sweep.
+	_, ok = receiveDispatch(recorder, 400*time.Millisecond)
+	require.False(t, ok, "a third task must not dispatch while the key holds its 2 active slots")
+
+	// Completing one frees a slot; a third dispatches.
+	require.NoError(t, handle.Tell(ctx, &conveyorv1.Result{
+		TaskId:  first.GetTask().GetId(),
+		Outcome: conveyorv1.TaskOutcome_TASK_OUTCOME_SUCCESS,
+	}))
+
+	_, ok = receiveDispatch(recorder, 2*time.Second)
+	require.True(t, ok, "a held-back task should dispatch once a slot frees")
+}
+
+// TestConcurrencyKeyRedispatchAfterLeaseExpiry guards the slot-reconciliation
+// fix: a limit-1 ("mutex") key whose worker crashes must re-dispatch its task
+// after the reaper reclaims the expired lease, not deadlock behind the crashed
+// task's own stale slot. Uses short-lease recovery settings so the lease expires
+// within test time.
+func TestConcurrencyKeyRedispatchAfterLeaseExpiry(t *testing.T) {
+	ctx := context.Background()
+	taskLog := memory.New(clock.System())
+	require.NoError(t, taskLog.SetQueueConcurrencyLimit(ctx, "default", 1))
+
+	engine := newNode(taskLog, recoverySettings, freePorts(t, 3), nil)
+	require.NoError(t, engine.Start(ctx))
+
+	t.Cleanup(func() {
+		stopCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = engine.Stop(stopCtx)
+	})
+
+	recorder := newFrameRecorder()
+
+	handle, err := engine.SpawnGateway(ctx, GatewaySession{
+		SessionID:   "session-mutex",
+		Queues:      []string{"default"},
+		Concurrency: 10,
+	}, recorder)
+	require.NoError(t, err)
+
+	t.Cleanup(func() { _ = handle.Stop(ctx) })
+
+	task := newTask("task-mutex", "default", "test:ok", 5)
+	task.Options.ConcurrencyKey = "resource-1"
+	require.NoError(t, engine.Enqueue(ctx, task))
+
+	// First dispatch; the worker never reports completion, simulating a crash.
+	first, ok := receiveDispatch(recorder, 3*time.Second)
+	require.True(t, ok, "the task should dispatch")
+	require.Equal(t, "task-mutex", first.GetTask().GetId())
+
+	// The lease expires and the reaper reclaims the task to retry. The key must
+	// re-dispatch it rather than deadlock on its own stale slot.
+	second, ok := receiveDispatch(recorder, 8*time.Second)
+	require.True(t, ok, "the limit-1 key must re-dispatch its task after a crash, not deadlock on its own slot")
+	require.Equal(t, "task-mutex", second.GetTask().GetId())
 }

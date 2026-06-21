@@ -1032,6 +1032,76 @@ func (b *Broker) QueueRateLimits(ctx context.Context) ([]broker.RateLimit, error
 	return limits, nil
 }
 
+// SetQueueConcurrencyLimit persists a per-queue per-key concurrency cap; see broker.Broker.
+func (b *Broker) SetQueueConcurrencyLimit(ctx context.Context, queue string, maxActive int) error {
+	const upsert = `INSERT INTO conveyor_concurrency_limits (queue, max_active, updated_at)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (queue) DO UPDATE SET
+			max_active = EXCLUDED.max_active, updated_at = EXCLUDED.updated_at`
+
+	if _, err := b.pool.Exec(ctx, upsert, queue, maxActive, b.clock.Now()); err != nil {
+		return fmt.Errorf("postgres: set queue concurrency limit: %w", err)
+	}
+
+	return nil
+}
+
+// DeleteQueueConcurrencyLimit removes a queue's concurrency limit; see broker.Broker.
+func (b *Broker) DeleteQueueConcurrencyLimit(ctx context.Context, queue string) error {
+	if _, err := b.pool.Exec(ctx, "DELETE FROM conveyor_concurrency_limits WHERE queue = $1", queue); err != nil {
+		return fmt.Errorf("postgres: delete queue concurrency limit: %w", err)
+	}
+
+	return nil
+}
+
+// QueueConcurrencyLimit returns a queue's limit and whether one is set; see broker.Broker.
+func (b *Broker) QueueConcurrencyLimit(ctx context.Context, queue string) (broker.ConcurrencyLimit, bool, error) {
+	limit := broker.ConcurrencyLimit{Queue: queue}
+
+	err := b.pool.QueryRow(ctx,
+		"SELECT max_active, updated_at FROM conveyor_concurrency_limits WHERE queue = $1", queue).
+		Scan(&limit.MaxActive, &limit.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return broker.ConcurrencyLimit{}, false, nil
+	}
+
+	if err != nil {
+		return broker.ConcurrencyLimit{}, false, fmt.Errorf("postgres: queue concurrency limit: %w", err)
+	}
+
+	return limit, true, nil
+}
+
+// QueueConcurrencyLimits returns every limit ordered by queue name; see broker.Broker.
+func (b *Broker) QueueConcurrencyLimits(ctx context.Context) ([]broker.ConcurrencyLimit, error) {
+	rows, err := b.pool.Query(ctx,
+		"SELECT queue, max_active, updated_at FROM conveyor_concurrency_limits ORDER BY queue")
+	if err != nil {
+		return nil, fmt.Errorf("postgres: queue concurrency limits: %w", err)
+	}
+
+	defer rows.Close()
+
+	var limits []broker.ConcurrencyLimit
+
+	for rows.Next() {
+		var limit broker.ConcurrencyLimit
+
+		if err := rows.Scan(&limit.Queue, &limit.MaxActive, &limit.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("postgres: scan queue concurrency limit: %w", err)
+		}
+
+		limits = append(limits, limit)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres: queue concurrency limits: %w", err)
+	}
+
+	return limits, nil
+}
+
 // Info reports the Postgres engine's driver, connection-pool counters, and
 // table row counts; see broker.Broker.
 func (b *Broker) Info(ctx context.Context) (broker.Info, error) {

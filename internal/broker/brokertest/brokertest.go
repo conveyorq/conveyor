@@ -74,6 +74,7 @@ func Run(t *testing.T, factory Factory) {
 		{"ArchiveTask", testArchiveTask},
 		{"QueuePauseFlag", testQueuePauseFlag},
 		{"QueueRateLimit", testQueueRateLimit},
+		{"QueueConcurrencyLimit", testQueueConcurrencyLimit},
 		{"QueueStats", testQueueStats},
 		{"CronEntries", testCronEntries},
 		{"ListTasks", testListTasks},
@@ -1572,4 +1573,57 @@ func testDependencyCycleStaysBlocked(t *testing.T, b broker.Broker, _ *clock.Fak
 
 	mustState(t, b, "task-001", conveyorv1.TaskState_TASK_STATE_BLOCKED)
 	mustState(t, b, "task-002", conveyorv1.TaskState_TASK_STATE_BLOCKED)
+}
+
+func testQueueConcurrencyLimit(t *testing.T, b broker.Broker, _ *clock.Fake) {
+	ctx := context.Background()
+
+	if _, ok, err := b.QueueConcurrencyLimit(ctx, queueName); err != nil || ok {
+		t.Fatalf("unset queue concurrency limit = ok %v, err %v; want false, nil", ok, err)
+	}
+
+	if err := b.SetQueueConcurrencyLimit(ctx, queueName, 5); err != nil {
+		t.Fatal(err)
+	}
+
+	limit, ok, err := b.QueueConcurrencyLimit(ctx, queueName)
+	if err != nil || !ok {
+		t.Fatalf("concurrency limit not persisted: ok %v, err %v", ok, err)
+	}
+
+	if limit.MaxActive != 5 || limit.Queue != queueName {
+		t.Fatalf("concurrency limit = %+v; want {%s 5}", limit, queueName)
+	}
+
+	// Overwrite replaces in place.
+	if err := b.SetQueueConcurrencyLimit(ctx, queueName, 10); err != nil {
+		t.Fatal(err)
+	}
+
+	if limit, _, _ = b.QueueConcurrencyLimit(ctx, queueName); limit.MaxActive != 10 {
+		t.Fatalf("overwrite not applied: %+v", limit)
+	}
+
+	// A second queue, then list is ordered by queue name.
+	if err := b.SetQueueConcurrencyLimit(ctx, "alpha", 1); err != nil {
+		t.Fatal(err)
+	}
+
+	all, err := b.QueueConcurrencyLimits(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(all) != 2 || all[0].Queue != "alpha" || all[1].Queue != queueName {
+		t.Fatalf("list = %+v; want [alpha %s] ordered", all, queueName)
+	}
+
+	// Delete leaves the queue's keys unbounded (no limit).
+	if err := b.DeleteQueueConcurrencyLimit(ctx, queueName); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok, _ := b.QueueConcurrencyLimit(ctx, queueName); ok {
+		t.Fatal("delete did not remove the limit")
+	}
 }

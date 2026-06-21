@@ -164,16 +164,17 @@ func (c *Client) Enqueue(ctx context.Context, task *Task, opts ...EnqueueOption)
 		}
 
 		request := &conveyorv1.EnqueueRequest{
-			TaskId:      settings.taskID,
-			Queue:       settings.queue,
-			Type:        task.taskType,
-			Payload:     payload,
-			ContentType: task.contentType,
-			Metadata:    metadata,
-			MaxRetry:    int32(settings.maxRetry),
-			Priority:    int32(settings.priority),
-			UniqueKey:   uniqueKey,
-			Group:       settings.group,
+			TaskId:         settings.taskID,
+			Queue:          settings.queue,
+			Type:           task.taskType,
+			Payload:        payload,
+			ContentType:    task.contentType,
+			Metadata:       metadata,
+			MaxRetry:       int32(settings.maxRetry),
+			Priority:       int32(settings.priority),
+			UniqueKey:      uniqueKey,
+			Group:          settings.group,
+			ConcurrencyKey: settings.concurrencyKey,
 		}
 
 		if settings.timeout > 0 {

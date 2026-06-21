@@ -136,6 +136,15 @@ message RateLimitChanged {
   int32 burst = 3;
 }
 
+// ConcurrencyLimitChanged tells a queue grain that its per-key concurrency limit
+// changed through the Admin API. It carries the new value so the grain updates
+// its keyed semaphore without a broker read: max_active greater than zero sets
+// the limit, while zero clears it and leaves the queue's keys unbounded.
+message ConcurrencyLimitChanged {
+  string queue = 1;
+  int32 max_active = 2;
+}
+
 // FireCron tells the scheduler singleton that a cron entry is due.
 message FireCron {
   string entry_id = 1;

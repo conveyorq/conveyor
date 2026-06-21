@@ -89,6 +89,13 @@ export interface EnqueueOptions {
   uniqueKey?: string;
   /** Make the task a member of the named aggregation group. */
   group?: string;
+  /**
+   * Cap how many tasks sharing this key run at once on the queue: the queue
+   * dispatches at most its configured concurrency limit of tasks with this key
+   * simultaneously, holding the rest pending. No effect unless the queue has a
+   * concurrency limit set. Mutually exclusive with `group`.
+   */
+  concurrencyKey?: string;
   /** Archive the task if it is not dispatched within this many milliseconds. */
   expiresIn?: number;
   /** Archive the task if it is not dispatched by this absolute time. */

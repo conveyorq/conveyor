@@ -187,6 +187,10 @@ func (s *TaskService) envelopeFromRequest(request *conveyorv1.EnqueueRequest) (*
 		return nil, errors.New("group and process_at/process_in are mutually exclusive")
 	}
 
+	if request.GetGroup() != "" && request.GetConcurrencyKey() != "" {
+		return nil, errors.New("group and concurrency_key are mutually exclusive")
+	}
+
 	if request.GetMaxRetry() < 0 {
 		return nil, fmt.Errorf("max_retry must not be negative, got %d", request.GetMaxRetry())
 	}
@@ -244,17 +248,18 @@ func (s *TaskService) envelopeFromRequest(request *conveyorv1.EnqueueRequest) (*
 		Metadata:    request.GetMetadata(),
 		EnqueuedAt:  timestamppb.New(s.timeSource.Now()),
 		Options: &conveyorv1.TaskOptions{
-			MaxRetry:  maxRetry,
-			Timeout:   request.GetTimeout(),
-			Deadline:  request.GetDeadline(),
-			ProcessAt: processAt,
-			UniqueKey: request.GetUniqueKey(),
-			UniqueTtl: request.GetUniqueTtl(),
-			Retention: request.GetRetention(),
-			Priority:  priority,
-			Group:     request.GetGroup(),
-			ExpiresAt: expiresAt,
-			DependsOn: request.GetDependsOn(),
+			MaxRetry:       maxRetry,
+			Timeout:        request.GetTimeout(),
+			Deadline:       request.GetDeadline(),
+			ProcessAt:      processAt,
+			UniqueKey:      request.GetUniqueKey(),
+			UniqueTtl:      request.GetUniqueTtl(),
+			Retention:      request.GetRetention(),
+			Priority:       priority,
+			Group:          request.GetGroup(),
+			ExpiresAt:      expiresAt,
+			DependsOn:      request.GetDependsOn(),
+			ConcurrencyKey: request.GetConcurrencyKey(),
 		},
 	}, nil
 }

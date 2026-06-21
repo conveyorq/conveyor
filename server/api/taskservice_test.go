@@ -133,6 +133,29 @@ func TestEnqueueWithDependencies(t *testing.T) {
 	require.Equal(t, conveyorv1.TaskState_TASK_STATE_BLOCKED, dependent.Msg.GetTask().GetState())
 }
 
+func TestEnqueueConcurrencyKeyMapping(t *testing.T) {
+	service := newTestTaskService(t)
+
+	envelope, err := service.envelopeFromRequest(&conveyorv1.EnqueueRequest{
+		Type:           "test:work",
+		ConcurrencyKey: "tenant-42",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "tenant-42", envelope.GetOptions().GetConcurrencyKey())
+}
+
+func TestEnqueueRejectsGroupWithConcurrencyKey(t *testing.T) {
+	service := newTestTaskService(t)
+
+	_, err := service.Enqueue(context.Background(), connect.NewRequest(&conveyorv1.EnqueueRequest{
+		Type:           "test:work",
+		Group:          "g",
+		ConcurrencyKey: "k",
+	}))
+	require.ErrorContains(t, err, "group and concurrency_key are mutually exclusive")
+	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+}
+
 func TestEnqueueDependencyValidation(t *testing.T) {
 	service := newTestTaskService(t)
 	ctx := context.Background()

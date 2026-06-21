@@ -889,6 +889,62 @@ func (x *RateLimitChanged) GetBurst() int32 {
 	return 0
 }
 
+// ConcurrencyLimitChanged tells a queue grain that its per-key concurrency limit
+// changed through the Admin API. It carries the new value so the grain updates
+// its keyed semaphore without a broker read: max_active greater than zero sets
+// the limit, while zero clears it and leaves the queue's keys unbounded.
+type ConcurrencyLimitChanged struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Queue         string                 `protobuf:"bytes,1,opt,name=queue,proto3" json:"queue,omitempty"`
+	MaxActive     int32                  `protobuf:"varint,2,opt,name=max_active,json=maxActive,proto3" json:"max_active,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ConcurrencyLimitChanged) Reset() {
+	*x = ConcurrencyLimitChanged{}
+	mi := &file_conveyor_v1_messages_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ConcurrencyLimitChanged) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ConcurrencyLimitChanged) ProtoMessage() {}
+
+func (x *ConcurrencyLimitChanged) ProtoReflect() protoreflect.Message {
+	mi := &file_conveyor_v1_messages_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ConcurrencyLimitChanged.ProtoReflect.Descriptor instead.
+func (*ConcurrencyLimitChanged) Descriptor() ([]byte, []int) {
+	return file_conveyor_v1_messages_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *ConcurrencyLimitChanged) GetQueue() string {
+	if x != nil {
+		return x.Queue
+	}
+	return ""
+}
+
+func (x *ConcurrencyLimitChanged) GetMaxActive() int32 {
+	if x != nil {
+		return x.MaxActive
+	}
+	return 0
+}
+
 // FireCron tells the scheduler singleton that a cron entry is due.
 type FireCron struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -899,7 +955,7 @@ type FireCron struct {
 
 func (x *FireCron) Reset() {
 	*x = FireCron{}
-	mi := &file_conveyor_v1_messages_proto_msgTypes[14]
+	mi := &file_conveyor_v1_messages_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -911,7 +967,7 @@ func (x *FireCron) String() string {
 func (*FireCron) ProtoMessage() {}
 
 func (x *FireCron) ProtoReflect() protoreflect.Message {
-	mi := &file_conveyor_v1_messages_proto_msgTypes[14]
+	mi := &file_conveyor_v1_messages_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -924,7 +980,7 @@ func (x *FireCron) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FireCron.ProtoReflect.Descriptor instead.
 func (*FireCron) Descriptor() ([]byte, []int) {
-	return file_conveyor_v1_messages_proto_rawDescGZIP(), []int{14}
+	return file_conveyor_v1_messages_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *FireCron) GetEntryId() string {
@@ -944,7 +1000,7 @@ type CronEntriesChanged struct {
 
 func (x *CronEntriesChanged) Reset() {
 	*x = CronEntriesChanged{}
-	mi := &file_conveyor_v1_messages_proto_msgTypes[15]
+	mi := &file_conveyor_v1_messages_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -956,7 +1012,7 @@ func (x *CronEntriesChanged) String() string {
 func (*CronEntriesChanged) ProtoMessage() {}
 
 func (x *CronEntriesChanged) ProtoReflect() protoreflect.Message {
-	mi := &file_conveyor_v1_messages_proto_msgTypes[15]
+	mi := &file_conveyor_v1_messages_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -969,7 +1025,7 @@ func (x *CronEntriesChanged) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CronEntriesChanged.ProtoReflect.Descriptor instead.
 func (*CronEntriesChanged) Descriptor() ([]byte, []int) {
-	return file_conveyor_v1_messages_proto_rawDescGZIP(), []int{15}
+	return file_conveyor_v1_messages_proto_rawDescGZIP(), []int{16}
 }
 
 // LeaseCycleCompleted delivers the outcome of an asynchronous lease cycle
@@ -988,7 +1044,7 @@ type LeaseCycleCompleted struct {
 
 func (x *LeaseCycleCompleted) Reset() {
 	*x = LeaseCycleCompleted{}
-	mi := &file_conveyor_v1_messages_proto_msgTypes[16]
+	mi := &file_conveyor_v1_messages_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1000,7 +1056,7 @@ func (x *LeaseCycleCompleted) String() string {
 func (*LeaseCycleCompleted) ProtoMessage() {}
 
 func (x *LeaseCycleCompleted) ProtoReflect() protoreflect.Message {
-	mi := &file_conveyor_v1_messages_proto_msgTypes[16]
+	mi := &file_conveyor_v1_messages_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1013,7 +1069,7 @@ func (x *LeaseCycleCompleted) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LeaseCycleCompleted.ProtoReflect.Descriptor instead.
 func (*LeaseCycleCompleted) Descriptor() ([]byte, []int) {
-	return file_conveyor_v1_messages_proto_rawDescGZIP(), []int{16}
+	return file_conveyor_v1_messages_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *LeaseCycleCompleted) GetTasks() []*TaskEnvelope {
@@ -1063,7 +1119,7 @@ type LeasedTasksReleased struct {
 
 func (x *LeasedTasksReleased) Reset() {
 	*x = LeasedTasksReleased{}
-	mi := &file_conveyor_v1_messages_proto_msgTypes[17]
+	mi := &file_conveyor_v1_messages_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1075,7 +1131,7 @@ func (x *LeasedTasksReleased) String() string {
 func (*LeasedTasksReleased) ProtoMessage() {}
 
 func (x *LeasedTasksReleased) ProtoReflect() protoreflect.Message {
-	mi := &file_conveyor_v1_messages_proto_msgTypes[17]
+	mi := &file_conveyor_v1_messages_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1088,7 +1144,7 @@ func (x *LeasedTasksReleased) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LeasedTasksReleased.ProtoReflect.Descriptor instead.
 func (*LeasedTasksReleased) Descriptor() ([]byte, []int) {
-	return file_conveyor_v1_messages_proto_rawDescGZIP(), []int{17}
+	return file_conveyor_v1_messages_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *LeasedTasksReleased) GetReleased() int32 {
@@ -1114,7 +1170,7 @@ type PromoteTick struct {
 
 func (x *PromoteTick) Reset() {
 	*x = PromoteTick{}
-	mi := &file_conveyor_v1_messages_proto_msgTypes[18]
+	mi := &file_conveyor_v1_messages_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1126,7 +1182,7 @@ func (x *PromoteTick) String() string {
 func (*PromoteTick) ProtoMessage() {}
 
 func (x *PromoteTick) ProtoReflect() protoreflect.Message {
-	mi := &file_conveyor_v1_messages_proto_msgTypes[18]
+	mi := &file_conveyor_v1_messages_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1139,7 +1195,7 @@ func (x *PromoteTick) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PromoteTick.ProtoReflect.Descriptor instead.
 func (*PromoteTick) Descriptor() ([]byte, []int) {
-	return file_conveyor_v1_messages_proto_rawDescGZIP(), []int{18}
+	return file_conveyor_v1_messages_proto_rawDescGZIP(), []int{19}
 }
 
 // ReapTick triggers one maintenance pass on the reaper.
@@ -1151,7 +1207,7 @@ type ReapTick struct {
 
 func (x *ReapTick) Reset() {
 	*x = ReapTick{}
-	mi := &file_conveyor_v1_messages_proto_msgTypes[19]
+	mi := &file_conveyor_v1_messages_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1163,7 +1219,7 @@ func (x *ReapTick) String() string {
 func (*ReapTick) ProtoMessage() {}
 
 func (x *ReapTick) ProtoReflect() protoreflect.Message {
-	mi := &file_conveyor_v1_messages_proto_msgTypes[19]
+	mi := &file_conveyor_v1_messages_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1176,7 +1232,7 @@ func (x *ReapTick) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReapTick.ProtoReflect.Descriptor instead.
 func (*ReapTick) Descriptor() ([]byte, []int) {
-	return file_conveyor_v1_messages_proto_rawDescGZIP(), []int{19}
+	return file_conveyor_v1_messages_proto_rawDescGZIP(), []int{20}
 }
 
 // GroupSweepTick triggers one firing pass on the group-aggregation sweeper.
@@ -1188,7 +1244,7 @@ type GroupSweepTick struct {
 
 func (x *GroupSweepTick) Reset() {
 	*x = GroupSweepTick{}
-	mi := &file_conveyor_v1_messages_proto_msgTypes[20]
+	mi := &file_conveyor_v1_messages_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1200,7 +1256,7 @@ func (x *GroupSweepTick) String() string {
 func (*GroupSweepTick) ProtoMessage() {}
 
 func (x *GroupSweepTick) ProtoReflect() protoreflect.Message {
-	mi := &file_conveyor_v1_messages_proto_msgTypes[20]
+	mi := &file_conveyor_v1_messages_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1213,7 +1269,7 @@ func (x *GroupSweepTick) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GroupSweepTick.ProtoReflect.Descriptor instead.
 func (*GroupSweepTick) Descriptor() ([]byte, []int) {
-	return file_conveyor_v1_messages_proto_rawDescGZIP(), []int{20}
+	return file_conveyor_v1_messages_proto_rawDescGZIP(), []int{21}
 }
 
 // ResolveDependents asks a dependency resolver to reconcile the tasks waiting on
@@ -1230,7 +1286,7 @@ type ResolveDependents struct {
 
 func (x *ResolveDependents) Reset() {
 	*x = ResolveDependents{}
-	mi := &file_conveyor_v1_messages_proto_msgTypes[21]
+	mi := &file_conveyor_v1_messages_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1242,7 +1298,7 @@ func (x *ResolveDependents) String() string {
 func (*ResolveDependents) ProtoMessage() {}
 
 func (x *ResolveDependents) ProtoReflect() protoreflect.Message {
-	mi := &file_conveyor_v1_messages_proto_msgTypes[21]
+	mi := &file_conveyor_v1_messages_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1255,7 +1311,7 @@ func (x *ResolveDependents) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResolveDependents.ProtoReflect.Descriptor instead.
 func (*ResolveDependents) Descriptor() ([]byte, []int) {
-	return file_conveyor_v1_messages_proto_rawDescGZIP(), []int{21}
+	return file_conveyor_v1_messages_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *ResolveDependents) GetTaskId() string {
@@ -1326,7 +1382,11 @@ const file_conveyor_v1_messages_proto_rawDesc = "" +
 	"\x05queue\x18\x01 \x01(\tR\x05queue\x12 \n" +
 	"\frate_per_sec\x18\x02 \x01(\x01R\n" +
 	"ratePerSec\x12\x14\n" +
-	"\x05burst\x18\x03 \x01(\x05R\x05burst\"%\n" +
+	"\x05burst\x18\x03 \x01(\x05R\x05burst\"N\n" +
+	"\x17ConcurrencyLimitChanged\x12\x14\n" +
+	"\x05queue\x18\x01 \x01(\tR\x05queue\x12\x1d\n" +
+	"\n" +
+	"max_active\x18\x02 \x01(\x05R\tmaxActive\"%\n" +
 	"\bFireCron\x12\x19\n" +
 	"\bentry_id\x18\x01 \x01(\tR\aentryId\"\x14\n" +
 	"\x12CronEntriesChanged\"\xbd\x01\n" +
@@ -1358,42 +1418,43 @@ func file_conveyor_v1_messages_proto_rawDescGZIP() []byte {
 	return file_conveyor_v1_messages_proto_rawDescData
 }
 
-var file_conveyor_v1_messages_proto_msgTypes = make([]protoimpl.MessageInfo, 22)
+var file_conveyor_v1_messages_proto_msgTypes = make([]protoimpl.MessageInfo, 23)
 var file_conveyor_v1_messages_proto_goTypes = []any{
-	(*TaskEnqueued)(nil),          // 0: conveyor.v1.TaskEnqueued
-	(*TasksAvailable)(nil),        // 1: conveyor.v1.TasksAvailable
-	(*RegisterGateway)(nil),       // 2: conveyor.v1.RegisterGateway
-	(*GatewayCredit)(nil),         // 3: conveyor.v1.GatewayCredit
-	(*ExecuteTask)(nil),           // 4: conveyor.v1.ExecuteTask
-	(*ExecuteBatch)(nil),          // 5: conveyor.v1.ExecuteBatch
-	(*FireGroup)(nil),             // 6: conveyor.v1.FireGroup
-	(*GroupLeaseCompleted)(nil),   // 7: conveyor.v1.GroupLeaseCompleted
-	(*TaskCompleted)(nil),         // 8: conveyor.v1.TaskCompleted
-	(*BatchCompleted)(nil),        // 9: conveyor.v1.BatchCompleted
-	(*DrainQueue)(nil),            // 10: conveyor.v1.DrainQueue
-	(*ResumeQueue)(nil),           // 11: conveyor.v1.ResumeQueue
-	(*CancelActive)(nil),          // 12: conveyor.v1.CancelActive
-	(*RateLimitChanged)(nil),      // 13: conveyor.v1.RateLimitChanged
-	(*FireCron)(nil),              // 14: conveyor.v1.FireCron
-	(*CronEntriesChanged)(nil),    // 15: conveyor.v1.CronEntriesChanged
-	(*LeaseCycleCompleted)(nil),   // 16: conveyor.v1.LeaseCycleCompleted
-	(*LeasedTasksReleased)(nil),   // 17: conveyor.v1.LeasedTasksReleased
-	(*PromoteTick)(nil),           // 18: conveyor.v1.PromoteTick
-	(*ReapTick)(nil),              // 19: conveyor.v1.ReapTick
-	(*GroupSweepTick)(nil),        // 20: conveyor.v1.GroupSweepTick
-	(*ResolveDependents)(nil),     // 21: conveyor.v1.ResolveDependents
-	(*TaskEnvelope)(nil),          // 22: conveyor.v1.TaskEnvelope
-	(*timestamppb.Timestamp)(nil), // 23: google.protobuf.Timestamp
+	(*TaskEnqueued)(nil),            // 0: conveyor.v1.TaskEnqueued
+	(*TasksAvailable)(nil),          // 1: conveyor.v1.TasksAvailable
+	(*RegisterGateway)(nil),         // 2: conveyor.v1.RegisterGateway
+	(*GatewayCredit)(nil),           // 3: conveyor.v1.GatewayCredit
+	(*ExecuteTask)(nil),             // 4: conveyor.v1.ExecuteTask
+	(*ExecuteBatch)(nil),            // 5: conveyor.v1.ExecuteBatch
+	(*FireGroup)(nil),               // 6: conveyor.v1.FireGroup
+	(*GroupLeaseCompleted)(nil),     // 7: conveyor.v1.GroupLeaseCompleted
+	(*TaskCompleted)(nil),           // 8: conveyor.v1.TaskCompleted
+	(*BatchCompleted)(nil),          // 9: conveyor.v1.BatchCompleted
+	(*DrainQueue)(nil),              // 10: conveyor.v1.DrainQueue
+	(*ResumeQueue)(nil),             // 11: conveyor.v1.ResumeQueue
+	(*CancelActive)(nil),            // 12: conveyor.v1.CancelActive
+	(*RateLimitChanged)(nil),        // 13: conveyor.v1.RateLimitChanged
+	(*ConcurrencyLimitChanged)(nil), // 14: conveyor.v1.ConcurrencyLimitChanged
+	(*FireCron)(nil),                // 15: conveyor.v1.FireCron
+	(*CronEntriesChanged)(nil),      // 16: conveyor.v1.CronEntriesChanged
+	(*LeaseCycleCompleted)(nil),     // 17: conveyor.v1.LeaseCycleCompleted
+	(*LeasedTasksReleased)(nil),     // 18: conveyor.v1.LeasedTasksReleased
+	(*PromoteTick)(nil),             // 19: conveyor.v1.PromoteTick
+	(*ReapTick)(nil),                // 20: conveyor.v1.ReapTick
+	(*GroupSweepTick)(nil),          // 21: conveyor.v1.GroupSweepTick
+	(*ResolveDependents)(nil),       // 22: conveyor.v1.ResolveDependents
+	(*TaskEnvelope)(nil),            // 23: conveyor.v1.TaskEnvelope
+	(*timestamppb.Timestamp)(nil),   // 24: google.protobuf.Timestamp
 }
 var file_conveyor_v1_messages_proto_depIdxs = []int32{
-	22, // 0: conveyor.v1.ExecuteTask.task:type_name -> conveyor.v1.TaskEnvelope
-	23, // 1: conveyor.v1.ExecuteTask.lease_expires_at:type_name -> google.protobuf.Timestamp
-	22, // 2: conveyor.v1.ExecuteBatch.tasks:type_name -> conveyor.v1.TaskEnvelope
-	23, // 3: conveyor.v1.ExecuteBatch.lease_expires_at:type_name -> google.protobuf.Timestamp
-	22, // 4: conveyor.v1.GroupLeaseCompleted.tasks:type_name -> conveyor.v1.TaskEnvelope
-	23, // 5: conveyor.v1.GroupLeaseCompleted.lease_expires_at:type_name -> google.protobuf.Timestamp
-	22, // 6: conveyor.v1.LeaseCycleCompleted.tasks:type_name -> conveyor.v1.TaskEnvelope
-	23, // 7: conveyor.v1.LeaseCycleCompleted.lease_expires_at:type_name -> google.protobuf.Timestamp
+	23, // 0: conveyor.v1.ExecuteTask.task:type_name -> conveyor.v1.TaskEnvelope
+	24, // 1: conveyor.v1.ExecuteTask.lease_expires_at:type_name -> google.protobuf.Timestamp
+	23, // 2: conveyor.v1.ExecuteBatch.tasks:type_name -> conveyor.v1.TaskEnvelope
+	24, // 3: conveyor.v1.ExecuteBatch.lease_expires_at:type_name -> google.protobuf.Timestamp
+	23, // 4: conveyor.v1.GroupLeaseCompleted.tasks:type_name -> conveyor.v1.TaskEnvelope
+	24, // 5: conveyor.v1.GroupLeaseCompleted.lease_expires_at:type_name -> google.protobuf.Timestamp
+	23, // 6: conveyor.v1.LeaseCycleCompleted.tasks:type_name -> conveyor.v1.TaskEnvelope
+	24, // 7: conveyor.v1.LeaseCycleCompleted.lease_expires_at:type_name -> google.protobuf.Timestamp
 	8,  // [8:8] is the sub-list for method output_type
 	8,  // [8:8] is the sub-list for method input_type
 	8,  // [8:8] is the sub-list for extension type_name
@@ -1413,7 +1474,7 @@ func file_conveyor_v1_messages_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_conveyor_v1_messages_proto_rawDesc), len(file_conveyor_v1_messages_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   22,
+			NumMessages:   23,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

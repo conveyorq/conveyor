@@ -415,9 +415,16 @@ type TaskOptions struct {
 	// not reached a terminal success the task stays blocked and is not eligible
 	// to lease. An empty list (the default) leaves the task immediately eligible.
 	// Fan-in is a continuation that depends on every task of a fan-out batch.
-	DependsOn     []*TaskDependency `protobuf:"bytes,11,rep,name=depends_on,json=dependsOn,proto3" json:"depends_on,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	DependsOn []*TaskDependency `protobuf:"bytes,11,rep,name=depends_on,json=dependsOn,proto3" json:"depends_on,omitempty"`
+	// concurrency_key caps how many tasks sharing it run at once: the queue
+	// dispatches at most its configured concurrency limit of tasks with this key
+	// simultaneously, holding the rest pending until an active one finishes. Empty
+	// (the default) leaves the task unbounded. It is distinct from unique_key,
+	// which forbids a duplicate outright. Mutually exclusive with group, which is
+	// dispatched as a batch on a separate path.
+	ConcurrencyKey string `protobuf:"bytes,12,opt,name=concurrency_key,json=concurrencyKey,proto3" json:"concurrency_key,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *TaskOptions) Reset() {
@@ -527,6 +534,13 @@ func (x *TaskOptions) GetDependsOn() []*TaskDependency {
 	return nil
 }
 
+func (x *TaskOptions) GetConcurrencyKey() string {
+	if x != nil {
+		return x.ConcurrencyKey
+	}
+	return ""
+}
+
 var File_conveyor_v1_task_proto protoreflect.FileDescriptor
 
 const file_conveyor_v1_task_proto_rawDesc = "" +
@@ -555,7 +569,7 @@ const file_conveyor_v1_task_proto_rawDesc = "" +
 	"\fcompleted_at\x18\f \x01(\v2\x1a.google.protobuf.TimestampR\vcompletedAt\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x93\x04\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xbc\x04\n" +
 	"\vTaskOptions\x12\x1b\n" +
 	"\tmax_retry\x18\x01 \x01(\x05R\bmaxRetry\x123\n" +
 	"\atimeout\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\atimeout\x126\n" +
@@ -573,7 +587,8 @@ const file_conveyor_v1_task_proto_rawDesc = "" +
 	"expires_at\x18\n" +
 	" \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\x12:\n" +
 	"\n" +
-	"depends_on\x18\v \x03(\v2\x1b.conveyor.v1.TaskDependencyR\tdependsOnJ\x04\b\f\x10\x10*\x86\x02\n" +
+	"depends_on\x18\v \x03(\v2\x1b.conveyor.v1.TaskDependencyR\tdependsOn\x12'\n" +
+	"\x0fconcurrency_key\x18\f \x01(\tR\x0econcurrencyKeyJ\x04\b\r\x10\x10*\x86\x02\n" +
 	"\tTaskState\x12\x1a\n" +
 	"\x16TASK_STATE_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14TASK_STATE_SCHEDULED\x10\x01\x12\x16\n" +

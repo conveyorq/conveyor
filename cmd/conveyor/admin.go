@@ -220,6 +220,101 @@ func newRateLimitListCommand(conn *connection) *cobra.Command {
 	}
 }
 
+// newConcurrencyLimitCommand groups the per-queue concurrency-limit subcommands.
+func newConcurrencyLimitCommand(conn *connection) *cobra.Command {
+	command := &cobra.Command{
+		Use:   "concurrency",
+		Short: "Set, clear, and list per-queue per-key concurrency limits",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			_ = cmd.Usage()
+
+			if len(args) > 0 {
+				return fmt.Errorf("concurrency: unknown subcommand %q", args[0])
+			}
+
+			return errors.New("concurrency: usage: conveyor concurrency set|rm|ls")
+		},
+	}
+
+	command.AddCommand(newConcurrencyLimitSetCommand(conn), newConcurrencyLimitRemoveCommand(conn), newConcurrencyLimitListCommand(conn))
+
+	return command
+}
+
+// newConcurrencyLimitSetCommand builds the concurrency set subcommand.
+func newConcurrencyLimitSetCommand(conn *connection) *cobra.Command {
+	var maxActive int
+
+	command := &cobra.Command{
+		Use:     "set <queue>",
+		Short:   "Limit a queue to max-active tasks per concurrency key",
+		Example: `  conveyor concurrency set email --max 5`,
+		Args:    exactQueueName("concurrency set"),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			_, err := conn.admin().SetQueueConcurrencyLimit(context.Background(), connect.NewRequest(&conveyorv1.SetQueueConcurrencyLimitRequest{
+				Queue:     args[0],
+				MaxActive: int32(maxActive),
+			}))
+			if err != nil {
+				return err
+			}
+
+			fmt.Fprintf(cmd.OutOrStdout(), "queue %s limited to %d active per concurrency key\n", args[0], maxActive)
+
+			return nil
+		},
+	}
+
+	command.Flags().IntVar(&maxActive, "max", 0, "most tasks sharing a concurrency key that may be active at once (required, >= 1)")
+	_ = command.MarkFlagRequired("max")
+
+	return command
+}
+
+// newConcurrencyLimitRemoveCommand builds the concurrency rm subcommand.
+func newConcurrencyLimitRemoveCommand(conn *connection) *cobra.Command {
+	return &cobra.Command{
+		Use:   "rm <queue>",
+		Short: "Clear a queue's concurrency limit, leaving its keys unbounded",
+		Args:  exactQueueName("concurrency rm"),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			_, err := conn.admin().DeleteQueueConcurrencyLimit(context.Background(), connect.NewRequest(&conveyorv1.DeleteQueueConcurrencyLimitRequest{Queue: args[0]}))
+			if err != nil {
+				return err
+			}
+
+			fmt.Fprintf(cmd.OutOrStdout(), "queue %s concurrency limit cleared\n", args[0])
+
+			return nil
+		},
+	}
+}
+
+// newConcurrencyLimitListCommand builds the concurrency ls subcommand.
+func newConcurrencyLimitListCommand(conn *connection) *cobra.Command {
+	return &cobra.Command{
+		Use:   "ls",
+		Short: "List per-queue concurrency limits",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			response, err := conn.admin().ListConcurrencyLimits(context.Background(), connect.NewRequest(&conveyorv1.ListConcurrencyLimitsRequest{}))
+			if err != nil {
+				return err
+			}
+
+			stdout := cmd.OutOrStdout()
+			table := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+			fmt.Fprintln(table, "QUEUE\tMAX/KEY")
+
+			for _, limit := range response.Msg.GetLimits() {
+				fmt.Fprintf(table, "%s\t%d\n", limit.GetQueue(), limit.GetMaxActive())
+			}
+
+			return table.Flush()
+		},
+	}
+}
+
 // newTasksListCommand builds the tasks list subcommand.
 func newTasksListCommand(conn *connection) *cobra.Command {
 	var (

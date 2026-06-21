@@ -102,6 +102,9 @@ class EnqueueOptions:
     unique_key: Optional[str] = None
     #: Make the task a member of the named aggregation group.
     group: Optional[str] = None
+    #: Cap how many tasks sharing this key run at once on the queue, up to the
+    #: queue's configured concurrency limit. Mutually exclusive with ``group``.
+    concurrency_key: Optional[str] = None
     #: Archive the task if it is not dispatched within this duration. Exclusive with ``expires_at``.
     expires_in: Optional[timedelta] = None
     #: Archive the task if it is not dispatched by this absolute time. Exclusive with ``expires_in``.

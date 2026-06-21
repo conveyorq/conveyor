@@ -170,6 +170,16 @@ class RateLimitChanged(_message.Message):
     def __init__(self, queue: _Optional[str]=..., rate_per_sec: _Optional[float]=..., burst: _Optional[int]=...) -> None:
         ...
 
+class ConcurrencyLimitChanged(_message.Message):
+    __slots__ = ('queue', 'max_active')
+    QUEUE_FIELD_NUMBER: _ClassVar[int]
+    MAX_ACTIVE_FIELD_NUMBER: _ClassVar[int]
+    queue: str
+    max_active: int
+
+    def __init__(self, queue: _Optional[str]=..., max_active: _Optional[int]=...) -> None:
+        ...
+
 class FireCron(_message.Message):
     __slots__ = ('entry_id',)
     ENTRY_ID_FIELD_NUMBER: _ClassVar[int]

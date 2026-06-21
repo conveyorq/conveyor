@@ -77,7 +77,7 @@ func truncateAll(tb testing.TB) {
 
 	defer func() { _ = connection.Close(ctx) }()
 
-	if _, err = connection.Exec(ctx, "TRUNCATE conveyor_tasks, conveyor_task_deps, conveyor_queue_state, conveyor_cron_entries"); err != nil {
+	if _, err = connection.Exec(ctx, "TRUNCATE conveyor_tasks, conveyor_task_deps, conveyor_queue_state, conveyor_cron_entries, conveyor_rate_limits, conveyor_concurrency_limits"); err != nil {
 		tb.Fatalf("truncate: %v", err)
 	}
 }

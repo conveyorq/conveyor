@@ -125,6 +125,7 @@ export class Client {
       priority: options.priority ?? 0,
       uniqueKey,
       group: options.group ?? "",
+      concurrencyKey: options.concurrencyKey ?? "",
       ...(options.timeout !== undefined ? { timeout: durationFromMs(options.timeout) } : {}),
       ...(options.deadline !== undefined ? { deadline: timestampFromDate(options.deadline) } : {}),
       ...(options.processAt !== undefined ? { processAt: timestampFromDate(options.processAt) } : {}),

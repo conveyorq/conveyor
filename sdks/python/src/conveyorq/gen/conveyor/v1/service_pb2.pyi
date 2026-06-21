@@ -22,7 +22,7 @@ TASK_OUTCOME_SKIP_RETRY: TaskOutcome
 TASK_OUTCOME_RELEASED: TaskOutcome
 
 class EnqueueRequest(_message.Message):
-    __slots__ = ('task_id', 'queue', 'type', 'payload', 'content_type', 'metadata', 'max_retry', 'timeout', 'deadline', 'process_at', 'process_in', 'unique_key', 'unique_ttl', 'priority', 'retention', 'group', 'expires_in', 'expires_at', 'depends_on')
+    __slots__ = ('task_id', 'queue', 'type', 'payload', 'content_type', 'metadata', 'max_retry', 'timeout', 'deadline', 'process_at', 'process_in', 'unique_key', 'unique_ttl', 'priority', 'retention', 'group', 'expires_in', 'expires_at', 'depends_on', 'concurrency_key')
 
     class MetadataEntry(_message.Message):
         __slots__ = ('key', 'value')
@@ -52,6 +52,7 @@ class EnqueueRequest(_message.Message):
     EXPIRES_IN_FIELD_NUMBER: _ClassVar[int]
     EXPIRES_AT_FIELD_NUMBER: _ClassVar[int]
     DEPENDS_ON_FIELD_NUMBER: _ClassVar[int]
+    CONCURRENCY_KEY_FIELD_NUMBER: _ClassVar[int]
     task_id: str
     queue: str
     type: str
@@ -71,8 +72,9 @@ class EnqueueRequest(_message.Message):
     expires_in: _duration_pb2.Duration
     expires_at: _timestamp_pb2.Timestamp
     depends_on: _containers.RepeatedCompositeFieldContainer[_task_pb2.TaskDependency]
+    concurrency_key: str
 
-    def __init__(self, task_id: _Optional[str]=..., queue: _Optional[str]=..., type: _Optional[str]=..., payload: _Optional[bytes]=..., content_type: _Optional[str]=..., metadata: _Optional[_Mapping[str, str]]=..., max_retry: _Optional[int]=..., timeout: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., deadline: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., process_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., process_in: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., unique_key: _Optional[str]=..., unique_ttl: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., priority: _Optional[int]=..., retention: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., group: _Optional[str]=..., expires_in: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., expires_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., depends_on: _Optional[_Iterable[_Union[_task_pb2.TaskDependency, _Mapping]]]=...) -> None:
+    def __init__(self, task_id: _Optional[str]=..., queue: _Optional[str]=..., type: _Optional[str]=..., payload: _Optional[bytes]=..., content_type: _Optional[str]=..., metadata: _Optional[_Mapping[str, str]]=..., max_retry: _Optional[int]=..., timeout: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., deadline: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., process_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., process_in: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., unique_key: _Optional[str]=..., unique_ttl: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., priority: _Optional[int]=..., retention: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., group: _Optional[str]=..., expires_in: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., expires_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., depends_on: _Optional[_Iterable[_Union[_task_pb2.TaskDependency, _Mapping]]]=..., concurrency_key: _Optional[str]=...) -> None:
         ...
 
 class EnqueueResponse(_message.Message):
@@ -440,6 +442,60 @@ class DeleteQueueRateLimitRequest(_message.Message):
         ...
 
 class DeleteQueueRateLimitResponse(_message.Message):
+    __slots__ = ()
+
+    def __init__(self) -> None:
+        ...
+
+class ConcurrencyLimitInfo(_message.Message):
+    __slots__ = ('queue', 'max_active')
+    QUEUE_FIELD_NUMBER: _ClassVar[int]
+    MAX_ACTIVE_FIELD_NUMBER: _ClassVar[int]
+    queue: str
+    max_active: int
+
+    def __init__(self, queue: _Optional[str]=..., max_active: _Optional[int]=...) -> None:
+        ...
+
+class ListConcurrencyLimitsRequest(_message.Message):
+    __slots__ = ()
+
+    def __init__(self) -> None:
+        ...
+
+class ListConcurrencyLimitsResponse(_message.Message):
+    __slots__ = ('limits',)
+    LIMITS_FIELD_NUMBER: _ClassVar[int]
+    limits: _containers.RepeatedCompositeFieldContainer[ConcurrencyLimitInfo]
+
+    def __init__(self, limits: _Optional[_Iterable[_Union[ConcurrencyLimitInfo, _Mapping]]]=...) -> None:
+        ...
+
+class SetQueueConcurrencyLimitRequest(_message.Message):
+    __slots__ = ('queue', 'max_active')
+    QUEUE_FIELD_NUMBER: _ClassVar[int]
+    MAX_ACTIVE_FIELD_NUMBER: _ClassVar[int]
+    queue: str
+    max_active: int
+
+    def __init__(self, queue: _Optional[str]=..., max_active: _Optional[int]=...) -> None:
+        ...
+
+class SetQueueConcurrencyLimitResponse(_message.Message):
+    __slots__ = ()
+
+    def __init__(self) -> None:
+        ...
+
+class DeleteQueueConcurrencyLimitRequest(_message.Message):
+    __slots__ = ('queue',)
+    QUEUE_FIELD_NUMBER: _ClassVar[int]
+    queue: str
+
+    def __init__(self, queue: _Optional[str]=...) -> None:
+        ...
+
+class DeleteQueueConcurrencyLimitResponse(_message.Message):
     __slots__ = ()
 
     def __init__(self) -> None:

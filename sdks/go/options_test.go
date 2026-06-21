@@ -62,3 +62,9 @@ func TestEnqueueOptionsApply(t *testing.T) {
 	require.Equal(t, 24*time.Hour, settings.uniqueTTL)
 	require.Equal(t, "user:42:welcome", settings.uniqueKey)
 }
+
+func TestConcurrencyKeyOption(t *testing.T) {
+	settings := &enqueueOptions{}
+	ConcurrencyKey("customer:42")(settings)
+	require.Equal(t, "customer:42", settings.concurrencyKey)
+}

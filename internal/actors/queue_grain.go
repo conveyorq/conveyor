@@ -76,6 +76,26 @@ type QueueGrain struct {
 	// throttled metric counts episodes rather than every wake-up that finds the
 	// bucket empty.
 	throttled bool
+	// concurrencyLimit is the most tasks sharing a concurrency key this queue
+	// dispatches at once, or zero when the queue's keys are unbounded. Like the
+	// rate limit it is the queue's persisted override, loaded at activation and
+	// updated on change; it never touches the broker on the dispatch path.
+	concurrencyLimit int
+	// activeByKey counts the tasks currently in flight per concurrency key. It is
+	// the live keyed semaphore: a key at concurrencyLimit holds its remaining
+	// tasks back at dispatch until an active one completes. A slot is freed on
+	// completion or, for a task re-leased after its lease was lost, kept rather
+	// than double-counted (see inFlightKey). It is not freed when the reaper
+	// dead-letters a keyed task whose retries are exhausted — that terminal
+	// transition sends no completion — so a task crash-looped to its retry limit
+	// leaks its slot until the grain passivates and rebuilds this from scratch.
+	// The leak is conservative (it over-restricts a key, never over-admits).
+	activeByKey map[string]int
+	// inFlightKey maps a dispatched task id to its concurrency key, so a
+	// completion decrements the right key and a re-lease of the same task (its
+	// prior lease lost to a crash the reaper reclaimed) reuses its slot instead
+	// of being blocked by it. Only keyed tasks are recorded.
+	inFlightKey map[string]string
 }
 
 // enforce interface compliance at compile time.
@@ -100,12 +120,19 @@ func (x *QueueGrain) OnActivate(ctx context.Context, props *goakt.GrainProps) er
 	x.gateways = nil
 	x.nextGateway = 0
 	x.throttled = false
+	x.activeByKey = make(map[string]int)
+	x.inFlightKey = make(map[string]string)
 
 	if err := x.loadRateLimit(ctx); err != nil {
 		return err
 	}
 
-	runtime.Logger().Debug("queue grain activated", "queue", x.queue, "paused", paused, "rate_limited", x.limiter != nil)
+	if err := x.loadConcurrencyLimit(ctx); err != nil {
+		return err
+	}
+
+	runtime.Logger().Debug("queue grain activated", "queue", x.queue, "paused", paused,
+		"rate_limited", x.limiter != nil, "concurrency_limit", x.concurrencyLimit)
 
 	return nil
 }
@@ -151,6 +178,24 @@ func buildLimiter(ratePerSec float64, burst int) *rate.Limiter {
 	}
 
 	return rate.NewLimiter(rate.Limit(ratePerSec), burst)
+}
+
+// loadConcurrencyLimit reads the queue's persisted per-key concurrency limit. It
+// runs only at activation, so the one broker read it makes is never on the
+// dispatch path. No override leaves the queue's keys unbounded (limit zero).
+func (x *QueueGrain) loadConcurrencyLimit(ctx context.Context) error {
+	x.concurrencyLimit = 0
+
+	override, ok, err := x.runtime.Broker().QueueConcurrencyLimit(ctx, x.queue)
+	if err != nil {
+		return fmt.Errorf("queue grain %s: loading concurrency limit: %w", x.queue, err)
+	}
+
+	if ok && override.MaxActive >= 1 {
+		x.concurrencyLimit = override.MaxActive
+	}
+
+	return nil
 }
 
 // OnReceive dispatches on the wake-up hints and control messages of §8.1.
@@ -219,6 +264,11 @@ func (x *QueueGrain) OnReceive(ctx *goakt.GrainContext) {
 		x.maybeLease(ctx)
 		ctx.NoErr()
 
+	case *conveyorv1.ConcurrencyLimitChanged:
+		x.applyConcurrencyLimitChange(message)
+		x.maybeLease(ctx)
+		ctx.NoErr()
+
 	case *goakt.StatusFailure:
 		// A piped lease cycle failed outside the task function (timeout,
 		// breaker). Clear the guard; the next wake-up retries.
@@ -256,7 +306,25 @@ func (x *QueueGrain) recordCompletion(message *conveyorv1.TaskCompleted) {
 		}
 	}
 
+	x.releaseConcurrencyKey(message.GetTaskId())
+
 	x.runtime.Logger().Debug("task completed", "queue", x.queue, "task_id", message.GetTaskId(), "success", message.GetSuccess())
+}
+
+// releaseConcurrencyKey frees the concurrency slot a finished task held, so the
+// next task sharing its key may dispatch. A task with no key, or one whose slot
+// was lost to a relocation, is a no-op.
+func (x *QueueGrain) releaseConcurrencyKey(taskID string) {
+	key, ok := x.inFlightKey[taskID]
+	if !ok {
+		return
+	}
+
+	delete(x.inFlightKey, taskID)
+
+	if x.activeByKey[key]--; x.activeByKey[key] <= 0 {
+		delete(x.activeByKey, key)
+	}
 }
 
 // registerGateway upserts a gateway. A new gateway is granted credits
@@ -403,14 +471,36 @@ func (x *QueueGrain) finishLeaseCycle(ctx *goakt.GrainContext, message *conveyor
 
 	counters := x.runtime.Counters()
 
-	// undeliverable collects tasks this cycle leased but could not hand to a
-	// gateway: a dispatch failure removes the gateway, which is the only way
-	// credits run out mid-batch, so both branches share one root cause and
-	// one remedy — release them so they redeliver instead of idling until
-	// the lease expires.
+	// undeliverable collects tasks this cycle leased but did not dispatch: a
+	// gateway became unreachable (credits run out only that way), or the task's
+	// concurrency key is saturated. Both share one remedy — release them so they
+	// redeliver instead of idling until the lease expires.
 	var undeliverable []*conveyorv1.TaskEnvelope
 
+	saturated := false
+
 	for _, task := range tasks {
+		// Concurrency key: hold the task back when its key already has the most
+		// tasks the queue runs at once in flight. It redelivers when an active
+		// task with the same key completes and reopens the gate (that completion
+		// re-runs maybeLease). Checked before pickGateway so a held-back task
+		// neither consumes a gateway credit nor a rate-limit token.
+		key := task.GetOptions().GetConcurrencyKey()
+
+		// A task already counted against its key is one this grain dispatched
+		// before and is re-leasing now because its prior lease was lost (a worker
+		// crash the reaper reclaimed to retry). It keeps its slot: the gate must
+		// not block it behind its own count, and the dispatch must not count it
+		// twice. Without this a limit-1 (mutex) key deadlocks on a single crash.
+		holdsSlot := key != "" && x.inFlightKey[task.GetId()] == key
+
+		if key != "" && !holdsSlot && x.concurrencyLimit > 0 && x.activeByKey[key] >= x.concurrencyLimit {
+			undeliverable = append(undeliverable, task)
+			saturated = true
+
+			continue
+		}
+
 		gateway := x.pickGateway()
 
 		if gateway == nil {
@@ -437,15 +527,32 @@ func (x *QueueGrain) finishLeaseCycle(ctx *goakt.GrainContext, message *conveyor
 		counters.Dispatched.Add(1)
 		counters.Active.Add(1)
 
+		// Reserve a slot for the key so the rest of this batch — and later
+		// cycles — see it occupied until the task completes. A re-dispatch of a
+		// task that already holds its slot only refreshes the id mapping.
+		if key != "" {
+			if !holdsSlot {
+				x.activeByKey[key]++
+			}
+
+			x.inFlightKey[task.GetId()] = key
+		}
+
 		x.runtime.Logger().Debug("task dispatched", "queue", x.queue, "task_id", task.GetId(), "gateway", gateway.name)
 	}
+
+	if saturated {
+		x.runtime.Metrics().ConcurrencyLimited(ctx.Context(), x.queue)
+	}
+
+	dispatched := len(tasks) - len(undeliverable)
 
 	// Spend a token per task actually dispatched. maybeLease capped this cycle
 	// to the bucket's available tokens, so the reservation never waits. Clamp to
 	// the burst: a rate-limit change between this cycle's lease and its
 	// completion can shrink the bucket below the in-flight count, and ReserveN
 	// with n above the burst would consume nothing at all.
-	if dispatched := len(tasks) - len(undeliverable); x.limiter != nil && dispatched > 0 {
+	if x.limiter != nil && dispatched > 0 {
 		x.limiter.ReserveN(x.runtime.Clock().Now(), min(dispatched, x.limiter.Burst()))
 	}
 
@@ -453,9 +560,14 @@ func (x *QueueGrain) finishLeaseCycle(ctx *goakt.GrainContext, message *conveyor
 		x.releaseLeased(ctx, message.GetLeaseId(), undeliverable)
 	}
 
-	// A non-empty batch may mean more work is due; run another cycle.
-	// maybeLease itself guards pause state, remaining credits, and rate limit.
-	x.maybeLease(ctx)
+	// Run another cycle only when this one dispatched something: more work may
+	// be due. If nothing dispatched — every leased task held back by a saturated
+	// concurrency key — re-leasing would just churn the same tasks. A completion
+	// (which frees a key slot), a credit, an enqueue, or the reaper's pending
+	// sweep re-triggers the cycle instead.
+	if dispatched > 0 {
+		x.maybeLease(ctx)
+	}
 }
 
 // releaseLeased returns an undispatched leased batch to pending off the
@@ -553,6 +665,22 @@ func (x *QueueGrain) applyRateLimitChange(message *conveyorv1.RateLimitChanged) 
 	x.limiter = buildLimiter(ratePerSec, burst)
 	x.throttled = false
 	x.runtime.Logger().Info("queue rate limit changed", "queue", x.queue, "rate_per_sec", ratePerSec, "burst", burst)
+}
+
+// applyConcurrencyLimitChange updates the queue's per-key concurrency limit from
+// an Admin API change. The new value rides in the message, so the grain never
+// reads the broker on the turn: a positive max-active sets the limit, while zero
+// clears it and leaves the queue's keys unbounded. The live per-key counts are
+// untouched — they track in-flight work, not the limit, so lowering the limit
+// simply holds new dispatches until a key drains below it.
+func (x *QueueGrain) applyConcurrencyLimitChange(message *conveyorv1.ConcurrencyLimitChanged) {
+	x.concurrencyLimit = 0
+
+	if maxActive := int(message.GetMaxActive()); maxActive >= 1 {
+		x.concurrencyLimit = maxActive
+	}
+
+	x.runtime.Logger().Info("queue concurrency limit changed", "queue", x.queue, "max_active", x.concurrencyLimit)
 }
 
 // setPaused persists and applies the queue pause flag. The persistence

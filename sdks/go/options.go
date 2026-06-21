@@ -126,6 +126,8 @@ type enqueueOptions struct {
 	group string
 	// dependsOn lists the tasks this task waits for before it becomes eligible.
 	dependsOn []Dependency
+	// concurrencyKey caps how many tasks sharing it run at once on its queue.
+	concurrencyKey string
 }
 
 // TaskID assigns a client-chosen task id, making Enqueue retries
@@ -208,4 +210,14 @@ func Unique(ttl time.Duration) EnqueueOption {
 // "user:42:welcome", instead of the derived type-and-payload key.
 func UniqueKey(key string) EnqueueOption {
 	return func(o *enqueueOptions) { o.uniqueKey = key }
+}
+
+// ConcurrencyKey caps how many tasks sharing the key run at once on the task's
+// queue: the queue dispatches at most its configured concurrency limit of tasks
+// with this key simultaneously, holding the rest pending until an active one
+// finishes (e.g. "customer:42" to bound in-flight work per customer). It has no
+// effect unless the queue has a concurrency limit set. Mutually exclusive with
+// Group.
+func ConcurrencyKey(key string) EnqueueOption {
+	return func(o *enqueueOptions) { o.concurrencyKey = key }
 }
