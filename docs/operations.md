@@ -16,7 +16,9 @@ One binary, selected by `mode` (or `--mode`):
 Clustering is always compiled in: `standalone` is a cluster of one running the
 same code path. Artifacts ship under [`deploy/`](../deploy): a distroless
 [Dockerfile](../deploy/docker/Dockerfile), a [Helm chart](../deploy/helm/conveyor),
-a [systemd unit](../deploy/systemd/conveyord.service), and Compose files.
+a [systemd unit](../deploy/systemd/conveyord.service), and Compose files. For an
+end-to-end walkthrough that ties the server, Postgres, and worker tiers together,
+see [high availability](high-availability.md).
 
 ## Configuration
 
@@ -29,7 +31,7 @@ conveyord --mode=kubernetes --config=/etc/conveyor/conveyor.yaml
 conveyord --dev   # standalone + in-memory broker + auth off + debug logs
 ```
 
-Environment keys mirror the file with `CONVEYOR_` and `__` between levels —
+Environment keys mirror the file with `CONVEYOR_` and `__` between levels.
 `broker.dsn` is `CONVEYOR_BROKER__DSN`, `cluster.bind_addr` is
 `CONVEYOR_CLUSTER__BIND_ADDR`.
 
@@ -43,7 +45,7 @@ Key groups:
   `passivate_after`, `default_max_retry`, `shutdown_timeout`.
 - `engine.rate_limit_enabled` (master switch, default `true`),
   `engine.rate_limit_rate_per_sec` and `engine.rate_limit_burst` (the global
-  default per-queue dispatch limit; per-queue overrides are set at runtime — see
+  default per-queue dispatch limit; per-queue overrides are set at runtime, see
   [rate limiting](rate-limiting.md)).
 - `metrics.listen` (default `:9464`; empty disables the endpoint).
 - `otel.endpoint` (OTLP push for metrics + traces), `otel.service_name`.
@@ -55,7 +57,7 @@ so that file is also a complete annotated reference.
 
 ## Scaling
 
-**The server is stateless** — durable state lives in the broker. Scale it
+**The server is stateless.** Durable state lives in the broker. Scale it
 horizontally:
 
 - **More server nodes** spread queue ownership and worker sessions across the
@@ -80,8 +82,8 @@ within a queue, and per-queue weights bias a worker that serves several queues.
 - `engine.lease_ttl` bounds how long a crashed worker's task waits before
   redelivery; `engine.reap_interval` is how often the reaper reclaims expired
   leases (recovery time after a failure is roughly `2 × reap_interval`).
-- `engine.lease_batch_max` caps how many tasks one dispatch cycle claims —
-  raise it for high-throughput queues, lower it to smooth load.
+- `engine.lease_batch_max` caps how many tasks one dispatch cycle claims.
+  Raise it for high-throughput queues, lower it to smooth load.
 
 ## Security
 
@@ -97,7 +99,7 @@ within a queue, and per-queue weights bias a worker that serves several queues.
   between cluster peers (set `ca_file` for peer verification).
 - **Network.** The Helm chart ships an opt-in NetworkPolicy example and keeps
   the metrics port off the public API listener. Never expose the metrics port
-  (`:9464`) publicly — it carries internal topology.
+  (`:9464`) publicly, since it carries internal topology.
 
 ## Dashboard
 
@@ -107,9 +109,9 @@ within a queue, and per-queue weights bias a worker that serves several queues.
   expose the API without the UI. The static shell is served unauthenticated (it
   holds no secrets); the data calls it makes go through the bearer-token-
   authenticated API, so with auth on, enter a token in the UI.
-- **Hosting models.** (1) *Embedded* — served by `conveyord`, same origin, no
-  CORS. (2) *Same-origin behind a proxy* — your own UI and the API behind one
-  ingress; no CORS. (3) *Different origin* — a separately hosted UI (CDN/your
+- **Hosting models.** (1) *Embedded*, served by `conveyord`, same origin, no
+  CORS. (2) *Same-origin behind a proxy*, your own UI and the API behind one
+  ingress, no CORS. (3) *Different origin*, a separately hosted UI (CDN/your
   host); set `api.cors_origins` to the UI's origin(s) (empty disables CORS; `*`
   allows any). The same built bundle works in all three; it reads its API base
   URL at runtime (defaults to same-origin, overridable via `?api=` or a global).
@@ -119,7 +121,7 @@ within a queue, and per-queue weights bias a worker that serves several queues.
 
 ## Observability
 
-- **Health.** `/healthz` (liveness) and `/readyz` (readiness — broker reachable
+- **Health.** `/healthz` (liveness) and `/readyz` (readiness: broker reachable
   and engine running) on the API port. Wired into the chart's probes.
 - **Metrics.** Prometheus exposition at `/metrics` on `metrics.listen`
   (`:9464`): `conveyor_enqueued_total`, `…_completed_total`, `…_failed_total`,
@@ -142,13 +144,13 @@ within a queue, and per-queue weights bias a worker that serves several queues.
   SIGKILL.
 - **Worker deploys are free.** When a *worker* process shuts down (cancel its
   `Run` context, e.g. on `SIGTERM`), any task it was running is handed back with
-  **no retry penalty and no backoff** — it becomes due immediately on another
+  **no retry penalty and no backoff**, so it becomes due immediately on another
   worker rather than counting as a failed attempt. So rolling out a new worker
   build does not eat into tasks' retry budgets or delay them. A genuine worker
   *crash* is different: it is recovered by lease expiry and **does** count as a
   retry, which bounds a task that repeatedly kills its worker.
 - **Rolling restart.** Because execution is **at-least-once**, redelivery during
-  a restart is always safe — design handlers to be idempotent. The StatefulSet
+  a restart is always safe, so design handlers to be idempotent. The StatefulSet
   rolls one pod at a time; a PodDisruptionBudget keeps a quorum available.
   Workers reconnect with jitter to the API Service and keep processing while a
   node is replaced; tasks held by a restarting node are reclaimed by lease
@@ -158,6 +160,6 @@ within a queue, and per-queue weights bias a worker that serves several queues.
   serves older workers: **roll the server tier first, then workers.** During a
   rolling restart the cluster runs mixed server versions briefly; keep upgrades
   to one minor version at a time. Full mixed-version cluster testing is deferred
-  past v1 — do not run a cluster on more than one server version longer than a
+  past v1, so do not run a cluster on more than one server version longer than a
   rollout takes.
 - **Schema migrations** run automatically on Postgres connect; no manual step.

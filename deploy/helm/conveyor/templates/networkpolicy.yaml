@@ -1,8 +1,10 @@
 {{- if .Values.networkPolicy.enabled -}}
 # Example policy: restrict the cluster ports (remoting, gossip, peers) to
-# other conveyor pods, while leaving the API port reachable from any client
-# in the namespace. Tighten the API ingress to your own clients before
-# relying on this in production.
+# other conveyor pods, while leaving the API and metrics ports reachable. The
+# api/metrics rule below has no `from`, so it admits any in-cluster client in
+# any namespace. Scope it (a namespaceSelector/podSelector for your clients and
+# your Prometheus) before relying on this in production. Egress is intentionally
+# unrestricted so peer discovery via the Kubernetes API and DNS keep working.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

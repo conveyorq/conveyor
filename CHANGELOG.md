@@ -8,7 +8,7 @@ All notable changes to Conveyor are documented here. The format is based on
 
 ## [v0.1.0] - 2026-06-19
 
-First public release — a distributed task queue for Go: a persistent,
+First public release: a distributed task queue for Go, a persistent,
 push-based queue with at-least-once execution, backed by Postgres or an
 in-memory broker, with no Redis and no polling.
 
@@ -23,7 +23,7 @@ in-memory broker, with no Redis and no polling.
   sweep archives them. See `docs/expiring-jobs.md`.
 - **End-to-end payload encryption**: seal task payloads in the SDK/CLI with
   `conveyor.WithEncryption(...)` so the server stores ciphertext only and holds
-  no keys. Ships the `encryption` package — an `Encryptor` seam with a built-in
+  no keys. Ships the `encryption` package, an `Encryptor` seam with a built-in
   AES-256-GCM implementation (fresh nonce per call, key-id-framed ciphertext for
   rotation) and bring-your-own as the extension point. A metadata marker gates
   decryption, so encrypted and plaintext tasks share a queue; a wrong-key or
@@ -44,7 +44,7 @@ in-memory broker, with no Redis and no polling.
   `rate_limit_rate_per_sec`, `rate_limit_burst`) plus per-queue overrides set live
   via `conveyor ratelimit set|rm|ls`, the dashboard's Limits tab, or the
   `AdminService` `SetQueueRateLimit`/`DeleteQueueRateLimit`/`ListRateLimits` RPCs.
-  Over-rate tasks wait without a retry penalty; the `conveyor_ratelimit_throttled`
+  Over-rate tasks wait without a retry penalty; the `conveyor_ratelimit_throttled_total`
   metric tracks throttling. See `docs/rate-limiting.md`.
 - **Normative wire-protocol spec** (`docs/protocol.md`): the language-agnostic
   contract for non-Go SDKs, covering transport, auth, the `content_type` codec
@@ -54,13 +54,13 @@ in-memory broker, with no Redis and no polling.
   advertises its build and admitted SDK floor in `Welcome` (`server_version`,
   `min_sdk_version`). All fields are additive and optional.
 - **Push-based dispatch** over a ConnectRPC worker-session protocol with
-  credit-based flow control — the server streams work to ready workers; no
+  credit-based flow control: the server streams work to ready workers; no
   poll interval to tune.
 - **At-least-once execution** with crash safety across server nodes and worker
   disconnects: tasks are persisted before dispatch, and lease expiry
   redelivers a dead worker's in-flight tasks.
 - **Free deploys (graceful drain)**: a worker draining on shutdown (SIGTERM)
-  hands its in-flight tasks back with no retry penalty and no backoff — they
+  hands its in-flight tasks back with no retry penalty and no backoff, so they
   become due immediately on another worker instead of consuming a retry. The
   drain-induced cancellation is reported as `RELEASED`, distinct from a genuine
   failure, deadline, or server cancel (which count as a retry). A crashed worker
@@ -88,8 +88,8 @@ in-memory broker, with no Redis and no polling.
   with batch handlers and middleware, JSON/binary/text codecs, and AES-256-GCM
   end-to-end encryption byte-compatible with the Go SDK. ESM, Node 20+.
 - **Python SDK** (`sdks/python`): an asyncio-native `Client`
-  and `Worker` — plus synchronous `SyncClient`/`SyncWorker` wrappers over the
-  same core — with `Mux` routing (batch handlers and middleware), JSON/binary/text
+  and `Worker`, plus synchronous `SyncClient`/`SyncWorker` wrappers over the
+  same core, with `Mux` routing (batch handlers and middleware), JSON/binary/text
   codecs, and AES-256-GCM encryption byte-compatible with the Go SDK. Full type
   hints (`py.typed`), Python 3.9+. A task enqueued from any SDK runs on a worker
   written in any other.

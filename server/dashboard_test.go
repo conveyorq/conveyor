@@ -37,6 +37,72 @@ func TestDashboardServedByDefault(t *testing.T) {
 	require.Contains(t, string(body), `id="root"`)
 }
 
+// TestDashboardSecurityHeaders verifies the SPA shell carries the hardening
+// headers and a no-cache policy so a redeploy is seen immediately.
+func TestDashboardSecurityHeaders(t *testing.T) {
+	requireDashboardBuilt(t)
+
+	node := startTestServer(t)
+
+	resp, err := http.Get("http://" + node.Addr() + "/")
+	require.NoError(t, err)
+
+	defer func() { _ = resp.Body.Close() }()
+
+	require.Equal(t, "nosniff", resp.Header.Get("X-Content-Type-Options"))
+	require.Equal(t, "DENY", resp.Header.Get("X-Frame-Options"))
+	require.Equal(t, "no-cache", resp.Header.Get("Cache-Control"))
+}
+
+// TestDashboardAssetsCachedImmutable verifies content-hashed assets are served
+// with a long immutable cache policy so reloads hit the browser cache.
+func TestDashboardAssetsCachedImmutable(t *testing.T) {
+	requireDashboardBuilt(t)
+
+	root, err := dashboard.Assets()
+	require.NoError(t, err)
+
+	var asset string
+
+	require.NoError(t, fs.WalkDir(root, "assets", func(p string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+
+		if !entry.IsDir() && asset == "" {
+			asset = p
+		}
+
+		return nil
+	}))
+
+	require.NotEmpty(t, asset, "expected a built asset under assets/")
+
+	node := startTestServer(t)
+
+	resp, err := http.Get("http://" + node.Addr() + "/" + asset)
+	require.NoError(t, err)
+
+	defer func() { _ = resp.Body.Close() }()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, assetCacheControl, resp.Header.Get("Cache-Control"))
+}
+
+// TestDashboardConfigNotCached verifies the runtime-config endpoint is never
+// cached, so an operator setting change is reflected on the next load.
+func TestDashboardConfigNotCached(t *testing.T) {
+	node := startTestServer(t)
+
+	resp, err := http.Get("http://" + node.Addr() + "/dashboard-config.json")
+	require.NoError(t, err)
+
+	defer func() { _ = resp.Body.Close() }()
+
+	require.Equal(t, "no-cache", resp.Header.Get("Cache-Control"))
+	require.Equal(t, "nosniff", resp.Header.Get("X-Content-Type-Options"))
+}
+
 // TestDashboardDisabled verifies that with api.dashboard off the root path is
 // not served, leaving the API reachable without the UI.
 func TestDashboardDisabled(t *testing.T) {

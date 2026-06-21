@@ -2,7 +2,7 @@
 
 |                 |                                                                      |
 |-----------------|----------------------------------------------------------------------|
-| Status          | Normative for the **`conveyor.v1`** protocol namespace; the wire is not yet frozen (pre-1.0) — see §8 |
+| Status          | Normative for the **`conveyor.v1`** protocol namespace; the wire is not yet frozen (pre-1.0); see §8 |
 | Audience        | SDK authors implementing a Conveyor client or worker in any language |
 | Source of truth | `protos/conveyor/v1/*.proto` + this document                         |
 
@@ -49,7 +49,7 @@ proto3 JSON mapping. SDK authors MUST account for:
 | `map<k,v>`                  | JSON object                                                                                      |
 
 Note the two encoding layers that must not be confused: a task **payload** is a
-`bytes` field, so over HTTP/JSON it is base64 — and *inside* those bytes is the
+`bytes` field, so over HTTP/JSON it is base64, and *inside* those bytes is the
 payload codec named by `content_type` (§3). The transport encoding and the
 payload encoding are independent.
 
@@ -155,7 +155,7 @@ the stream with `invalid_argument`.
 | Field                           | Requirement                                                                                                                                                                                    |
 |---------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `queues` (`map<string,int32>`)  | MUST contain at least one entry. Each key MUST match `^[a-zA-Z0-9][a-zA-Z0-9-_.]*$`. Each weight MUST be > 0. The weight governs relative dispatch share across the queues this worker serves. |
-| `concurrency` (`int32`)         | MUST be > 0. This is the worker's **total** simultaneous-execution capacity across all its queues (not per-queue). See §5.5 — this value is the flow-control grant.                            |
+| `concurrency` (`int32`)         | MUST be > 0. This is the worker's **total** simultaneous-execution capacity across all its queues (not per-queue). See §5.5; this value is the flow-control grant.                            |
 | `labels` (`map<string,string>`) | OPTIONAL, informational. May be empty.                                                                                                                                                         |
 | `sdk_version` (`string`)        | SHOULD be set (see §8). May be any string; an empty or non-semver value is accepted.                                                                                                           |
 | `min_server_version` (`string`) | OPTIONAL. The minimum server version this worker requires, as semver (e.g. `"v1.2.0"`). Empty imposes no requirement; a non-semver value is ignored. The server fails the session with `invalid_argument` when its own version is older. See §8. |
@@ -189,7 +189,7 @@ tasks individually; it advertises capacity (§5.5) and the server streams work.
 | `task` (`TaskEnvelope`)  | The task to execute, including `payload`, `content_type`, `metadata`, `options`, `retried`, `id`, `queue`, `type`.                                                  |
 | `deadline` (`Timestamp`) | The **effective** execution deadline: `min(lease expiry, task deadline if set, now + task timeout if set)`. The worker SHOULD cancel a handler that runs past this. |
 
-### 5.5 Flow control (the credit model) — READ THIS
+### 5.5 Flow control: the credit model (READ THIS)
 
 Concurrency control is **declared once in `Hello.concurrency` and managed by the
 server**. The model is:
@@ -219,7 +219,7 @@ Therefore a conforming worker:
 the declared `concurrency`; otherwise the stream fails with `invalid_argument`.
 
 > Implementation note: this means an SDK's simplest correct strategy is a
-> semaphore of size `concurrency` — acquire before accepting a Dispatch's work,
+> semaphore of size `concurrency`: acquire before accepting a Dispatch's work,
 > release after sending its Result. No credit accounting is required on the SDK
 > side.
 
@@ -229,7 +229,7 @@ the declared `concurrency`; otherwise the stream fails with `invalid_argument`.
   granted. If the lease expires before the worker reports a Result, the server
   considers the worker dead for that task, **increments its retry count**, and
   redelivers it (possibly to another worker). This is the at-least-once
-  backbone — a task MAY therefore run more than once.
+  backbone, and a task MAY therefore run more than once.
 - To keep long-running tasks alive, the worker MUST periodically send
   `Heartbeat` every `heartbeat_interval`, listing the ids of all tasks still
   executing in `active_task_ids`.
@@ -293,8 +293,8 @@ On a transient stream end (§4), the worker SHOULD reconnect with
 On shutdown (e.g. SIGTERM), a worker SHOULD:
 
 1. Stop accepting new Dispatches.
-2. For each in-flight task, either finish it and report its real outcome, or —
-   if it cannot finish in time — report `RELEASED`, which hands the task back
+2. For each in-flight task, either finish it and report its real outcome, or,
+   if it cannot finish in time, report `RELEASED`, which hands the task back
    with **no retry penalty and no backoff** (it becomes due immediately on
    another worker). A drain MUST NOT report `RETRY` for a task it is abandoning
    purely because the worker is stopping: that would consume the task's retry
@@ -310,18 +310,18 @@ so only true drain abandonment becomes `RELEASED`.
 
 Safety net: whenever the stream closes for any reason, the server **releases all
 of that session's still-leased tasks** for immediate redelivery (no retry
-increment) — the same penalty-free outcome as an explicit `RELEASED`. So even an
+increment), the same penalty-free outcome as an explicit `RELEASED`. So even an
 abrupt disconnect (crash of the stream, network loss) does not lose work and
 does not burn a retry; it only risks a task running twice (at-least-once). A
 genuinely *crashed* worker, by contrast, is detected by lease expiry, and that
 redelivery **does** count as a retry (it is indistinguishable from a task that
-hangs the worker — the poison-pill bound).
+hangs the worker, the poison-pill bound).
 
 ### 5.11 Batch delivery (aggregation groups)
 
 A producer MAY tag a task with a **group** (`TaskOptions.group`, §6.1). Tasks
 sharing a `(queue, group)` accumulate server-side (state `aggregating`, not
-dispatched) until the group **fires** — by size, by max-delay since the first
+dispatched) until the group **fires**, whether by size, by max-delay since the first
 member, or by grace period since the last (server-configured). A fired group is
 delivered to one worker as a single batch:
 
@@ -332,7 +332,7 @@ delivered to one worker as a single batch:
 - **`BatchResult` (worker → server):** `{ repeated Result results }`. The worker
   runs all members in **one** handler call and reports one `Result` per member.
   A member **omitted** from `results` is treated as `RELEASED` (redelivered, no
-  penalty) — the same safety net as a dropped single `Result`.
+  penalty), the same safety net as a dropped single `Result`.
 
 Rules an SDK MUST follow:
 
@@ -413,7 +413,7 @@ Batch actions report per-id outcomes positionally in
 ## 8. Versioning & compatibility
 
 - The protocol namespace is **`conveyor.v1`**. The project is pre-1.0 (current
-  release `v0.1.0`), so the wire is **not yet frozen** — a breaking change
+  release `v0.1.0`), so the wire is **not yet frozen**: a breaking change
   remains possible before the 1.0.0 release. From **1.0.0** on, changes within
   `conveyor.v1` are **additive only**: new fields and messages, never renumbered
   or removed; enum values appended, never repurposed.

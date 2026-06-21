@@ -1,0 +1,59 @@
+name: Documentation request
+description: Report missing, unclear, or incorrect documentation.
+title: "docs: "
+labels: ["documentation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve the docs. Point us at exactly what is wrong or missing so we can fix it quickly.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which documentation?
+      options:
+        - README
+        - Concepts
+        - Architecture
+        - Operations guide
+        - High availability
+        - Wire protocol
+        - Group aggregation
+        - Rate limiting
+        - End-to-end encryption
+        - Expiring tasks
+        - Migration guide (asynq / River)
+        - Go SDK README
+        - TypeScript SDK README
+        - Python SDK README
+        - Godoc / inline code comments
+        - Other / not sure
+    validations:
+      required: true
+  - type: input
+    id: location
+    attributes:
+      label: Page or file
+      description: The doc URL, file path, or section heading this is about.
+      placeholder: "docs/operations.md#scaling"
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is wrong or missing
+      description: What you expected to find, what was unclear, or what is incorrect.
+    validations:
+      required: true
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested improvement
+      description: How you would word or structure it, if you have an idea.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Confirmations
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: I am willing to open a pull request for this.
+          required: false

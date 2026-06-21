@@ -204,7 +204,7 @@ message Hello {
 // credits equal to Hello.concurrency and refills one per Result, so a worker
 // that simply answers every Dispatch with a Result needs no Credit frame.
 // When sent, n must be in 1..concurrency; the server caps total credits at the
-// declared concurrency. See docs/protocol.md §5.5.
+// declared concurrency.
 message Credit {
   int32 n = 1;
 }

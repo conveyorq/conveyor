@@ -17,6 +17,7 @@ jobs:
     outputs:
       build: ${{ steps.filter.outputs.build }}
       deploy: ${{ steps.filter.outputs.deploy }}
+      ts_py: ${{ steps.filter.outputs.ts_py }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -58,6 +59,17 @@ jobs:
               - 'hack/e2e-kind.sh'
               - 'hack/e2e-load.Dockerfile'
               - 'hack/e2e-load/**'
+              - '.github/workflows/ci.yml'
+            # "ts_py" is true when the TypeScript or Python code (dashboard,
+            # SDKs, examples) or the lint toolchain changed. It gates the
+            # TS/Python lint job, kept off the heavy Go build matrix on purpose.
+            ts_py:
+              - 'web/dashboard/**'
+              - 'sdks/typescript/**'
+              - 'sdks/python/**'
+              - 'examples/typescript/**'
+              - 'examples/python/**'
+              - 'Makefile'
               - '.github/workflows/ci.yml'
 
   # Single heavy job: builds, regenerates and verifies protos, lints, runs the
@@ -161,6 +173,37 @@ jobs:
       # the quickstart workflow, not the compiler's cold start.
       - name: Quickstart (60s budget)
         run: timeout 60 make quickstart
+
+  # Lightweight lint of the non-Go code. It is kept off the heavy build matrix
+  # on purpose: a TypeScript or Python change must not drag in the Go race suite
+  # and the quickstart, so it runs here against its own path filter.
+  lint-ts-py:
+    name: Lint TypeScript & Python
+    needs: changes
+    if: needs.changes.outputs.ts_py == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        name: Checkout
+      - uses: pnpm/action-setup@v4
+        name: Setup pnpm
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        name: Setup Node
+        with:
+          node-version: "22"
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        name: Setup uv
+        with:
+          # Provide a deterministic interpreter so `uv venv` does not depend on
+          # whatever Python the runner ships.
+          python-version: "3.12"
+      - name: Lint TypeScript (tsc)
+        run: make lint-ts
+      - name: Lint Python (ruff + mypy)
+        run: make lint-py
 
   # Packaging gate: build the image, install the Helm chart on a throwaway kind
   # cluster, and assert the StatefulSet rolls out, the nodes form a cluster

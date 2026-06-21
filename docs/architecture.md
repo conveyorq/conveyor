@@ -1,8 +1,8 @@
 # Architecture
 
 This document explains how Conveyor works on the inside, for contributors and
-SDK authors. It names the real building blocks — the actor runtime, grains, and
-broker — that the user-facing [README](../README.md) deliberately hides behind
+SDK authors. It names the real building blocks (the actor runtime, grains, and
+broker) that the user-facing [README](../README.md) deliberately hides behind
 plain terms. For the user-level "what is a task queue" picture, see the README's
 diagram; this document is the engine room.
 
@@ -17,7 +17,7 @@ the whole design:
    Nothing else persists anything.
 2. **Actors are stateless and rebuildable.** The dispatch logic runs in actors
    and grains that hold only in-memory bookkeeping. On restart, relocation, or
-   failover they rebuild their state from the broker — so losing a node loses no
+   failover they rebuild their state from the broker, so losing a node loses no
    work.
 3. **Work is pushed, never polled.** A worker opens one long-lived stream and
    declares its capacity; the server leases due tasks and streams them out as
@@ -40,7 +40,7 @@ flowchart LR
       SING["Cluster singletons<br/>Scheduler · Reaper · GroupSweeper"]
     end
 
-    BROKER[("Broker — sole durable state<br/>Postgres / in-memory<br/>(+ optional encryption)")]
+    BROKER[("Broker: sole durable state<br/>Postgres / in-memory<br/>(+ optional encryption)")]
 
     PROD -->|"Enqueue (gRPC)"| API
     WORK <-->|"Session stream"| API
@@ -64,11 +64,11 @@ producer processes are external and speak ConnectRPC.
 
 All actor code is in [`internal/actors`](../internal/actors). GoAkt gives us
 three flavors of unit: plain **actors** (one instance, mailbox-serialized),
-**grains** (virtual actors — exactly one live activation cluster-wide, addressed
+**grains** (virtual actors, exactly one live activation cluster-wide, addressed
 by name, activated on demand), and **cluster singletons** (one instance across
 the whole cluster, relocated on node loss).
 
-### Engine (`engine.go`) — plain type
+### Engine (`engine.go`): plain type
 
 The coordination layer and the enqueue entry point the API calls. It builds the
 GoAkt actor system, installs the `Runtime` extension, registers the singleton
@@ -82,14 +82,14 @@ burst into at most one in-flight `TasksAvailable` message to the grain (the
 grain drains the whole broker on each wake, so extra wakes would be wasted). A
 lost wake is backstopped by the reaper's pending-count sweep.
 
-### Runtime (`runtime.go`) — actor-system extension
+### Runtime (`runtime.go`): actor-system extension
 
 A shared service object (extension id `"broker"`) that every actor and grain
 resolves on start. It hands out the broker, the injected clock, server settings,
 the logger, metric counters, and a monotonic ULID source. It is how stateless
 actors reach durable state without holding a reference of their own.
 
-### QueueGrain (`queue_grain.go`) — grain (one per queue)
+### QueueGrain (`queue_grain.go`): grain (one per queue)
 
 The per-queue **dispatcher**, and the heart of the system. Exactly one
 activation per queue exists cluster-wide; it is activated on demand and
@@ -106,7 +106,7 @@ registered gateways, decrementing one credit per dispatched task. Leasing
 happens off the mailbox turn via `PipeToSelf` so the grain never blocks on the
 broker.
 
-### Gateway (`gateway.go`) — actor (one per worker session)
+### Gateway (`gateway.go`): actor (one per worker session)
 
 The bridge between the actor world and one worker's stream. Spawned per accepted
 session, **long-lived** (must not passivate while the stream is open) and
@@ -115,36 +115,36 @@ node). It is the only component that performs durable execution transitions for
 its worker's tasks.
 
 - On start and every 30 s (`registerTick`) it announces its capacity to each
-  queue it serves via `RegisterGateway` — this re-announcement is what heals a
+  queue it serves via `RegisterGateway`; this re-announcement is what heals a
   grain that relocated to another node.
 - It pushes `Dispatch`/`BatchDispatch` frames to the worker and records each as
   in-flight under a lease id.
-- On a `Result` it maps the outcome to a broker call — `Ack` (success), `Fail`
+- On a `Result` it maps the outcome to a broker call: `Ack` (success), `Fail`
   with backoff or `Archive` (retry / exhausted / `SkipRetry`), or `Release`
-  (graceful drain) — all scoped to the delivery's lease id; a lost lease is
+  (graceful drain), all scoped to the delivery's lease id; a lost lease is
   logged and dropped.
 - A `Heartbeat` extends every in-flight lease; a lost lease cancels that task on
   the worker.
 - A per-task-type **circuit breaker** can defer a completion (and its credit
   refill) briefly when a type is failing, throttling it to probe speed.
 
-### Cluster singletons — maintenance loops
+### Cluster singletons: maintenance loops
 
 Three singletons run on one node (the leader) and relocate to a survivor on node
 loss. Each arms its own recurring tick in `PostStart`, so after relocation the
 new host re-arms the cadence; the stale entry on the departed node self-cancels.
 Each tolerates `ErrSingletonAlreadyExists` on non-leaders as the desired state.
 
-- **Scheduler (`scheduler.go`)** — on `PromoteTick`: promotes due `scheduled`
+- **Scheduler (`scheduler.go`)**, on `PromoteTick`: promotes due `scheduled`
   tasks to `pending` (`PromoteScheduled`), materializes due cron entries into
   real tasks, and wakes affected queues.
-- **Reaper (`reaper.go`)** — on `ReapTick`: reclaims expired leases
+- **Reaper (`reaper.go`)**, on `ReapTick`: reclaims expired leases
   (`ReapExpiredLeases` → retry or archive), purges retention-lapsed completed
   rows (`PurgeCompleted`), archives tasks past their pre-dispatch TTL
   (`ArchiveExpired`), and sweeps for queues with due work whose wake was lost
   (`PendingCount`), waking them. It runs under a lenient supervision directive
   and swallows transient broker errors rather than crashing.
-- **GroupSweeper (`group.go`)** — on `GroupSweepTick`: reads `GroupStats` and
+- **GroupSweeper (`group.go`)**, on `GroupSweepTick`: reads `GroupStats` and
   fires aggregation groups that are past a size, max-delay, or grace-period
   threshold by telling the owning queue grain `FireGroup`.
 
@@ -152,8 +152,8 @@ Each tolerates `ErrSingletonAlreadyExists` on non-leaders as the desired state.
 
 The [`Broker`](../internal/broker/broker.go) interface is the sole stateful
 layer; actors and API handlers never touch storage directly. Two
-implementations back it — [`memory`](../internal/broker/memory) and
-[`postgres`](../internal/broker/postgres) — and both must pass the single
+implementations back it, [`memory`](../internal/broker/memory) and
+[`postgres`](../internal/broker/postgres), and both must pass the single
 [`brokertest`](../internal/broker/brokertest) conformance suite, which drives all
 time-dependent behavior through an injected fake clock (no sleeps) so the two
 stay semantically identical. Brokers must be concurrency-safe and derive "now"
@@ -177,7 +177,7 @@ The interface methods group as:
 A task row stores its identity and options plus mutable execution fields
 (`state`, `retried`, `last_error`, `lease_id`, `lease_expires_at`, timestamps).
 The serialized `TaskEnvelope` is marshaled into a `payload` column **before
-dispatch** — that is what makes execution crash-safe. The mutable fields are
+dispatch**, and that is what makes execution crash-safe. The mutable fields are
 authoritative in their own columns and are *overlaid onto the envelope on read*,
 never written back into the stored blob.
 
@@ -196,20 +196,20 @@ never written back into the stored blob.
 ### Encryption decorator
 
 [`internal/broker/encrypted`](../internal/broker/encrypted) wraps any `Broker`
-so callers see plaintext while storage sees only ciphertext — the server-side,
+so callers see plaintext while storage sees only ciphertext: the server-side,
 zero-code-change encryption seam. It implements every method by hand (a
 compile-time `var _ broker.Broker` assertion) so a future payload-bearing method
 cannot silently bypass encryption. It seals on write (`Enqueue`, `Ack` result,
 cron payload) and opens on read on a clone. Note there is no result *read* path
 in the interface, so `Ack` seals the result but no symmetric decrypt is needed.
-This server-side seam is an alternative to SDK end-to-end encryption — a
+This server-side seam is an alternative to SDK end-to-end encryption: a
 deployment uses one or the other, never both.
 
 ## Task lifecycle
 
 The task states are defined in
 [`protos/conveyor/v1/task.proto`](../protos/conveyor/v1/task.proto). There is no
-separate "expired" state — a pre-dispatch expiry resolves to `archived` with
+separate "expired" state; a pre-dispatch expiry resolves to `archived` with
 `last_error = "task expired before dispatch"`.
 
 ```mermaid
@@ -278,7 +278,7 @@ sequenceDiagram
 
 - **Worker disconnect (graceful or crash).** When a session ends, the handler
   asks the gateway to *drain*: as a serialized mailbox turn it `Release`s every
-  in-flight task — no retry penalty — so they become due immediately elsewhere.
+  in-flight task with no retry penalty, so they become due immediately elsewhere.
 - **Hard death (panic, node loss).** Anything that slips past the drain is
   recovered by **lease expiry**: the reaper's `ReapExpiredLeases` turns the stale
   `active` tasks back into `retry` (or `archived` if exhausted) and wakes the
@@ -298,7 +298,7 @@ tasks and advances the next-run time with a compare-and-set (`UpdateCronNextRun`
 so a relocating scheduler cannot double-fire a slot. Group members accumulate in
 `aggregating` purely in the broker (no per-group actor); the GroupSweeper decides
 when a group is due and tells the queue grain to lease the whole group with
-`LeaseGroup` and deliver it as one `ExecuteBatch` — consuming a single credit for
+`LeaseGroup` and deliver it as one `ExecuteBatch`, consuming a single credit for
 the entire batch.
 
 ## API & wire protocol
@@ -308,21 +308,21 @@ The wire contract is one proto,
 over a single ConnectRPC port that speaks gRPC, gRPC-Web, and HTTP/JSON. Three
 services ([`server/api`](../server/api)):
 
-- **TaskService** — the producer API: `Enqueue`, `EnqueueBatch` (capped at
+- **TaskService**, the producer API: `Enqueue`, `EnqueueBatch` (capped at
   1000), `GetTask`.
-- **WorkerService** — `Session`, the long-lived bidirectional stream that is the
+- **WorkerService**: `Session`, the long-lived bidirectional stream that is the
   push channel. The handler bridges the stream to a per-session Gateway actor.
   The first frame must be `Hello` (queues→weights, concurrency, labels, SDK
   version, minimum server version, batch types); the server replies `Welcome`
   (session id, lease TTL, heartbeat interval = TTL/3). Worker→server frames:
   `Hello`, `Credit`, `Result`, `Heartbeat`, `BatchResult`. Server→worker frames:
   `Welcome`, `Dispatch`, `Cancel`, `Ping`, `BatchDispatch`.
-- **AdminService** — inspection (reads straight from the broker) and mutation
+- **AdminService**: inspection (reads straight from the broker) and mutation
   (broker write plus a live-grain nudge), including pause/resume, rate limits,
   cancel/run/delete, batch operations, and a best-effort cluster/worker view.
 
-The normative, language-agnostic version of this contract — for authors building
-an SDK in a new language — is [`docs/protocol.md`](protocol.md).
+The normative, language-agnostic version of this contract, for authors building
+an SDK in a new language, is [`docs/protocol.md`](protocol.md).
 
 ## Clustering & HA
 
@@ -332,20 +332,20 @@ identical code path. The Engine builds the actor system with a minimum quorum of
 kind. Remoting can be secured with mutual TLS.
 
 Discovery is injected from config through a small SPI in
-[`server/discovery.go`](../server/discovery.go) — `DiscoveryProvider` mirrors
+[`server/discovery.go`](../server/discovery.go); `DiscoveryProvider` mirrors
 GoAkt's discovery interface without leaking any GoAkt type, so a third-party
 provider can be registered by name and compiled against this package alone.
 Built-in selections are `static` (explicit peers, or self for a cluster of one)
 and `kubernetes` (namespace + pod-label + named ports).
 
-The **four run modes** — standalone, cluster, kubernetes, embedded — are
+The **four run modes** (standalone, cluster, kubernetes, embedded) are
 conventional config bundles, not distinct code paths. `config.Mode` is a label
 that is validated and logged but does not branch behavior; the real differences
 come from `broker.driver` and `cluster.discovery`. The
 [`embedded`](../embedded) package is the exception: it reuses `server.Server`
 in-process over loopback (default in-memory broker, auth off), handing back real
 SDK `Client`/`Worker` handles. Because it binds only ephemeral loopback ports it
-is always a cluster of one and cannot join other nodes — so embedded can be
+is always a cluster of one and cannot join other nodes, so embedded can be
 **durable** (pass a Postgres DSN) but is never **highly available**. HA requires
 the multi-node deployment: several `conveyord` nodes clustered over a shared
 Postgres broker, where singletons relocate and queue grains re-activate on a

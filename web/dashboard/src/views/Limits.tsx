@@ -32,14 +32,21 @@ export function Limits() {
   }
 
   function save() {
+    const queue = form.queue.trim();
+    const rate = Number(form.rate);
+    const burst = Number(form.burst);
+
+    // Validate before the round-trip so an empty queue, a non-positive rate, or
+    // a sub-1/non-integer burst gives an immediate message instead of a server
+    // invalid-argument error.
+    if (queue === "" || !Number.isFinite(rate) || rate <= 0 || !Number.isInteger(burst) || burst < 1) {
+      return action.run(() =>
+        Promise.reject(new Error("Queue is required, rate must be > 0, and burst must be an integer ≥ 1.")),
+      );
+    }
+
     return action
-      .run(() =>
-        api.admin.setQueueRateLimit({
-          queue: form.queue.trim(),
-          ratePerSec: Number(form.rate),
-          burst: Number(form.burst),
-        }),
-      )
+      .run(() => api.admin.setQueueRateLimit({ queue, ratePerSec: rate, burst }))
       .then(() => setForm(emptyForm));
   }
 

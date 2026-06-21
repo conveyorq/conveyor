@@ -9,7 +9,7 @@ features but with a different shape, so the migration is mostly mechanical.
 |          | asynq                                    | Conveyor                                                                                                                        |
 |----------|------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------|
 | Storage  | Redis                                    | Postgres (or in-memory for dev)                                                                                                 |
-| Topology | A library in your worker process         | A **server** (`conveyord`) your clients and workers connect to — or an in-process [embedded](../README.md#embedded-mode) engine |
+| Topology | A library in your worker process         | A **server** (`conveyord`) your clients and workers connect to, or an in-process [embedded](../README.md#embedded-mode) engine |
 | Dispatch | Workers **poll** Redis                   | The server **pushes** tasks to connected workers over a stream                                                                  |
 | Cron     | Registered in code via `asynq.Scheduler` | Persisted on the server; managed via the API/CLI                                                                                |
 | Web UI   | asynqmon                                 | None yet (Grafana dashboard for metrics)                                                                                        |
@@ -48,10 +48,10 @@ client.Enqueue(ctx, task, conveyor.Queue("critical"), conveyor.MaxRetry(5), conv
 | `asynq.Unique(ttl)`                | `conveyor.Unique(ttl)`                          | dedup by type+payload; add `conveyor.UniqueKey(k)` for an explicit key                                                                                                                                   |
 | weighted priority queues           | `conveyor.Priority(1..9)` **and** queue weights | Conveyor also has a per-task priority                                                                                                                                                                    |
 | `asynq.Timeout(d)` / `asynq.Deadline(t)` | `conveyor.Timeout(d)` / `conveyor.Deadline(t)`  | the handler `ctx` is canceled at the earliest of the timeout, the deadline, and the lease expiry (`engine.lease_ttl`); honor it. |
-| `asynq.Group` (aggregation)        | —                                               | task aggregation is not in v1                                                                                                                                                                            |
+| `asynq.Group` (aggregation)        | `conveyor.Group(name)` + `Mux.HandleBatch`      | members accumulate by (queue, group) and are delivered as one batch; see [grouping](grouping.md) |
 
-Payloads: asynq takes raw `[]byte`; Conveyor takes a `conveyor.Payload` —
-`conveyor.JSON(v)`, `conveyor.Bytes(b)`, or `conveyor.Proto(m)` — which also
+Payloads: asynq takes raw `[]byte`; Conveyor takes a `conveyor.Payload`
+(`conveyor.JSON(v)`, `conveyor.Bytes(b)`, or `conveyor.Proto(m)`), which also
 records the content type.
 
 ## Processing
@@ -129,21 +129,21 @@ format (see the [operations guide](operations.md)).
 
 ## What you gain, what you give up
 
-Honest framing — asynq is mature and excellent at what it does; switch only for
-reasons that actually apply to you.
+Some honest framing: asynq is mature and excellent at what it does, so switch only
+for reasons that actually apply to you.
 
 **Genuinely gain:**
 
 - **No Redis.** If you already run Postgres, Conveyor needs no extra datastore,
   and you avoid sizing Redis persistence/eviction for durable jobs. (The reverse
   is also true: if you run Redis and not Postgres, asynq is the simpler choice.)
-- **A clustered server tier with built-in HA.** asynq has no server process —
+- **A clustered server tier with built-in HA.** asynq has no server process, so
   coordination lives entirely in Redis, which is the single point of failure
   unless you run Redis Sentinel (Redis Cluster is only partially supported).
   Conveyor's server tier is clustered by default and a lost node's queues
   re-activate elsewhere.
 - **Server-controlled dispatch.** The server pushes work with credit-based
-  backpressure instead of every worker contending on the broker — this is about
+  backpressure instead of every worker contending on the broker. This is about
   flow control and broker load, **not** raw latency (asynq's blocking dequeue is
   already near-real-time; don't switch expecting lower latency).
 - **Per-task priority** (asynq orders by queue weight only) and an **embeddable**
@@ -151,9 +151,9 @@ reasons that actually apply to you.
 
 **Give up:**
 
-- **Maturity and ecosystem** — asynq is battle-tested with a large community and
-  the asynqmon UI. Conveyor is pre-1.0.
-- **Task aggregation/groups** and a **built-in web UI**.
+- **Maturity and ecosystem.** asynq is battle-tested, with a large community and
+  the mature asynqmon UI. Conveyor is pre-1.0, though it ships its own operations
+  dashboard.
 - **The simplicity** of a single library plus Redis.
 
 ## Not yet covered

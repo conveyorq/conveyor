@@ -45,6 +45,15 @@ test("formatDuration measures completed and running spans", () => {
   expect(formatDuration(started, undefined, now)).toBe("10.0s (running)");
 });
 
+test("formatDuration rounds seconds without overflowing the minute", () => {
+  const start = timestampFromDate(new Date(0));
+
+  // 119.6s must render as "2m 0s", never "1m 60s".
+  expect(formatDuration(start, timestampFromDate(new Date(119_600)))).toBe("2m 0s");
+  // 3599.6s rolls all the way up to "1h 0m", never "59m 60s" or "1h 60m".
+  expect(formatDuration(start, timestampFromDate(new Date(3_599_600)))).toBe("1h 0m");
+});
+
 test("decodePayload pretty-prints JSON and handles binary", () => {
   const json = new TextEncoder().encode('{"b":2,"a":1}');
   expect(decodePayload(json, "application/json")).toBe('{\n  "b": 2,\n  "a": 1\n}');

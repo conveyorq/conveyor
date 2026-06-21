@@ -1,4 +1,11 @@
-{{- if .Values.podDisruptionBudget.enabled -}}
+{{- /*
+Only render the PDB when there are strictly more replicas than minAvailable.
+A PDB whose minAvailable equals (or exceeds) the replica count permanently
+blocks every voluntary eviction — node drains and rolling updates deadlock — so
+for single-node or minAvailable-sized clusters the budget is silently skipped
+rather than wedging the cluster.
+*/}}
+{{- if and .Values.podDisruptionBudget.enabled (gt (int .Values.replicaCount) (int .Values.podDisruptionBudget.minAvailable)) -}}
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
