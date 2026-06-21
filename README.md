@@ -48,6 +48,8 @@ and priorities, backed by Postgres or an in-memory broker, with **no Redis and n
   **pause/resume**, and a per-task-type **circuit breaker**.
 - **Expiring tasks**: a pre-dispatch TTL (`ExpiresIn`/`ExpiresAt`): a task not
   dispatched in time is archived instead of run, for work that goes stale.
+- **Task dependencies (workflows)**: order work with chains ("run B after A")
+  and fan-out/fan-in, with a per-dependency policy for when a dependency fails.
 - **Group aggregation**: coalesce many tasks into one batch and process them in
   a single handler call (debounce/digest, or bulk processing); fires on size,
   delay, or grace period.
@@ -392,6 +394,8 @@ a different-origin UI, and `api.grafana_url` for the metrics link. See the
   scaling, broker sizing, security, observability, and upgrades.
 - [High availability](docs/high-availability.md): a complete clustered deployment
   that ties the server, Postgres, and worker tiers together.
+- [Task dependencies](docs/workflows.md): order work with chains and
+  fan-out/fan-in, and choose what happens when a dependency fails.
 - [Group aggregation](docs/grouping.md): how to enqueue grouped tasks, write
   batch handlers, and tune the firing policy.
 - [Rate limiting](docs/rate-limiting.md): cap per-queue dispatch rate with a

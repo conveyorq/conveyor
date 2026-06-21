@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/oklog/ulid/v2"
+	goakt "github.com/tochemey/goakt/v4/actor"
 	"github.com/tochemey/goakt/v4/extension"
 
 	"github.com/conveyorq/conveyor/internal/broker"
@@ -36,6 +37,10 @@ type Settings struct {
 	LeaseTTL time.Duration
 	// LeaseBatchMax caps how many tasks one lease cycle may claim.
 	LeaseBatchMax int
+	// ResolverPoolSize is the number of dependency-resolver routees behind the
+	// per-node resolver router. It bounds how many dependency resolutions run
+	// concurrently, so completion-time resolution never overwhelms the broker.
+	ResolverPoolSize int
 	// ReapInterval is the cadence of the reaper maintenance pass.
 	ReapInterval time.Duration
 	// PromoteInterval is the cadence of scheduled-task promotion.
@@ -111,6 +116,11 @@ type Runtime struct {
 	idMutex sync.Mutex
 	// idEntropy is the monotonic ULID entropy source.
 	idEntropy *ulid.MonotonicEntropy
+
+	// resolver is the per-node dependency-resolver router, set once after the
+	// actor system starts. Nil until then; a nil resolver means completion-time
+	// resolution is skipped and the reaper sweep is the sole path.
+	resolver atomic.Pointer[goakt.PID]
 }
 
 var _ extension.Extension = (*Runtime)(nil)
@@ -141,6 +151,18 @@ func (r *Runtime) ID() string {
 // Broker returns the durable task log.
 func (r *Runtime) Broker() broker.Broker {
 	return r.broker
+}
+
+// Resolver returns the node's dependency-resolver router, or nil before the
+// engine has spawned it.
+func (r *Runtime) Resolver() *goakt.PID {
+	return r.resolver.Load()
+}
+
+// SetResolver records the node's dependency-resolver router. The engine calls
+// it once after spawning the router, before any worker session is served.
+func (r *Runtime) SetResolver(pid *goakt.PID) {
+	r.resolver.Store(pid)
 }
 
 // Clock returns the injected time source.

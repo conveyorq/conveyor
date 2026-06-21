@@ -374,7 +374,11 @@ func (g *Gateway) result(ctx *goakt.ReceiveContext, message *conveyorv1.Result) 
 
 	delete(g.inflight, message.GetTaskId())
 
-	success := g.applyOutcome(ctx.Context(), entry, message)
+	success, terminal := g.applyOutcome(ctx.Context(), entry, message)
+
+	if terminal {
+		g.resolveDependents(ctx, message.GetTaskId())
+	}
 
 	if g.breakerFor(entry.taskType).State() == breaker.Open {
 		g.runtime.Metrics().BreakerOpen(context.Background())
@@ -388,18 +392,24 @@ func (g *Gateway) result(ctx *goakt.ReceiveContext, message *conveyorv1.Result) 
 
 // applyOutcome performs the durable transition for one finished delivery and
 // records its process-duration and breaker sample. It returns whether the
-// delivery succeeded. It does not report completion or refill credit: the
-// caller does that — per task for a single Result, once for a whole batch.
-func (g *Gateway) applyOutcome(goCtx context.Context, entry *inflightTask, message *conveyorv1.Result) bool {
+// delivery succeeded and whether it reached a terminal state (completed or
+// archived) — the signal the caller uses to resolve the task's dependents. It
+// does not report completion or refill credit: the caller does that — per task
+// for a single Result, once for a whole batch.
+func (g *Gateway) applyOutcome(goCtx context.Context, entry *inflightTask, message *conveyorv1.Result) (success, terminal bool) {
 	taskLog := g.runtime.Broker()
 	counters := g.runtime.Counters()
 	taskID := message.GetTaskId()
 
-	var err error
+	var (
+		err        error
+		terminated bool
+	)
 
 	switch message.GetOutcome() {
 	case conveyorv1.TaskOutcome_TASK_OUTCOME_SUCCESS:
 		err = taskLog.Ack(goCtx, taskID, entry.leaseID, message.GetResult())
+		terminated = true
 
 	case conveyorv1.TaskOutcome_TASK_OUTCOME_RETRY:
 		switch {
@@ -408,10 +418,12 @@ func (g *Gateway) applyOutcome(goCtx context.Context, entry *inflightTask, messa
 			// must not earn a retry.
 			err = taskLog.Archive(goCtx, taskID, entry.leaseID, canceledByAdminMessage+message.GetErrorMsg())
 			counters.Archived.Add(1)
+			terminated = true
 
 		case entry.retried >= entry.maxRetry:
 			err = taskLog.Archive(goCtx, taskID, entry.leaseID, retriesExhaustedMessage+message.GetErrorMsg())
 			counters.Archived.Add(1)
+			terminated = true
 
 		default:
 			processAt := g.runtime.Clock().Now().Add(g.strategy.Delay(entry.retried))
@@ -422,6 +434,7 @@ func (g *Gateway) applyOutcome(goCtx context.Context, entry *inflightTask, messa
 	case conveyorv1.TaskOutcome_TASK_OUTCOME_SKIP_RETRY:
 		err = taskLog.Archive(goCtx, taskID, entry.leaseID, message.GetErrorMsg())
 		counters.Archived.Add(1)
+		terminated = true
 
 	case conveyorv1.TaskOutcome_TASK_OUTCOME_RELEASED:
 		switch {
@@ -430,6 +443,7 @@ func (g *Gateway) applyOutcome(goCtx context.Context, entry *inflightTask, messa
 			// archive rather than redelivering a task the operator killed.
 			err = taskLog.Archive(goCtx, taskID, entry.leaseID, canceledByAdminMessage+message.GetErrorMsg())
 			counters.Archived.Add(1)
+			terminated = true
 
 		default:
 			err = taskLog.Release(goCtx, taskID, entry.leaseID)
@@ -458,7 +472,13 @@ func (g *Gateway) applyOutcome(goCtx context.Context, entry *inflightTask, messa
 
 	g.recordOutcome(entry.taskType, message.GetOutcome())
 
-	return message.GetOutcome() == conveyorv1.TaskOutcome_TASK_OUTCOME_SUCCESS && err == nil
+	// A lease lost to another delivery means this gateway did not own the
+	// transition, so it must not drive the task's completion or resolution.
+	if err != nil {
+		return false, false
+	}
+
+	return message.GetOutcome() == conveyorv1.TaskOutcome_TASK_OUTCOME_SUCCESS, terminated
 }
 
 // breakerFor returns the task type's circuit breaker, creating it on
@@ -609,6 +629,22 @@ func (g *Gateway) credit(ctx *goakt.ReceiveContext, message *conveyorv1.Credit) 
 			g.runtime.Logger().Warn("credit grant failed", "queue", queue, "error", err)
 		}
 	}
+}
+
+// resolveDependents hands a task that has just reached a terminal state
+// (completed or archived) to the node's resolver pool so its dependents are
+// reconciled off this gateway's turn — a successful dependency promotes its
+// dependents, a failed one applies their on-failure policy. The send is a
+// fire-and-forget tell wrapped in a broadcast envelope, which the round-robin
+// router delivers to one routee — never blocking task delivery. When no
+// resolver is configured the reaper sweep is the sole path, so this is skipped.
+func (g *Gateway) resolveDependents(ctx *goakt.ReceiveContext, taskID string) {
+	resolver := g.runtime.Resolver()
+	if resolver == nil {
+		return
+	}
+
+	ctx.Tell(resolver, goakt.NewBroadcast(&conveyorv1.ResolveDependents{TaskId: taskID}))
 }
 
 // reportCompletion tells the task's queue grain that one execution slot is

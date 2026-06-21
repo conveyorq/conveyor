@@ -29,6 +29,35 @@ enum TaskState {
   // its group fires (by size, delay, or grace period), at which point the
   // group's members are leased together and delivered to a worker as one batch.
   TASK_STATE_AGGREGATING = 8;
+  // TASK_STATE_BLOCKED is a task held until every task it depends on reaches a
+  // terminal success. It is not eligible to lease while blocked; completing the
+  // last dependency promotes it to pending (or scheduled, if it is also delayed).
+  TASK_STATE_BLOCKED = 9;
+}
+
+// DependencyFailurePolicy decides what happens to a dependent task when one of
+// the tasks it depends on fails terminally (archived or canceled).
+enum DependencyFailurePolicy {
+  // DEPENDENCY_FAILURE_POLICY_UNSPECIFIED defaults to BLOCK.
+  DEPENDENCY_FAILURE_POLICY_UNSPECIFIED = 0;
+  // DEPENDENCY_FAILURE_POLICY_BLOCK keeps the dependent blocked indefinitely:
+  // the dependency never succeeded, so the dependent never becomes eligible.
+  DEPENDENCY_FAILURE_POLICY_BLOCK = 1;
+  // DEPENDENCY_FAILURE_POLICY_CASCADE_CANCEL cancels the dependent (and, in
+  // turn, its own dependents) when the dependency fails.
+  DEPENDENCY_FAILURE_POLICY_CASCADE_CANCEL = 2;
+  // DEPENDENCY_FAILURE_POLICY_CONTINUE treats the failed dependency as
+  // satisfied, so the dependent proceeds once its remaining dependencies clear.
+  DEPENDENCY_FAILURE_POLICY_CONTINUE = 3;
+}
+
+// TaskDependency is one edge of a workflow: the enclosing task must wait for the
+// referenced task to reach a terminal state before it becomes eligible to run.
+message TaskDependency {
+  // task_id is the id of the task that must finish first.
+  string task_id = 1;
+  // on_failure decides the dependent's fate if this dependency fails terminally.
+  DependencyFailurePolicy on_failure = 2;
 }
 
 // TaskEnvelope is the internal, durable representation of a task.
@@ -100,6 +129,12 @@ message TaskOptions {
   // resolves the relative EnqueueRequest.expires_in to this absolute time.
   google.protobuf.Timestamp expires_at = 10;
 
+  // depends_on lists the tasks this task waits for. While any dependency has
+  // not reached a terminal success the task stays blocked and is not eligible
+  // to lease. An empty list (the default) leaves the task immediately eligible.
+  // Fan-in is a continuation that depends on every task of a fan-out batch.
+  repeated TaskDependency depends_on = 11;
+
   // Reserved for future options.
-  reserved 11 to 15;
+  reserved 12 to 15;
 }

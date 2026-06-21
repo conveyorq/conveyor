@@ -27,9 +27,10 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/conveyorq/conveyor/internal/broker"
 	"github.com/conveyorq/conveyor/internal/clock"
 	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
+
+	"github.com/conveyorq/conveyor/internal/broker"
 )
 
 // Task state column values, mirroring conveyor.v1.TaskState.
@@ -42,6 +43,7 @@ const (
 	stateArchived    = int16(conveyorv1.TaskState_TASK_STATE_ARCHIVED)
 	stateCanceled    = int16(conveyorv1.TaskState_TASK_STATE_CANCELED)
 	stateAggregating = int16(conveyorv1.TaskState_TASK_STATE_AGGREGATING)
+	stateBlocked     = int16(conveyorv1.TaskState_TASK_STATE_BLOCKED)
 )
 
 // uniqueIndexName is the partial unique index enforcing task uniqueness;
@@ -50,6 +52,63 @@ const uniqueIndexName = "conveyor_tasks_unique_idx"
 
 // uniqueViolationCode is the Postgres SQLSTATE for unique violations.
 const uniqueViolationCode = "23505"
+
+// insertTaskQuery commits one task row; the id conflict target makes
+// client retries idempotent.
+const insertTaskQuery = `INSERT INTO conveyor_tasks (
+  id, queue, type, state, priority, payload, unique_key, unique_expires_at,
+  process_at, deadline, max_retry, retried, last_error, retention,
+  enqueued_at, updated_at, group_key, expires_at
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+ON CONFLICT (id) DO NOTHING`
+
+// releaseLapsedUniqueQuery frees a unique-key claim whose TTL has lapsed
+// so the partial unique index admits a new claimant for the same key.
+const releaseLapsedUniqueQuery = `UPDATE conveyor_tasks
+  SET unique_key = NULL, unique_expires_at = NULL, updated_at = $2
+  WHERE unique_key = $1 AND unique_expires_at IS NOT NULL AND unique_expires_at <= $2`
+
+// insertEdgeQuery records one unresolved dependency edge of a blocked task.
+const insertEdgeQuery = `INSERT INTO conveyor_task_deps (dependent_id, dependency_id, on_failure)
+  VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`
+
+// dependencyStatesQuery reads the current state of each candidate dependency at
+// enqueue time, so an already-finished dependency is reconciled immediately.
+const dependencyStatesQuery = "SELECT id, state FROM conveyor_tasks WHERE id = ANY($1)"
+
+// edgesForDependencyQuery lists the edges waiting on a terminal task, ordered by
+// dependent id so concurrent resolvers lock dependent rows in a consistent
+// order, avoiding deadlocks when their dependency sets overlap.
+const edgesForDependencyQuery = "SELECT dependent_id, on_failure FROM conveyor_task_deps WHERE dependency_id = $1 ORDER BY dependent_id"
+
+// dropEdgeQuery removes one satisfied edge.
+const dropEdgeQuery = "DELETE FROM conveyor_task_deps WHERE dependent_id = $1 AND dependency_id = $2"
+
+// dropDependentEdgesQuery removes every edge of a dependent, used when it is
+// cascade-canceled (it no longer waits on anything).
+const dropDependentEdgesQuery = "DELETE FROM conveyor_task_deps WHERE dependent_id = $1"
+
+// hasDependentsQuery reports whether any edge waits on the given task.
+const hasDependentsQuery = "SELECT EXISTS (SELECT 1 FROM conveyor_task_deps WHERE dependency_id = $1)"
+
+// queueStatsQuery aggregates task counts per (queue, state) and joins the
+// persisted pause flags, so queues that only hold a pause flag still
+// appear with zero counts.
+const queueStatsQuery = `SELECT
+  COALESCE(t.queue, s.queue) AS queue,
+  COALESCE(s.paused, FALSE) AS paused,
+  t.state,
+  t.task_count
+FROM (
+  SELECT queue, state, COUNT(*) AS task_count
+  FROM conveyor_tasks
+  GROUP BY queue, state
+) t
+FULL OUTER JOIN conveyor_queue_state s ON s.queue = t.queue
+ORDER BY 1`
+
+// cronColumns is the cron-entry projection shared by the list queries.
+const cronColumns = "id, spec, task_type, queue, payload, content_type, options, paused, next_run_at"
 
 // leaseQuery claims due tasks in dispatch order. The trailing SELECT
 // re-orders the UPDATE's output, which carries no ordering guarantee.
@@ -103,21 +162,6 @@ FROM due WHERE t.id = due.id
 RETURNING t.queue`,
 	stateScheduled, statePending)
 
-// insertTaskQuery commits one task row; the id conflict target makes
-// client retries idempotent.
-const insertTaskQuery = `INSERT INTO conveyor_tasks (
-  id, queue, type, state, priority, payload, unique_key, unique_expires_at,
-  process_at, deadline, max_retry, retried, last_error, retention,
-  enqueued_at, updated_at, group_key, expires_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
-ON CONFLICT (id) DO NOTHING`
-
-// releaseLapsedUniqueQuery frees a unique-key claim whose TTL has lapsed
-// so the partial unique index admits a new claimant for the same key.
-const releaseLapsedUniqueQuery = `UPDATE conveyor_tasks
-  SET unique_key = NULL, unique_expires_at = NULL, updated_at = $2
-  WHERE unique_key = $1 AND unique_expires_at IS NOT NULL AND unique_expires_at <= $2`
-
 // extendLeaseQuery pushes an active task's lease expiry forward.
 var extendLeaseQuery = fmt.Sprintf(`UPDATE conveyor_tasks
   SET lease_expires_at = $3, updated_at = $4
@@ -156,8 +200,8 @@ var archiveAnyQuery = fmt.Sprintf(`UPDATE conveyor_tasks
 // cancelTaskQuery cancels a task that is not yet running.
 var cancelTaskQuery = fmt.Sprintf(`UPDATE conveyor_tasks
   SET state = %d, completed_at = $2, updated_at = $2
-  WHERE id = $1 AND state IN (%d, %d, %d, %d)`,
-	stateCanceled, stateScheduled, statePending, stateRetry, stateAggregating)
+  WHERE id = $1 AND state IN (%d, %d, %d, %d, %d)`,
+	stateCanceled, stateScheduled, statePending, stateRetry, stateAggregating, stateBlocked)
 
 // deleteTaskQuery removes a task unless it is actively executing.
 var deleteTaskQuery = fmt.Sprintf(
@@ -170,21 +214,24 @@ var runTaskNowQuery = fmt.Sprintf(`UPDATE conveyor_tasks
   WHERE id = $1 AND state IN (%d, %d, %d, %d)`,
 	statePending, stateScheduled, statePending, stateRetry, stateArchived)
 
-// archiveWaitingQuery dead-letters a scheduled, pending, or retry task.
+// archiveWaitingQuery dead-letters a scheduled, pending, retry, or blocked task.
 var archiveWaitingQuery = fmt.Sprintf(`UPDATE conveyor_tasks
   SET state = %d, completed_at = $2, updated_at = $2
-  WHERE id = $1 AND state IN (%d, %d, %d)`,
-	stateArchived, stateScheduled, statePending, stateRetry)
+  WHERE id = $1 AND state IN (%d, %d, %d, %d)`,
+	stateArchived, stateScheduled, statePending, stateRetry, stateBlocked)
 
 // pendingCountQuery counts due tasks per queue.
 var pendingCountQuery = fmt.Sprintf(`SELECT queue, count(*) FROM conveyor_tasks
   WHERE state IN (%d, %d) AND process_at <= $1
   GROUP BY queue`, statePending, stateRetry)
 
-// purgeCompletedQuery deletes completed tasks whose retention lapsed.
+// purgeCompletedQuery deletes completed tasks whose retention lapsed. It skips a
+// task that other tasks still depend on, so a dependency is never purged out
+// from under a dependent that has yet to resolve against it.
 var purgeCompletedQuery = fmt.Sprintf(`WITH expired AS (
-  SELECT id FROM conveyor_tasks
+  SELECT id FROM conveyor_tasks t
   WHERE state = %d AND completed_at + retention <= $1
+    AND NOT EXISTS (SELECT 1 FROM conveyor_task_deps d WHERE d.dependency_id = t.id)
   ORDER BY completed_at
   LIMIT $2
   FOR UPDATE SKIP LOCKED
@@ -196,7 +243,7 @@ DELETE FROM conveyor_tasks t USING expired WHERE t.id = expired.id`, stateComple
 // is archived rather than run.
 var archiveExpiredQuery = fmt.Sprintf(`WITH expired AS (
   SELECT id FROM conveyor_tasks
-  WHERE state IN (%d, %d, %d) AND expires_at IS NOT NULL AND expires_at <= $1
+  WHERE state IN (%d, %d, %d, %d) AND expires_at IS NOT NULL AND expires_at <= $1
   ORDER BY expires_at
   LIMIT $2
   FOR UPDATE SKIP LOCKED
@@ -205,7 +252,102 @@ UPDATE conveyor_tasks t
 SET state = %d, last_error = $3, completed_at = $1,
     lease_id = NULL, lease_expires_at = NULL, updated_at = $1
 FROM expired WHERE t.id = expired.id`,
-	stateScheduled, statePending, stateRetry, stateArchived)
+	stateScheduled, statePending, stateRetry, stateBlocked, stateArchived)
+
+// stampCanceledQuery marks a task canceled at enqueue time, used only when a
+// task declares a cascade-cancel dependency that has already failed.
+var stampCanceledQuery = fmt.Sprintf(
+	"UPDATE conveyor_tasks SET completed_at = $2 WHERE id = $1 AND state = %d", stateCanceled)
+
+// cascadeCancelQuery cancels a blocked dependent whose dependency failed under
+// the cascade-cancel policy.
+var cascadeCancelQuery = fmt.Sprintf(`UPDATE conveyor_tasks
+  SET state = %d, completed_at = $2, last_error = $3, updated_at = $2
+  WHERE id = $1 AND state = %d`, stateCanceled, stateBlocked)
+
+// lockBlockedDependentQuery takes a row lock on a still-blocked dependent so
+// concurrent resolvers of its sibling dependencies serialize: each waits its
+// turn and then observes the others' committed edge deletes, so the resolver
+// that clears the final edge is the one that promotes. Without this, every
+// concurrent resolver's NOT EXISTS check reads a snapshot taken before the
+// others committed and none promotes — a lost wakeup leaving the task blocked.
+var lockBlockedDependentQuery = fmt.Sprintf(
+	"SELECT id FROM conveyor_tasks WHERE id = $1 AND state = %d FOR UPDATE", stateBlocked)
+
+// promoteDependentQuery promotes a blocked task to the state it would have held
+// without dependencies — aggregating when grouped, scheduled when still delayed,
+// otherwise pending — but only once no edge remains. It returns the queue so the
+// caller can wake it.
+var promoteDependentQuery = fmt.Sprintf(`UPDATE conveyor_tasks t
+  SET state = CASE WHEN t.group_key <> '' THEN %d WHEN t.process_at > $2 THEN %d ELSE %d END,
+    updated_at = $2
+  WHERE t.id = $1 AND t.state = %d
+    AND NOT EXISTS (SELECT 1 FROM conveyor_task_deps d WHERE d.dependent_id = t.id)
+  RETURNING t.queue`,
+	stateAggregating, stateScheduled, statePending, stateBlocked)
+
+// readyDependenciesQuery finds dependency ids that have reached a terminal state
+// but still carry edges — the resolutions the inline path missed.
+var readyDependenciesQuery = fmt.Sprintf(`SELECT DISTINCT d.dependency_id
+  FROM conveyor_task_deps d
+  JOIN conveyor_tasks t ON t.id = d.dependency_id
+  WHERE t.state IN (%d, %d, %d)
+  LIMIT $1`, stateCompleted, stateArchived, stateCanceled)
+
+// promoteOrphanBlockedQuery promotes blocked tasks that already hold no edges —
+// the backstop for a dependent left blocked by an inline resolve that committed
+// its edge deletes but was then aborted (e.g. a deadlock) before promoting.
+var promoteOrphanBlockedQuery = fmt.Sprintf(`WITH ready AS (
+  SELECT id FROM conveyor_tasks t
+  WHERE t.state = %d
+    AND NOT EXISTS (SELECT 1 FROM conveyor_task_deps d WHERE d.dependent_id = t.id)
+  LIMIT $1
+  FOR UPDATE SKIP LOCKED
+)
+UPDATE conveyor_tasks t
+SET state = CASE WHEN t.group_key <> '' THEN %d WHEN t.process_at > $2 THEN %d ELSE %d END,
+    updated_at = $2
+FROM ready WHERE t.id = ready.id
+RETURNING t.queue`,
+	stateBlocked, stateAggregating, stateScheduled, statePending)
+
+// enforce interface compliance at compile time.
+var _ broker.Broker = (*Broker)(nil)
+
+// leaseGroupQuery claims a (queue, group)'s aggregating members as one batch,
+// ordered by enqueue time then id; it mirrors leaseQuery's CTE pattern.
+var leaseGroupQuery = fmt.Sprintf(`WITH due AS (
+  SELECT id, enqueued_at FROM conveyor_tasks
+  WHERE queue = $1 AND group_key = $2 AND state = %d
+  ORDER BY enqueued_at, id
+  LIMIT $3
+  FOR UPDATE SKIP LOCKED
+), claimed AS (
+  UPDATE conveyor_tasks t
+  SET state = %d, lease_id = $4, lease_expires_at = $6, started_at = $5, updated_at = $5
+  FROM due WHERE t.id = due.id
+  RETURNING t.id, t.payload, t.retried, t.last_error
+)
+SELECT c.payload, c.retried, c.last_error
+FROM claimed c JOIN due d ON d.id = c.id
+ORDER BY d.enqueued_at, d.id`, stateAggregating, stateActive)
+
+// groupStatsQuery summarizes the aggregating members per (queue, group) across
+// all queues. The WHERE state filter rides the partial aggregating index, so it
+// scans only aggregating rows. MIN(type) names the group's task type; groups
+// are single-type, so any member's type is the batch's handler routing key.
+var groupStatsQuery = fmt.Sprintf(`SELECT queue, group_key, MIN(type), COUNT(*), MIN(enqueued_at), MAX(enqueued_at)
+  FROM conveyor_tasks
+  WHERE state = %d
+  GROUP BY queue, group_key
+  ORDER BY queue, group_key`, stateAggregating)
+
+// dependencyEdge is one waiting edge: the dependent task and its on-failure
+// policy for the dependency being resolved.
+type dependencyEdge struct {
+	dependent string
+	policy    int16
+}
 
 // Broker is the Postgres broker.Broker implementation.
 type Broker struct {
@@ -214,9 +356,6 @@ type Broker struct {
 	// clock supplies the current time for every statement.
 	clock clock.Clock
 }
-
-// enforce interface compliance at compile time.
-var _ broker.Broker = (*Broker)(nil)
 
 // New connects to the database at dsn, applies any pending embedded
 // migrations, and returns the broker reading time from the given clock.
@@ -242,7 +381,7 @@ func New(ctx context.Context, dsn string, timeSource clock.Clock) (*Broker, erro
 }
 
 // Enqueue durably commits a task; see broker.Broker.
-func (b *Broker) Enqueue(ctx context.Context, task *conveyorv1.TaskEnvelope) error {
+func (b *Broker) Enqueue(ctx context.Context, task *conveyorv1.TaskEnvelope) (err error) {
 	now := b.clock.Now()
 	options := task.GetOptions()
 
@@ -286,18 +425,22 @@ func (b *Broker) Enqueue(ctx context.Context, task *conveyorv1.TaskEnvelope) err
 		return fmt.Errorf("postgres: marshal envelope: %w", err)
 	}
 
-	arguments := []any{
-		task.GetId(), task.GetQueue(), task.GetType(), state, options.GetPriority(),
-		payload, uniqueKey, uniqueExpiresAt, processAt, protoTime(options.GetDeadline()),
-		options.GetMaxRetry(), task.GetRetried(), task.GetLastError(),
-		pgInterval(options.GetRetention().AsDuration()), enqueuedAt, now, group,
-		protoTime(options.GetExpiresAt()),
+	buildArguments := func(state int16) []any {
+		return []any{
+			task.GetId(), task.GetQueue(), task.GetType(), state, options.GetPriority(),
+			payload, uniqueKey, uniqueExpiresAt, processAt, protoTime(options.GetDeadline()),
+			options.GetMaxRetry(), task.GetRetried(), task.GetLastError(),
+			pgInterval(options.GetRetention().AsDuration()), enqueuedAt, now, group,
+			protoTime(options.GetExpiresAt()),
+		}
 	}
 
-	if uniqueKey == nil {
+	edges := options.GetDependsOn()
+
+	if uniqueKey == nil && len(edges) == 0 {
 		// Common path: one round trip. The lapsed-claim release is only
 		// needed when a unique key may collide with an expired claim.
-		if _, err = b.pool.Exec(ctx, insertTaskQuery, arguments...); err != nil {
+		if _, err = b.pool.Exec(ctx, insertTaskQuery, buildArguments(state)...); err != nil {
 			return fmt.Errorf("postgres: insert task: %w", err)
 		}
 
@@ -308,18 +451,59 @@ func (b *Broker) Enqueue(ctx context.Context, task *conveyorv1.TaskEnvelope) err
 	if err != nil {
 		return fmt.Errorf("postgres: begin enqueue: %w", err)
 	}
-	defer func() { _ = transaction.Rollback(ctx) }()
 
-	if _, err = transaction.Exec(ctx, releaseLapsedUniqueQuery, *uniqueKey, now); err != nil {
-		return fmt.Errorf("postgres: release lapsed unique claim: %w", err)
+	defer func() {
+		err = rollback(ctx, transaction, err)
+	}()
+
+	if uniqueKey != nil {
+		if _, err = transaction.Exec(ctx, releaseLapsedUniqueQuery, *uniqueKey, now); err != nil {
+			return fmt.Errorf("postgres: release lapsed unique claim: %w", err)
+		}
 	}
 
-	if _, err = transaction.Exec(ctx, insertTaskQuery, arguments...); err != nil {
+	deps, cancel, err := b.resolveInitialDeps(ctx, transaction, task.GetId(), edges)
+	if err != nil {
+		return err
+	}
+
+	switch {
+	case cancel:
+		state = stateCanceled
+	case len(deps) > 0:
+		state = stateBlocked
+	}
+
+	tag, err := transaction.Exec(ctx, insertTaskQuery, buildArguments(state)...)
+	if err != nil {
 		if isUniqueViolation(err) {
 			return broker.ErrDuplicateTask
 		}
 
 		return fmt.Errorf("postgres: insert task: %w", err)
+	}
+
+	// A conflict on the id means the task is already committed: this is an
+	// idempotent client retry, so leave its existing dependency edges untouched
+	// rather than re-inserting edges a prior resolution may already have drained.
+	if tag.RowsAffected() == 0 {
+		if err = transaction.Commit(ctx); err != nil {
+			return fmt.Errorf("postgres: commit enqueue: %w", err)
+		}
+
+		return nil
+	}
+
+	if state == stateCanceled {
+		if _, err = transaction.Exec(ctx, stampCanceledQuery, task.GetId(), now); err != nil {
+			return fmt.Errorf("postgres: stamp canceled task: %w", err)
+		}
+	}
+
+	for depID, policy := range deps {
+		if _, err = transaction.Exec(ctx, insertEdgeQuery, task.GetId(), depID, policy); err != nil {
+			return fmt.Errorf("postgres: insert dependency edge: %w", err)
+		}
 	}
 
 	if err = transaction.Commit(ctx); err != nil {
@@ -350,24 +534,6 @@ func (b *Broker) Lease(ctx context.Context, queue string, limit int, ttl time.Du
 	return scanEnvelopes(rows)
 }
 
-// leaseGroupQuery claims a (queue, group)'s aggregating members as one batch,
-// ordered by enqueue time then id; it mirrors leaseQuery's CTE pattern.
-var leaseGroupQuery = fmt.Sprintf(`WITH due AS (
-  SELECT id, enqueued_at FROM conveyor_tasks
-  WHERE queue = $1 AND group_key = $2 AND state = %d
-  ORDER BY enqueued_at, id
-  LIMIT $3
-  FOR UPDATE SKIP LOCKED
-), claimed AS (
-  UPDATE conveyor_tasks t
-  SET state = %d, lease_id = $4, lease_expires_at = $6, started_at = $5, updated_at = $5
-  FROM due WHERE t.id = due.id
-  RETURNING t.id, t.payload, t.retried, t.last_error
-)
-SELECT c.payload, c.retried, c.last_error
-FROM claimed c JOIN due d ON d.id = c.id
-ORDER BY d.enqueued_at, d.id`, stateAggregating, stateActive)
-
 // LeaseGroup claims a group's aggregating members as one batch; see broker.Broker.
 func (b *Broker) LeaseGroup(ctx context.Context, queue, group string, limit int, ttl time.Duration, leaseID string) ([]*conveyorv1.TaskEnvelope, error) {
 	if limit <= 0 {
@@ -384,16 +550,6 @@ func (b *Broker) LeaseGroup(ctx context.Context, queue, group string, limit int,
 
 	return scanEnvelopes(rows)
 }
-
-// groupStatsQuery summarizes the aggregating members per (queue, group) across
-// all queues. The WHERE state filter rides the partial aggregating index, so it
-// scans only aggregating rows. MIN(type) names the group's task type; groups
-// are single-type, so any member's type is the batch's handler routing key.
-var groupStatsQuery = fmt.Sprintf(`SELECT queue, group_key, MIN(type), COUNT(*), MIN(enqueued_at), MAX(enqueued_at)
-  FROM conveyor_tasks
-  WHERE state = %d
-  GROUP BY queue, group_key
-  ORDER BY queue, group_key`, stateAggregating)
 
 // GroupStats summarizes the aggregating groups across all queues; see
 // broker.Broker.
@@ -460,21 +616,6 @@ func (b *Broker) Release(ctx context.Context, taskID, leaseID string) error {
 	return b.leaseScopedExec(ctx, releaseQuery, taskID, leaseID, b.clock.Now())
 }
 
-// leaseScopedExec runs a statement that must match exactly one task active
-// under the caller's lease, mapping a miss to broker.ErrLeaseLost.
-func (b *Broker) leaseScopedExec(ctx context.Context, statement string, arguments ...any) error {
-	tag, err := b.pool.Exec(ctx, statement, arguments...)
-	if err != nil {
-		return fmt.Errorf("postgres: lease-scoped update: %w", err)
-	}
-
-	if tag.RowsAffected() == 0 {
-		return broker.ErrLeaseLost
-	}
-
-	return nil
-}
-
 // Archive dead-letters a task; see broker.Broker.
 func (b *Broker) Archive(ctx context.Context, taskID, leaseID, errMsg string) error {
 	now := b.clock.Now()
@@ -493,23 +634,6 @@ func (b *Broker) Archive(ctx context.Context, taskID, leaseID, errMsg string) er
 	}
 
 	return nil
-}
-
-// explainMiss distinguishes a missing task from one in an ineligible state
-// after a guarded update matched no row.
-func (b *Broker) explainMiss(ctx context.Context, taskID string) error {
-	var state int16
-
-	err := b.pool.QueryRow(ctx, "SELECT state FROM conveyor_tasks WHERE id = $1", taskID).Scan(&state)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return broker.ErrTaskNotFound
-	}
-
-	if err != nil {
-		return fmt.Errorf("postgres: look up task state: %w", err)
-	}
-
-	return broker.ErrInvalidState
 }
 
 // ReapExpiredLeases reclaims lapsed leases; see broker.Broker.
@@ -573,6 +697,113 @@ func (b *Broker) PromoteScheduled(ctx context.Context, limit int) ([]string, err
 
 	if err = rows.Err(); err != nil {
 		return nil, fmt.Errorf("postgres: promote scheduled: %w", err)
+	}
+
+	return slices.Collect(maps.Keys(queues)), nil
+}
+
+// ResolveDependents reconciles edges pointing at a terminal task; see
+// broker.Broker.
+func (b *Broker) ResolveDependents(ctx context.Context, taskID string) (woken []string, err error) {
+	// Fast path: most finished tasks have no dependents. One indexed lookup
+	// keeps depless completions — the overwhelming majority — off the
+	// transaction path entirely. It is a hint, not authoritative: a dependent
+	// committing its edge just after this read is handled at its own enqueue
+	// (which reconciles an already-terminal dependency) or by the reaper sweep.
+	var hasDependents bool
+	if err = b.pool.QueryRow(ctx, hasDependentsQuery, taskID).Scan(&hasDependents); err != nil {
+		return nil, fmt.Errorf("postgres: check dependents: %w", err)
+	}
+
+	if !hasDependents {
+		return nil, nil
+	}
+
+	transaction, err := b.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: begin resolve dependents: %w", err)
+	}
+	defer func() { err = rollback(ctx, transaction, err) }()
+
+	queues, err := b.resolveWithin(ctx, transaction, []string{taskID})
+	if err != nil {
+		return nil, err
+	}
+
+	if err = transaction.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("postgres: commit resolve dependents: %w", err)
+	}
+
+	return slices.Collect(maps.Keys(queues)), nil
+}
+
+// PromoteReadyDependents reconciles blocked tasks whose dependencies have since
+// gone terminal; see broker.Broker.
+func (b *Broker) PromoteReadyDependents(ctx context.Context, limit int) (woken []string, err error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+
+	transaction, err := b.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: begin promote ready dependents: %w", err)
+	}
+	defer func() {
+		err = rollback(ctx, transaction, err)
+	}()
+
+	rows, err := transaction.Query(ctx, readyDependenciesQuery, limit)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: read ready dependencies: %w", err)
+	}
+
+	var seed []string
+
+	for rows.Next() {
+		var id string
+		if err = rows.Scan(&id); err != nil {
+			rows.Close()
+
+			return nil, fmt.Errorf("postgres: scan ready dependency: %w", err)
+		}
+
+		seed = append(seed, id)
+	}
+
+	rows.Close()
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres: read ready dependencies: %w", err)
+	}
+
+	queues, err := b.resolveWithin(ctx, transaction, seed)
+	if err != nil {
+		return nil, err
+	}
+
+	orphanRows, err := transaction.Query(ctx, promoteOrphanBlockedQuery, limit, b.clock.Now())
+	if err != nil {
+		return nil, fmt.Errorf("postgres: promote orphaned blocked tasks: %w", err)
+	}
+
+	for orphanRows.Next() {
+		var queue string
+		if err = orphanRows.Scan(&queue); err != nil {
+			orphanRows.Close()
+			return nil, fmt.Errorf("postgres: scan promoted orphan: %w", err)
+		}
+
+		queues[queue] = struct{}{}
+	}
+
+	orphanRows.Close()
+
+	if err = orphanRows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres: promote orphaned blocked tasks: %w", err)
+	}
+
+	if err = transaction.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("postgres: commit promote ready dependents: %w", err)
 	}
 
 	return slices.Collect(maps.Keys(queues)), nil
@@ -646,22 +877,6 @@ func (b *Broker) PendingCount(ctx context.Context) (map[string]int64, error) {
 	return counts, nil
 }
 
-// queueStatsQuery aggregates task counts per (queue, state) and joins the
-// persisted pause flags, so queues that only hold a pause flag still
-// appear with zero counts.
-const queueStatsQuery = `SELECT
-  COALESCE(t.queue, s.queue) AS queue,
-  COALESCE(s.paused, FALSE) AS paused,
-  t.state,
-  t.task_count
-FROM (
-  SELECT queue, state, COUNT(*) AS task_count
-  FROM conveyor_tasks
-  GROUP BY queue, state
-) t
-FULL OUTER JOIN conveyor_queue_state s ON s.queue = t.queue
-ORDER BY 1`
-
 // QueueStats aggregates task counts and pause flags per queue; see
 // broker.Broker.
 func (b *Broker) QueueStats(ctx context.Context) ([]broker.QueueStat, error) {
@@ -706,6 +921,8 @@ func (b *Broker) QueueStats(ctx context.Context) ([]broker.QueueStat, error) {
 			stat.Archived = taskCount.Int64
 		case conveyorv1.TaskState_TASK_STATE_AGGREGATING:
 			stat.Aggregating = taskCount.Int64
+		case conveyorv1.TaskState_TASK_STATE_BLOCKED:
+			stat.Blocked = taskCount.Int64
 		}
 	}
 
@@ -980,6 +1197,10 @@ func (b *Broker) DeleteTask(ctx context.Context, id string) error {
 		return b.explainMiss(ctx, id)
 	}
 
+	if _, err = b.pool.Exec(ctx, dropDependentEdgesQuery, id); err != nil {
+		return fmt.Errorf("postgres: drop deleted task edges: %w", err)
+	}
+
 	return nil
 }
 
@@ -1064,18 +1285,6 @@ func (b *Broker) UpdateCronNextRun(ctx context.Context, id string, expected, nex
 	return nil
 }
 
-// nullableTime maps the zero time to a NULL database value.
-func nullableTime(t time.Time) *time.Time {
-	if t.IsZero() {
-		return nil
-	}
-
-	return &t
-}
-
-// cronColumns is the cron-entry projection shared by the list queries.
-const cronColumns = "id, spec, task_type, queue, payload, content_type, options, paused, next_run_at"
-
 // ListCronEntries returns all cron entries ordered by id; see broker.Broker.
 func (b *Broker) ListCronEntries(ctx context.Context) ([]*broker.CronEntry, error) {
 	rows, err := b.pool.Query(ctx, "SELECT "+cronColumns+" FROM conveyor_cron_entries ORDER BY id")
@@ -1100,6 +1309,364 @@ func (b *Broker) ListDueCronEntries(ctx context.Context, now time.Time) ([]*brok
 	defer rows.Close()
 
 	return scanCronEntries(rows)
+}
+
+// SetCronPaused persists the entry pause flag; see broker.Broker.
+func (b *Broker) SetCronPaused(ctx context.Context, id string, paused bool) error {
+	const pauseEntry = "UPDATE conveyor_cron_entries SET paused = $2, updated_at = $3 WHERE id = $1"
+
+	tag, err := b.pool.Exec(ctx, pauseEntry, id, paused, b.clock.Now())
+	if err != nil {
+		return fmt.Errorf("postgres: set cron paused: %w", err)
+	}
+
+	if tag.RowsAffected() == 0 {
+		return broker.ErrTaskNotFound
+	}
+
+	return nil
+}
+
+// DeleteCronEntry removes a cron entry; see broker.Broker.
+func (b *Broker) DeleteCronEntry(ctx context.Context, id string) error {
+	if _, err := b.pool.Exec(ctx, "DELETE FROM conveyor_cron_entries WHERE id = $1", id); err != nil {
+		return fmt.Errorf("postgres: delete cron entry: %w", err)
+	}
+
+	return nil
+}
+
+// Close releases the connection pool.
+func (b *Broker) Close() error {
+	b.pool.Close()
+
+	return nil
+}
+
+// rollback rolls a transaction back during deferred cleanup. A rollback after a
+// successful commit reports pgx.ErrTxClosed — the expected no-op, which is
+// dropped. Any other rollback failure is joined onto the in-flight error so a
+// genuine cleanup failure is never silently swallowed. Use it as
+// `defer func() { err = rollback(ctx, tx, err) }()` with a named error return.
+func rollback(ctx context.Context, tx pgx.Tx, err error) error {
+	rollbackErr := tx.Rollback(ctx)
+	if rollbackErr == nil || errors.Is(rollbackErr, pgx.ErrTxClosed) {
+		return err
+	}
+
+	return errors.Join(err, fmt.Errorf("postgres: rollback: %w", rollbackErr))
+}
+
+// resolveInitialDeps reads the current state of each declared dependency within
+// the enqueue transaction and returns the still-unsatisfied edges as a map of
+// dependency id to on-failure policy. A dependency already completed is dropped;
+// one already failed terminally is applied through its policy (continue drops
+// it, block keeps it, cascade-cancel signals that the task should be canceled
+// outright); every other dependency is retained as a block.
+func (b *Broker) resolveInitialDeps(ctx context.Context, tx pgx.Tx, taskID string, edges []*conveyorv1.TaskDependency) (map[string]int16, bool, error) {
+	if len(edges) == 0 {
+		return nil, false, nil
+	}
+
+	policies := make(map[string]int16, len(edges))
+
+	for _, edge := range edges {
+		depTaskID := edge.GetTaskId()
+		if depTaskID == "" || depTaskID == taskID {
+			continue
+		}
+
+		policies[depTaskID] = dependencyPolicy(edge.GetOnFailure())
+	}
+
+	if len(policies) == 0 {
+		return nil, false, nil
+	}
+
+	states, err := b.dependencyStates(ctx, tx, slices.Collect(maps.Keys(policies)))
+	if err != nil {
+		return nil, false, err
+	}
+
+	deps := make(map[string]int16)
+
+	for policyID, policy := range policies {
+		state, known := states[policyID]
+
+		switch {
+		case !known:
+			deps[policyID] = policy
+		case state == stateCompleted:
+			// already satisfied
+		case state == stateArchived || state == stateCanceled:
+			switch policy {
+			case int16(conveyorv1.DependencyFailurePolicy_DEPENDENCY_FAILURE_POLICY_CONTINUE):
+				// failed dependency treated as satisfied
+			case int16(conveyorv1.DependencyFailurePolicy_DEPENDENCY_FAILURE_POLICY_CASCADE_CANCEL):
+				return nil, true, nil
+			default:
+				deps[policyID] = policy
+			}
+		default:
+			deps[policyID] = policy
+		}
+	}
+
+	if len(deps) == 0 {
+		return nil, false, nil
+	}
+
+	return deps, false, nil
+}
+
+// dependencyStates reads the state column of each given task id.
+func (b *Broker) dependencyStates(ctx context.Context, tx pgx.Tx, ids []string) (map[string]int16, error) {
+	rows, err := tx.Query(ctx, dependencyStatesQuery, ids)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: read dependency states: %w", err)
+	}
+	defer rows.Close()
+
+	states := make(map[string]int16)
+
+	for rows.Next() {
+		var (
+			id    string
+			state int16
+		)
+
+		if err = rows.Scan(&id, &state); err != nil {
+			return nil, fmt.Errorf("postgres: scan dependency state: %w", err)
+		}
+
+		states[id] = state
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres: read dependency states: %w", err)
+	}
+
+	return states, nil
+}
+
+// dependencyPolicy resolves the unspecified policy to its block default.
+func dependencyPolicy(policy conveyorv1.DependencyFailurePolicy) int16 {
+	if policy == conveyorv1.DependencyFailurePolicy_DEPENDENCY_FAILURE_POLICY_UNSPECIFIED {
+		return int16(conveyorv1.DependencyFailurePolicy_DEPENDENCY_FAILURE_POLICY_BLOCK)
+	}
+
+	return int16(policy)
+}
+
+// leaseScopedExec runs a statement that must match exactly one task active
+// under the caller's lease, mapping a miss to broker.ErrLeaseLost.
+func (b *Broker) leaseScopedExec(ctx context.Context, statement string, arguments ...any) error {
+	tag, err := b.pool.Exec(ctx, statement, arguments...)
+	if err != nil {
+		return fmt.Errorf("postgres: lease-scoped update: %w", err)
+	}
+
+	if tag.RowsAffected() == 0 {
+		return broker.ErrLeaseLost
+	}
+
+	return nil
+}
+
+// explainMiss distinguishes a missing task from one in an ineligible state
+// after a guarded update matched no row.
+func (b *Broker) explainMiss(ctx context.Context, taskID string) error {
+	var state int16
+
+	err := b.pool.QueryRow(ctx, "SELECT state FROM conveyor_tasks WHERE id = $1", taskID).Scan(&state)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return broker.ErrTaskNotFound
+	}
+
+	if err != nil {
+		return fmt.Errorf("postgres: look up task state: %w", err)
+	}
+
+	return broker.ErrInvalidState
+}
+
+// resolveWithin drains the dependency edges that point at each seed task,
+// applying each dependent's policy and promoting any dependent left unblocked.
+// Cascade-cancel propagates through the worklist so a canceled dependent
+// resolves its own dependents in turn. It returns the set of queues whose tasks
+// became newly eligible. Every statement runs inside the caller's transaction so
+// a partial reconciliation never commits.
+func (b *Broker) resolveWithin(ctx context.Context, tx pgx.Tx, seed []string) (map[string]struct{}, error) {
+	now := b.clock.Now()
+	queues := make(map[string]struct{})
+	seen := make(map[string]struct{})
+	worklist := slices.Clone(seed)
+
+	for len(worklist) > 0 {
+		finishedID := worklist[0]
+		worklist = worklist[1:]
+
+		if _, done := seen[finishedID]; done {
+			continue
+		}
+
+		seen[finishedID] = struct{}{}
+
+		terminal, err := b.terminalState(ctx, tx, finishedID)
+		if err != nil {
+			return nil, err
+		}
+
+		succeeded := terminal == stateCompleted
+		failed := terminal == stateArchived || terminal == stateCanceled
+
+		if !succeeded && !failed {
+			continue
+		}
+
+		edges, err := b.edgesWaitingOn(ctx, tx, finishedID)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, edge := range edges {
+			canceled, err := b.applyEdge(ctx, tx, finishedID, edge, failed, now)
+			if err != nil {
+				return nil, err
+			}
+
+			if canceled {
+				worklist = append(worklist, edge.dependent)
+				continue
+			}
+
+			queue, promoted, err := b.promoteDependent(ctx, tx, edge.dependent, now)
+			if err != nil {
+				return nil, err
+			}
+
+			if promoted {
+				queues[queue] = struct{}{}
+			}
+		}
+	}
+
+	return queues, nil
+}
+
+// applyEdge reconciles one edge against a finished dependency. On dependency
+// success, or failure under the continue policy, it drops the edge; under the
+// block policy it leaves the dependent waiting; under cascade-cancel it cancels
+// the dependent and reports that so the caller can propagate. It returns whether
+// the dependent was canceled.
+func (b *Broker) applyEdge(ctx context.Context, tx pgx.Tx, dependencyID string, edge dependencyEdge, failed bool, now time.Time) (bool, error) {
+	if failed && edge.policy == int16(conveyorv1.DependencyFailurePolicy_DEPENDENCY_FAILURE_POLICY_BLOCK) {
+		return false, nil
+	}
+
+	if failed && edge.policy == int16(conveyorv1.DependencyFailurePolicy_DEPENDENCY_FAILURE_POLICY_CASCADE_CANCEL) {
+		if _, err := tx.Exec(ctx, cascadeCancelQuery, edge.dependent, now, broker.CascadeCanceledMessage); err != nil {
+			return false, fmt.Errorf("postgres: cascade-cancel dependent: %w", err)
+		}
+
+		if _, err := tx.Exec(ctx, dropDependentEdgesQuery, edge.dependent); err != nil {
+			return false, fmt.Errorf("postgres: drop canceled dependent edges: %w", err)
+		}
+
+		return true, nil
+	}
+
+	if _, err := tx.Exec(ctx, dropEdgeQuery, edge.dependent, dependencyID); err != nil {
+		return false, fmt.Errorf("postgres: drop satisfied edge: %w", err)
+	}
+
+	return false, nil
+}
+
+// terminalState returns the task's current state, or stateBlocked's zero analog
+// when the task is gone. An unknown task reports an unspecified state so the
+// caller skips it.
+func (b *Broker) terminalState(ctx context.Context, tx pgx.Tx, taskID string) (int16, error) {
+	var state int16
+
+	err := tx.QueryRow(ctx, "SELECT state FROM conveyor_tasks WHERE id = $1", taskID).Scan(&state)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return int16(conveyorv1.TaskState_TASK_STATE_UNSPECIFIED), nil
+	}
+
+	if err != nil {
+		return 0, fmt.Errorf("postgres: read task state: %w", err)
+	}
+
+	return state, nil
+}
+
+// edgesWaitingOn lists the edges that wait on a dependency.
+func (b *Broker) edgesWaitingOn(ctx context.Context, tx pgx.Tx, dependencyID string) ([]dependencyEdge, error) {
+	rows, err := tx.Query(ctx, edgesForDependencyQuery, dependencyID)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: read waiting edges: %w", err)
+	}
+	defer rows.Close()
+
+	var edges []dependencyEdge
+
+	for rows.Next() {
+		var edge dependencyEdge
+		if err = rows.Scan(&edge.dependent, &edge.policy); err != nil {
+			return nil, fmt.Errorf("postgres: scan waiting edge: %w", err)
+		}
+
+		edges = append(edges, edge)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres: read waiting edges: %w", err)
+	}
+
+	return edges, nil
+}
+
+// promoteDependent promotes a blocked dependent once it holds no more edges,
+// returning its queue and whether a promotion happened. It first locks the
+// dependent row so concurrent resolvers of its sibling dependencies serialize,
+// then re-checks the remaining edges in a fresh statement that observes their
+// committed deletes — closing the lost-wakeup race on a concurrent fan-in join.
+func (b *Broker) promoteDependent(ctx context.Context, tx pgx.Tx, dependentID string, now time.Time) (string, bool, error) {
+	var locked string
+
+	err := tx.QueryRow(ctx, lockBlockedDependentQuery, dependentID).Scan(&locked)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Not blocked: already promoted by a concurrent resolver, or never blocked.
+		return "", false, nil
+	}
+
+	if err != nil {
+		return "", false, fmt.Errorf("postgres: lock dependent: %w", err)
+	}
+
+	var queue string
+
+	err = tx.QueryRow(ctx, promoteDependentQuery, dependentID, now).Scan(&queue)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Edges still remain: another dependency has yet to resolve.
+		return "", false, nil
+	}
+
+	if err != nil {
+		return "", false, fmt.Errorf("postgres: promote dependent: %w", err)
+	}
+
+	return queue, true, nil
+}
+
+// nullableTime maps the zero time to a NULL database value.
+func nullableTime(t time.Time) *time.Time {
+	if t.IsZero() {
+		return nil
+	}
+
+	return &t
 }
 
 // scanCronEntries materializes cron rows in the cronColumns projection.
@@ -1140,38 +1707,6 @@ func scanCronEntries(rows pgx.Rows) ([]*broker.CronEntry, error) {
 	}
 
 	return entries, nil
-}
-
-// SetCronPaused persists the entry pause flag; see broker.Broker.
-func (b *Broker) SetCronPaused(ctx context.Context, id string, paused bool) error {
-	const pauseEntry = "UPDATE conveyor_cron_entries SET paused = $2, updated_at = $3 WHERE id = $1"
-
-	tag, err := b.pool.Exec(ctx, pauseEntry, id, paused, b.clock.Now())
-	if err != nil {
-		return fmt.Errorf("postgres: set cron paused: %w", err)
-	}
-
-	if tag.RowsAffected() == 0 {
-		return broker.ErrTaskNotFound
-	}
-
-	return nil
-}
-
-// DeleteCronEntry removes a cron entry; see broker.Broker.
-func (b *Broker) DeleteCronEntry(ctx context.Context, id string) error {
-	if _, err := b.pool.Exec(ctx, "DELETE FROM conveyor_cron_entries WHERE id = $1", id); err != nil {
-		return fmt.Errorf("postgres: delete cron entry: %w", err)
-	}
-
-	return nil
-}
-
-// Close releases the connection pool.
-func (b *Broker) Close() error {
-	b.pool.Close()
-
-	return nil
 }
 
 // scanEnvelopes drains rows of (payload, retried, last_error) into

@@ -96,8 +96,9 @@ licenses: ## Print the dependency license report backing docs/licenses.md
 # Generation goes through the gen/ staging directory: internal/proto is
 # replaced only after buf generate has succeeded, and nothing else under
 # internal/ is ever touched.
-proto: image ## Lint protos and regenerate Go code
+proto: image ## Format and lint protos, then regenerate Go code
 	$(DOCKER_RUN) sh -c '\
+		buf format -w && \
 		buf lint && \
 		rm -rf gen && \
 		buf generate && \

@@ -65,6 +65,11 @@ type taskRow struct {
 	// enqueuedAt is when the task was committed; orders group members and
 	// drives the group's oldest/newest firing thresholds.
 	enqueuedAt time.Time
+	// deps maps each not-yet-satisfied dependency task id to the policy applied
+	// when that dependency fails terminally. A non-empty map holds the row in
+	// the blocked state; it drains to empty as dependencies succeed (or fail
+	// under a continue policy), at which point the row is promoted.
+	deps map[string]conveyorv1.DependencyFailurePolicy
 }
 
 // Broker is the in-memory broker.Broker implementation.
@@ -81,6 +86,12 @@ type Broker struct {
 	rateLimits map[string]broker.RateLimit
 	// cronEntries maps entry id to the stored entry.
 	cronEntries map[string]*broker.CronEntry
+	// dependents is the reverse dependency index: each dependency task id maps
+	// to the set of blocked task ids waiting on it. It makes resolving a
+	// finished task's dependents proportional to its dependent count rather than
+	// the total task count, which matters because resolution runs on every
+	// successful completion.
+	dependents map[string]map[string]struct{}
 }
 
 // enforce interface compliance at compile time.
@@ -94,6 +105,35 @@ func New(timeSource clock.Clock) *Broker {
 		pausedQueues: make(map[string]bool),
 		rateLimits:   make(map[string]broker.RateLimit),
 		cronEntries:  make(map[string]*broker.CronEntry),
+		dependents:   make(map[string]map[string]struct{}),
+	}
+}
+
+// addDependent records that dependentID waits on dependencyID. Callers must
+// hold the mutex.
+func (b *Broker) addDependent(dependencyID, dependentID string) {
+	waiters := b.dependents[dependencyID]
+	if waiters == nil {
+		waiters = make(map[string]struct{})
+		b.dependents[dependencyID] = waiters
+	}
+
+	waiters[dependentID] = struct{}{}
+}
+
+// removeDependent clears the record that dependentID waits on dependencyID,
+// dropping the dependency's entry once no waiter remains. Callers must hold the
+// mutex.
+func (b *Broker) removeDependent(dependencyID, dependentID string) {
+	waiters := b.dependents[dependencyID]
+	if waiters == nil {
+		return
+	}
+
+	delete(waiters, dependentID)
+
+	if len(waiters) == 0 {
+		delete(b.dependents, dependencyID)
 	}
 }
 
@@ -138,6 +178,15 @@ func (b *Broker) Enqueue(_ context.Context, task *conveyorv1.TaskEnvelope) error
 		state = conveyorv1.TaskState_TASK_STATE_SCHEDULED
 	}
 
+	deps, cancel := b.resolveInitialDeps(task.GetId(), options.GetDependsOn())
+
+	switch {
+	case cancel:
+		state = conveyorv1.TaskState_TASK_STATE_CANCELED
+	case len(deps) > 0:
+		state = conveyorv1.TaskState_TASK_STATE_BLOCKED
+	}
+
 	var uniqueExpiresAt time.Time
 	if uniqueKey != "" && options.GetUniqueTtl() != nil {
 		uniqueExpiresAt = now.Add(options.GetUniqueTtl().AsDuration())
@@ -148,7 +197,7 @@ func (b *Broker) Enqueue(_ context.Context, task *conveyorv1.TaskEnvelope) error
 		expiresAt = options.GetExpiresAt().AsTime()
 	}
 
-	b.tasks[task.GetId()] = &taskRow{
+	row := &taskRow{
 		envelope:        proto.Clone(task).(*conveyorv1.TaskEnvelope),
 		state:           state,
 		priority:        options.GetPriority(),
@@ -162,9 +211,77 @@ func (b *Broker) Enqueue(_ context.Context, task *conveyorv1.TaskEnvelope) error
 		maxRetry:        options.GetMaxRetry(),
 		group:           group,
 		enqueuedAt:      enqueuedAt,
+		deps:            deps,
 	}
 
+	if state == conveyorv1.TaskState_TASK_STATE_CANCELED {
+		row.completedAt = now
+	}
+
+	for dependencyID := range deps {
+		b.addDependent(dependencyID, task.GetId())
+	}
+
+	b.tasks[task.GetId()] = row
+
 	return nil
+}
+
+// resolveInitialDeps computes the unsatisfied dependencies of a task being
+// enqueued. A dependency already completed is satisfied and dropped; one that
+// already failed terminally is applied through its policy (continue drops it,
+// block keeps it, cascade-cancel marks the new task for immediate cancellation);
+// every other dependency — pending, running, or not yet enqueued — is retained
+// as a block. Callers must hold the mutex.
+func (b *Broker) resolveInitialDeps(taskID string, edges []*conveyorv1.TaskDependency) (map[string]conveyorv1.DependencyFailurePolicy, bool) {
+	if len(edges) == 0 {
+		return nil, false
+	}
+
+	deps := make(map[string]conveyorv1.DependencyFailurePolicy)
+
+	for _, edge := range edges {
+		depID := edge.GetTaskId()
+		if depID == "" || depID == taskID {
+			continue
+		}
+
+		policy := dependencyPolicy(edge.GetOnFailure())
+		dep, exists := b.tasks[depID]
+
+		switch {
+		case !exists:
+			deps[depID] = policy
+		case dep.state == conveyorv1.TaskState_TASK_STATE_COMPLETED:
+			// already satisfied
+		case dep.state == conveyorv1.TaskState_TASK_STATE_ARCHIVED || dep.state == conveyorv1.TaskState_TASK_STATE_CANCELED:
+			switch policy {
+			case conveyorv1.DependencyFailurePolicy_DEPENDENCY_FAILURE_POLICY_CONTINUE:
+				// failed dependency treated as satisfied
+			case conveyorv1.DependencyFailurePolicy_DEPENDENCY_FAILURE_POLICY_CASCADE_CANCEL:
+				return nil, true
+			default:
+				deps[depID] = policy
+			}
+		default:
+			deps[depID] = policy
+		}
+	}
+
+	if len(deps) == 0 {
+		return nil, false
+	}
+
+	return deps, false
+}
+
+// dependencyPolicy resolves the unspecified policy to its block default.
+func dependencyPolicy(policy conveyorv1.DependencyFailurePolicy) conveyorv1.DependencyFailurePolicy {
+	if policy == conveyorv1.DependencyFailurePolicy_DEPENDENCY_FAILURE_POLICY_UNSPECIFIED {
+		return conveyorv1.DependencyFailurePolicy_DEPENDENCY_FAILURE_POLICY_BLOCK
+	}
+
+	return policy
 }
 
 // uniqueKeyClaimed reports whether an incomplete task holds the key and the
@@ -190,7 +307,8 @@ func incomplete(state conveyorv1.TaskState) bool {
 		conveyorv1.TaskState_TASK_STATE_PENDING,
 		conveyorv1.TaskState_TASK_STATE_ACTIVE,
 		conveyorv1.TaskState_TASK_STATE_RETRY,
-		conveyorv1.TaskState_TASK_STATE_AGGREGATING:
+		conveyorv1.TaskState_TASK_STATE_AGGREGATING,
+		conveyorv1.TaskState_TASK_STATE_BLOCKED:
 		return true
 	default:
 		return false
@@ -564,6 +682,188 @@ func (b *Broker) PromoteScheduled(_ context.Context, limit int) ([]string, error
 	return slices.Collect(maps.Keys(queues)), nil
 }
 
+// ResolveDependents reconciles edges pointing at a terminal task; see
+// broker.Broker.
+func (b *Broker) ResolveDependents(_ context.Context, taskID string) ([]string, error) {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	return b.resolveDependents(taskID, b.clock.Now()), nil
+}
+
+// resolveDependents drains the dependency edges that point at the given
+// terminal task, applying each dependent's policy and promoting any dependent
+// left unblocked. Cascade-cancel propagates through a worklist so a canceled
+// dependent resolves its own dependents in turn. It returns the distinct queues
+// whose tasks became newly eligible. Callers must hold the mutex.
+func (b *Broker) resolveDependents(taskID string, now time.Time) []string {
+	queues := make(map[string]struct{})
+	seen := make(map[string]struct{})
+	worklist := []string{taskID}
+
+	for len(worklist) > 0 {
+		finishedID := worklist[0]
+		worklist = worklist[1:]
+
+		if _, done := seen[finishedID]; done {
+			continue
+		}
+
+		seen[finishedID] = struct{}{}
+
+		finished, exists := b.tasks[finishedID]
+		if !exists {
+			continue
+		}
+
+		succeeded := finished.state == conveyorv1.TaskState_TASK_STATE_COMPLETED
+		failed := finished.state == conveyorv1.TaskState_TASK_STATE_ARCHIVED || finished.state == conveyorv1.TaskState_TASK_STATE_CANCELED
+
+		if !succeeded && !failed {
+			continue
+		}
+
+		// Iterate a snapshot of the waiting set: the loop mutates the reverse
+		// index as it drains satisfied edges.
+		for _, dependentID := range slices.Collect(maps.Keys(b.dependents[finishedID])) {
+			dependent, exists := b.tasks[dependentID]
+			if !exists {
+				b.removeDependent(finishedID, dependentID)
+
+				continue
+			}
+
+			policy, waiting := dependent.deps[finishedID]
+			if !waiting {
+				b.removeDependent(finishedID, dependentID)
+
+				continue
+			}
+
+			if failed && policy == conveyorv1.DependencyFailurePolicy_DEPENDENCY_FAILURE_POLICY_BLOCK {
+				continue
+			}
+
+			if failed && policy == conveyorv1.DependencyFailurePolicy_DEPENDENCY_FAILURE_POLICY_CASCADE_CANCEL {
+				dependent.state = conveyorv1.TaskState_TASK_STATE_CANCELED
+				dependent.completedAt = now
+				dependent.lastError = broker.CascadeCanceledMessage
+
+				for dependencyID := range dependent.deps {
+					b.removeDependent(dependencyID, dependentID)
+				}
+
+				dependent.deps = nil
+				worklist = append(worklist, dependentID)
+
+				continue
+			}
+
+			delete(dependent.deps, finishedID)
+			b.removeDependent(finishedID, dependentID)
+
+			if queue, promoted := b.promoteIfReady(dependent, now); promoted {
+				queues[queue] = struct{}{}
+			}
+		}
+	}
+
+	return slices.Collect(maps.Keys(queues))
+}
+
+// promoteIfReady moves a blocked row with no remaining dependencies to the
+// state it would have held without dependencies: aggregating when grouped,
+// scheduled when its process_at is still in the future, otherwise pending. It
+// returns the row's queue and true when a promotion happened. Callers must hold
+// the mutex.
+func (b *Broker) promoteIfReady(row *taskRow, now time.Time) (string, bool) {
+	if row.state != conveyorv1.TaskState_TASK_STATE_BLOCKED || len(row.deps) > 0 {
+		return "", false
+	}
+
+	switch {
+	case row.group != "":
+		row.state = conveyorv1.TaskState_TASK_STATE_AGGREGATING
+	case row.processAt.After(now):
+		row.state = conveyorv1.TaskState_TASK_STATE_SCHEDULED
+	default:
+		row.state = conveyorv1.TaskState_TASK_STATE_PENDING
+	}
+
+	return row.envelope.GetQueue(), true
+}
+
+// PromoteReadyDependents reconciles blocked tasks whose dependencies have since
+// gone terminal; see broker.Broker.
+func (b *Broker) PromoteReadyDependents(_ context.Context, limit int) ([]string, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	now := b.clock.Now()
+	finished := make(map[string]struct{})
+
+	for _, row := range b.tasks {
+		if row.state != conveyorv1.TaskState_TASK_STATE_BLOCKED {
+			continue
+		}
+
+		for depID := range row.deps {
+			if dep, exists := b.tasks[depID]; exists && terminal(dep.state) {
+				finished[depID] = struct{}{}
+			}
+		}
+	}
+
+	queues := make(map[string]struct{})
+	resolved := 0
+
+	for depID := range finished {
+		if resolved == limit {
+			break
+		}
+
+		for _, queue := range b.resolveDependents(depID, now) {
+			queues[queue] = struct{}{}
+		}
+
+		resolved++
+	}
+
+	// Backstop: promote any task left blocked with no remaining dependencies,
+	// mirroring the Postgres sweep that recovers a dependent stranded by an
+	// interrupted resolution.
+	for _, row := range b.tasks {
+		if queue, promoted := b.promoteIfReady(row, now); promoted {
+			queues[queue] = struct{}{}
+		}
+	}
+
+	return slices.Collect(maps.Keys(queues)), nil
+}
+
+// terminal reports whether the state is a terminal outcome a dependent reacts
+// to: a success or a failure.
+func terminal(state conveyorv1.TaskState) bool {
+	switch state {
+	case conveyorv1.TaskState_TASK_STATE_COMPLETED,
+		conveyorv1.TaskState_TASK_STATE_ARCHIVED,
+		conveyorv1.TaskState_TASK_STATE_CANCELED:
+		return true
+	default:
+		return false
+	}
+}
+
+// hasDependents reports whether any stored task is still blocked on the given
+// task id. Callers must hold the mutex.
+func (b *Broker) hasDependents(taskID string) bool {
+	return len(b.dependents[taskID]) > 0
+}
+
 // PurgeCompleted removes retention-expired completed tasks and lapsed
 // unique-key claims; see broker.Broker.
 func (b *Broker) PurgeCompleted(_ context.Context, limit int) (int, error) {
@@ -586,7 +886,7 @@ func (b *Broker) PurgeCompleted(_ context.Context, limit int) (int, error) {
 			continue
 		}
 
-		if row.state == conveyorv1.TaskState_TASK_STATE_COMPLETED && !row.completedAt.Add(row.retention).After(now) {
+		if row.state == conveyorv1.TaskState_TASK_STATE_COMPLETED && !row.completedAt.Add(row.retention).After(now) && !b.hasDependents(id) {
 			delete(b.tasks, id)
 			purged++
 		}
@@ -618,7 +918,7 @@ func (b *Broker) ArchiveExpired(_ context.Context, limit int) (int, error) {
 			break
 		}
 
-		if !dispatchable(row.state) && row.state != conveyorv1.TaskState_TASK_STATE_SCHEDULED {
+		if !dispatchable(row.state) && row.state != conveyorv1.TaskState_TASK_STATE_SCHEDULED && row.state != conveyorv1.TaskState_TASK_STATE_BLOCKED {
 			continue
 		}
 
@@ -694,6 +994,8 @@ func (b *Broker) QueueStats(_ context.Context) ([]broker.QueueStat, error) {
 			stat.Archived++
 		case conveyorv1.TaskState_TASK_STATE_AGGREGATING:
 			stat.Aggregating++
+		case conveyorv1.TaskState_TASK_STATE_BLOCKED:
+			stat.Blocked++
 		}
 	}
 
@@ -863,7 +1165,8 @@ func (b *Broker) CancelTask(_ context.Context, id string) error {
 	case conveyorv1.TaskState_TASK_STATE_SCHEDULED,
 		conveyorv1.TaskState_TASK_STATE_PENDING,
 		conveyorv1.TaskState_TASK_STATE_RETRY,
-		conveyorv1.TaskState_TASK_STATE_AGGREGATING:
+		conveyorv1.TaskState_TASK_STATE_AGGREGATING,
+		conveyorv1.TaskState_TASK_STATE_BLOCKED:
 		row.state = conveyorv1.TaskState_TASK_STATE_CANCELED
 		row.completedAt = b.clock.Now()
 
@@ -885,6 +1188,12 @@ func (b *Broker) DeleteTask(_ context.Context, id string) error {
 
 	if row.state == conveyorv1.TaskState_TASK_STATE_ACTIVE {
 		return broker.ErrInvalidState
+	}
+
+	// Drop the deleted task's outgoing edges from the reverse index, mirroring
+	// the Postgres DeleteTask, so no dependency keeps a stale waiter.
+	for dependencyID := range row.deps {
+		b.removeDependent(dependencyID, id)
 	}
 
 	delete(b.tasks, id)
@@ -930,7 +1239,8 @@ func (b *Broker) ArchiveTask(_ context.Context, id string) error {
 	switch row.state {
 	case conveyorv1.TaskState_TASK_STATE_SCHEDULED,
 		conveyorv1.TaskState_TASK_STATE_PENDING,
-		conveyorv1.TaskState_TASK_STATE_RETRY:
+		conveyorv1.TaskState_TASK_STATE_RETRY,
+		conveyorv1.TaskState_TASK_STATE_BLOCKED:
 		row.state = conveyorv1.TaskState_TASK_STATE_ARCHIVED
 		row.completedAt = b.clock.Now()
 

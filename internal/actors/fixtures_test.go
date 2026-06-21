@@ -44,6 +44,7 @@ const gatewayHeartbeat = 500 * time.Millisecond
 var testSettings = Settings{
 	LeaseTTL:           30 * time.Second,
 	LeaseBatchMax:      100,
+	ResolverPoolSize:   4,
 	ReapInterval:       200 * time.Millisecond,
 	PromoteInterval:    100 * time.Millisecond,
 	PassivateAfter:     5 * time.Minute,

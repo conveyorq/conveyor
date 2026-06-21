@@ -16,7 +16,15 @@ from ._transport import auth_metadata, create_channel
 from .encryption import ENCRYPTION_MARKER_KEY, ENCRYPTION_MARKER_VALUE, Encryptor
 from .errors import ConveyorError, DuplicateTaskError
 from .gen.conveyor.v1 import service_pb2, service_pb2_grpc, task_pb2
-from .options import EnqueueFn, EnqueueMiddleware, EnqueueOptions, TaskInfo, TaskState
+from .options import (
+    Dependency,
+    DependencyFailure,
+    EnqueueFn,
+    EnqueueMiddleware,
+    EnqueueOptions,
+    TaskInfo,
+    TaskState,
+)
 from .task import Task
 
 _STATE_NAMES = {
@@ -29,6 +37,13 @@ _STATE_NAMES = {
     task_pb2.TASK_STATE_ARCHIVED: TaskState.ARCHIVED,
     task_pb2.TASK_STATE_CANCELED: TaskState.CANCELED,
     task_pb2.TASK_STATE_AGGREGATING: TaskState.AGGREGATING,
+    task_pb2.TASK_STATE_BLOCKED: TaskState.BLOCKED,
+}
+
+_FAILURE_POLICIES = {
+    DependencyFailure.BLOCK: task_pb2.DEPENDENCY_FAILURE_POLICY_BLOCK,
+    DependencyFailure.CASCADE_CANCEL: task_pb2.DEPENDENCY_FAILURE_POLICY_CASCADE_CANCEL,
+    DependencyFailure.CONTINUE: task_pb2.DEPENDENCY_FAILURE_POLICY_CONTINUE,
 }
 
 
@@ -175,6 +190,13 @@ class Client:
 
         if options.expires_at is not None:
             request.expires_at.CopyFrom(_time.timestamp_proto(options.expires_at))
+
+        for dependency in options.depends_on:
+            edge = dependency if isinstance(dependency, Dependency) else Dependency(task_id=dependency)
+            request.depends_on.add(
+                task_id=edge.task_id,
+                on_failure=_FAILURE_POLICIES[edge.on_failure],
+            )
 
         try:
             response = await stub.Enqueue(request, metadata=self._metadata)

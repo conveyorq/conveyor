@@ -208,6 +208,10 @@ func (c *Client) Enqueue(ctx context.Context, task *Task, opts ...EnqueueOption)
 			request.UniqueTtl = durationpb.New(settings.uniqueTTL)
 		}
 
+		if len(settings.dependsOn) > 0 {
+			request.DependsOn = dependenciesToProto(settings.dependsOn)
+		}
+
 		info, err := c.wire.Enqueue(ctx, request)
 		if err != nil {
 			return nil, wireError(err)

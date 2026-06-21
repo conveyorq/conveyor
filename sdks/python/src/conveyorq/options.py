@@ -26,6 +26,31 @@ class TaskState(str, Enum):
     ARCHIVED = "archived"
     CANCELED = "canceled"
     AGGREGATING = "aggregating"
+    BLOCKED = "blocked"
+
+
+class DependencyFailure(str, Enum):
+    """Decides a dependent task's fate when a task it depends on fails terminally
+    (retries exhausted, skipped, or canceled) instead of succeeding."""
+
+    #: Keep the dependent blocked indefinitely (the default).
+    BLOCK = "block"
+    #: Cancel the dependent and, in turn, its own dependents.
+    CASCADE_CANCEL = "cascade-cancel"
+    #: Treat the failed dependency as satisfied so the dependent proceeds.
+    CONTINUE = "continue"
+
+
+@dataclass(frozen=True)
+class Dependency:
+    """One task a task waits for. The dependent stays blocked until the
+    referenced task reaches a terminal success; ``on_failure`` decides what
+    happens if it fails terminally instead."""
+
+    #: The id of the task that must finish first.
+    task_id: str
+    #: Policy applied when the dependency fails terminally.
+    on_failure: DependencyFailure = DependencyFailure.BLOCK
 
 
 @dataclass(frozen=True)
@@ -81,6 +106,11 @@ class EnqueueOptions:
     expires_in: Optional[timedelta] = None
     #: Archive the task if it is not dispatched by this absolute time. Exclusive with ``expires_in``.
     expires_at: Optional[datetime] = None
+    #: Tasks this task waits for, building a workflow: it stays blocked until each
+    #: reaches a terminal success. A plain string is a dependency with the default
+    #: block-on-failure policy; a :class:`Dependency` sets an explicit policy.
+    #: Dependencies must be acyclic.
+    depends_on: list[str | Dependency] = field(default_factory=list)
     #: Extra metadata merged onto the task before commit.
     metadata: dict[str, str] = field(default_factory=dict)
 

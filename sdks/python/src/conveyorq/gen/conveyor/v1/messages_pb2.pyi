@@ -225,3 +225,11 @@ class GroupSweepTick(_message.Message):
 
     def __init__(self) -> None:
         ...
+
+class ResolveDependents(_message.Message):
+    __slots__ = ('task_id',)
+    TASK_ID_FIELD_NUMBER: _ClassVar[int]
+    task_id: str
+
+    def __init__(self, task_id: _Optional[str]=...) -> None:
+        ...

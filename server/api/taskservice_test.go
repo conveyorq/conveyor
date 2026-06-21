@@ -114,6 +114,49 @@ func TestEnqueueExpiry(t *testing.T) {
 	require.ErrorContains(t, err, "expires_at and expires_in are mutually exclusive")
 }
 
+func TestEnqueueWithDependencies(t *testing.T) {
+	service := newTestTaskService(t)
+	ctx := context.Background()
+
+	dependency, err := service.Enqueue(ctx, connect.NewRequest(&conveyorv1.EnqueueRequest{
+		TaskId: "dep-1",
+		Type:   "test:dependency",
+	}))
+	require.NoError(t, err)
+	require.Equal(t, conveyorv1.TaskState_TASK_STATE_PENDING, dependency.Msg.GetTask().GetState())
+
+	dependent, err := service.Enqueue(ctx, connect.NewRequest(&conveyorv1.EnqueueRequest{
+		Type:      "test:dependent",
+		DependsOn: []*conveyorv1.TaskDependency{{TaskId: "dep-1"}},
+	}))
+	require.NoError(t, err)
+	require.Equal(t, conveyorv1.TaskState_TASK_STATE_BLOCKED, dependent.Msg.GetTask().GetState())
+}
+
+func TestEnqueueDependencyValidation(t *testing.T) {
+	service := newTestTaskService(t)
+	ctx := context.Background()
+
+	_, err := service.Enqueue(ctx, connect.NewRequest(&conveyorv1.EnqueueRequest{
+		Type:      "test:empty-dep",
+		DependsOn: []*conveyorv1.TaskDependency{{TaskId: ""}},
+	}))
+	require.ErrorContains(t, err, "must name a task id")
+	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+
+	tooMany := make([]*conveyorv1.TaskDependency, maxDependencies+1)
+	for index := range tooMany {
+		tooMany[index] = &conveyorv1.TaskDependency{TaskId: "dep"}
+	}
+
+	_, err = service.Enqueue(ctx, connect.NewRequest(&conveyorv1.EnqueueRequest{
+		Type:      "test:too-many-deps",
+		DependsOn: tooMany,
+	}))
+	require.ErrorContains(t, err, "at most")
+	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+}
+
 func TestEnqueueDuplicateUniqueKey(t *testing.T) {
 	service := newTestTaskService(t)
 	ctx := context.Background()

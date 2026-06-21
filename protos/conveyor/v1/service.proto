@@ -104,6 +104,10 @@ message EnqueueRequest {
   // cancels a running task) and retention (which purges a completed one).
   google.protobuf.Duration expires_in = 17;
   google.protobuf.Timestamp expires_at = 18;
+  // depends_on lists the tasks this task waits for. The task stays blocked and
+  // is not eligible to lease until every dependency reaches a terminal success;
+  // each dependency carries the policy applied if it instead fails terminally.
+  repeated TaskDependency depends_on = 19;
 }
 
 message EnqueueResponse {
@@ -306,6 +310,8 @@ message QueueInfo {
   int64 archived = 8;
   // aggregating counts group members accumulating before their group fires.
   int64 aggregating = 9;
+  // blocked counts tasks held until their dependencies reach terminal success.
+  int64 blocked = 10;
 }
 
 message PauseQueueRequest {

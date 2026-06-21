@@ -140,6 +140,7 @@ func (s *Server) Start(ctx context.Context) error {
 		Settings: actors.Settings{
 			LeaseTTL:            s.config.Engine.LeaseTTL,
 			LeaseBatchMax:       s.config.Engine.LeaseBatchMax,
+			ResolverPoolSize:    s.config.Engine.ResolverPoolSize,
 			ReapInterval:        s.config.Engine.ReapInterval,
 			PromoteInterval:     s.config.Engine.PromoteInterval,
 			PassivateAfter:      s.config.Engine.PassivateAfter,

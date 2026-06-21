@@ -25,12 +25,12 @@ const migrationLockID = 7423886242271425537
 // migrate applies every embedded migration that is not yet recorded in
 // conveyor_schema_migrations, in lexical filename order, inside a single
 // transaction guarded by an advisory lock.
-func migrate(ctx context.Context, pool *pgxpool.Pool) error {
+func migrate(ctx context.Context, pool *pgxpool.Pool) (err error) {
 	transaction, err := pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("postgres: begin migration: %w", err)
 	}
-	defer func() { _ = transaction.Rollback(ctx) }()
+	defer func() { err = rollback(ctx, transaction, err) }()
 
 	if _, err = transaction.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", migrationLockID); err != nil {
 		return fmt.Errorf("postgres: acquire migration lock: %w", err)

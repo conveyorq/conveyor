@@ -22,7 +22,7 @@ TASK_OUTCOME_SKIP_RETRY: TaskOutcome
 TASK_OUTCOME_RELEASED: TaskOutcome
 
 class EnqueueRequest(_message.Message):
-    __slots__ = ('task_id', 'queue', 'type', 'payload', 'content_type', 'metadata', 'max_retry', 'timeout', 'deadline', 'process_at', 'process_in', 'unique_key', 'unique_ttl', 'priority', 'retention', 'group', 'expires_in', 'expires_at')
+    __slots__ = ('task_id', 'queue', 'type', 'payload', 'content_type', 'metadata', 'max_retry', 'timeout', 'deadline', 'process_at', 'process_in', 'unique_key', 'unique_ttl', 'priority', 'retention', 'group', 'expires_in', 'expires_at', 'depends_on')
 
     class MetadataEntry(_message.Message):
         __slots__ = ('key', 'value')
@@ -51,6 +51,7 @@ class EnqueueRequest(_message.Message):
     GROUP_FIELD_NUMBER: _ClassVar[int]
     EXPIRES_IN_FIELD_NUMBER: _ClassVar[int]
     EXPIRES_AT_FIELD_NUMBER: _ClassVar[int]
+    DEPENDS_ON_FIELD_NUMBER: _ClassVar[int]
     task_id: str
     queue: str
     type: str
@@ -69,8 +70,9 @@ class EnqueueRequest(_message.Message):
     group: str
     expires_in: _duration_pb2.Duration
     expires_at: _timestamp_pb2.Timestamp
+    depends_on: _containers.RepeatedCompositeFieldContainer[_task_pb2.TaskDependency]
 
-    def __init__(self, task_id: _Optional[str]=..., queue: _Optional[str]=..., type: _Optional[str]=..., payload: _Optional[bytes]=..., content_type: _Optional[str]=..., metadata: _Optional[_Mapping[str, str]]=..., max_retry: _Optional[int]=..., timeout: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., deadline: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., process_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., process_in: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., unique_key: _Optional[str]=..., unique_ttl: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., priority: _Optional[int]=..., retention: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., group: _Optional[str]=..., expires_in: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., expires_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=...) -> None:
+    def __init__(self, task_id: _Optional[str]=..., queue: _Optional[str]=..., type: _Optional[str]=..., payload: _Optional[bytes]=..., content_type: _Optional[str]=..., metadata: _Optional[_Mapping[str, str]]=..., max_retry: _Optional[int]=..., timeout: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., deadline: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., process_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., process_in: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., unique_key: _Optional[str]=..., unique_ttl: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., priority: _Optional[int]=..., retention: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., group: _Optional[str]=..., expires_in: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., expires_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., depends_on: _Optional[_Iterable[_Union[_task_pb2.TaskDependency, _Mapping]]]=...) -> None:
         ...
 
 class EnqueueResponse(_message.Message):
@@ -332,7 +334,7 @@ class ListQueuesResponse(_message.Message):
         ...
 
 class QueueInfo(_message.Message):
-    __slots__ = ('name', 'paused', 'scheduled', 'pending', 'active', 'retry', 'completed', 'archived', 'aggregating')
+    __slots__ = ('name', 'paused', 'scheduled', 'pending', 'active', 'retry', 'completed', 'archived', 'aggregating', 'blocked')
     NAME_FIELD_NUMBER: _ClassVar[int]
     PAUSED_FIELD_NUMBER: _ClassVar[int]
     SCHEDULED_FIELD_NUMBER: _ClassVar[int]
@@ -342,6 +344,7 @@ class QueueInfo(_message.Message):
     COMPLETED_FIELD_NUMBER: _ClassVar[int]
     ARCHIVED_FIELD_NUMBER: _ClassVar[int]
     AGGREGATING_FIELD_NUMBER: _ClassVar[int]
+    BLOCKED_FIELD_NUMBER: _ClassVar[int]
     name: str
     paused: bool
     scheduled: int
@@ -351,8 +354,9 @@ class QueueInfo(_message.Message):
     completed: int
     archived: int
     aggregating: int
+    blocked: int
 
-    def __init__(self, name: _Optional[str]=..., paused: bool=..., scheduled: _Optional[int]=..., pending: _Optional[int]=..., active: _Optional[int]=..., retry: _Optional[int]=..., completed: _Optional[int]=..., archived: _Optional[int]=..., aggregating: _Optional[int]=...) -> None:
+    def __init__(self, name: _Optional[str]=..., paused: bool=..., scheduled: _Optional[int]=..., pending: _Optional[int]=..., active: _Optional[int]=..., retry: _Optional[int]=..., completed: _Optional[int]=..., archived: _Optional[int]=..., aggregating: _Optional[int]=..., blocked: _Optional[int]=...) -> None:
         ...
 
 class PauseQueueRequest(_message.Message):

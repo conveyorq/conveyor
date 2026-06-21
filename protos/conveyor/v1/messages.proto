@@ -178,3 +178,12 @@ message ReapTick {}
 
 // GroupSweepTick triggers one firing pass on the group-aggregation sweeper.
 message GroupSweepTick {}
+
+// ResolveDependents asks a dependency resolver to reconcile the tasks waiting on
+// one just-finished task and wake any queue whose work became eligible. It is
+// dispatched off the gateway's turn so the resolving broker transaction never
+// blocks task delivery.
+message ResolveDependents {
+  // task_id is the finished task whose dependents are to be reconciled.
+  string task_id = 1;
+}

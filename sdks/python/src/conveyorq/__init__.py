@@ -40,7 +40,15 @@ from .mux import (
     Middleware,
     Mux,
 )
-from .options import EnqueueFn, EnqueueMiddleware, EnqueueOptions, TaskInfo, TaskState
+from .options import (
+    Dependency,
+    DependencyFailure,
+    EnqueueFn,
+    EnqueueMiddleware,
+    EnqueueOptions,
+    TaskInfo,
+    TaskState,
+)
 from .sync import SyncClient, SyncWorker
 from .task import Task, new_task
 from .worker import SDK_VERSION, Worker
@@ -60,6 +68,8 @@ __all__ = [
     "Encryptor",
     "EnqueueFn",
     "EnqueueMiddleware",
+    "Dependency",
+    "DependencyFailure",
     "EnqueueOptions",
     "Handler",
     "HandlerContext",

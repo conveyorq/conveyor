@@ -4,7 +4,7 @@ from google.protobuf.internal import containers as _containers
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
-from typing import ClassVar as _ClassVar, Mapping as _Mapping, Optional as _Optional, Union as _Union
+from typing import ClassVar as _ClassVar, Iterable as _Iterable, Mapping as _Mapping, Optional as _Optional, Union as _Union
 DESCRIPTOR: _descriptor.FileDescriptor
 
 class TaskState(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
@@ -18,6 +18,14 @@ class TaskState(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     TASK_STATE_ARCHIVED: _ClassVar[TaskState]
     TASK_STATE_CANCELED: _ClassVar[TaskState]
     TASK_STATE_AGGREGATING: _ClassVar[TaskState]
+    TASK_STATE_BLOCKED: _ClassVar[TaskState]
+
+class DependencyFailurePolicy(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    DEPENDENCY_FAILURE_POLICY_UNSPECIFIED: _ClassVar[DependencyFailurePolicy]
+    DEPENDENCY_FAILURE_POLICY_BLOCK: _ClassVar[DependencyFailurePolicy]
+    DEPENDENCY_FAILURE_POLICY_CASCADE_CANCEL: _ClassVar[DependencyFailurePolicy]
+    DEPENDENCY_FAILURE_POLICY_CONTINUE: _ClassVar[DependencyFailurePolicy]
 TASK_STATE_UNSPECIFIED: TaskState
 TASK_STATE_SCHEDULED: TaskState
 TASK_STATE_PENDING: TaskState
@@ -27,6 +35,21 @@ TASK_STATE_COMPLETED: TaskState
 TASK_STATE_ARCHIVED: TaskState
 TASK_STATE_CANCELED: TaskState
 TASK_STATE_AGGREGATING: TaskState
+TASK_STATE_BLOCKED: TaskState
+DEPENDENCY_FAILURE_POLICY_UNSPECIFIED: DependencyFailurePolicy
+DEPENDENCY_FAILURE_POLICY_BLOCK: DependencyFailurePolicy
+DEPENDENCY_FAILURE_POLICY_CASCADE_CANCEL: DependencyFailurePolicy
+DEPENDENCY_FAILURE_POLICY_CONTINUE: DependencyFailurePolicy
+
+class TaskDependency(_message.Message):
+    __slots__ = ('task_id', 'on_failure')
+    TASK_ID_FIELD_NUMBER: _ClassVar[int]
+    ON_FAILURE_FIELD_NUMBER: _ClassVar[int]
+    task_id: str
+    on_failure: DependencyFailurePolicy
+
+    def __init__(self, task_id: _Optional[str]=..., on_failure: _Optional[_Union[DependencyFailurePolicy, str]]=...) -> None:
+        ...
 
 class TaskEnvelope(_message.Message):
     __slots__ = ('id', 'queue', 'type', 'payload', 'content_type', 'metadata', 'options', 'retried', 'last_error', 'enqueued_at', 'started_at', 'completed_at')
@@ -69,7 +92,7 @@ class TaskEnvelope(_message.Message):
         ...
 
 class TaskOptions(_message.Message):
-    __slots__ = ('max_retry', 'timeout', 'deadline', 'process_at', 'unique_key', 'unique_ttl', 'retention', 'priority', 'group', 'expires_at')
+    __slots__ = ('max_retry', 'timeout', 'deadline', 'process_at', 'unique_key', 'unique_ttl', 'retention', 'priority', 'group', 'expires_at', 'depends_on')
     MAX_RETRY_FIELD_NUMBER: _ClassVar[int]
     TIMEOUT_FIELD_NUMBER: _ClassVar[int]
     DEADLINE_FIELD_NUMBER: _ClassVar[int]
@@ -80,6 +103,7 @@ class TaskOptions(_message.Message):
     PRIORITY_FIELD_NUMBER: _ClassVar[int]
     GROUP_FIELD_NUMBER: _ClassVar[int]
     EXPIRES_AT_FIELD_NUMBER: _ClassVar[int]
+    DEPENDS_ON_FIELD_NUMBER: _ClassVar[int]
     max_retry: int
     timeout: _duration_pb2.Duration
     deadline: _timestamp_pb2.Timestamp
@@ -90,6 +114,7 @@ class TaskOptions(_message.Message):
     priority: int
     group: str
     expires_at: _timestamp_pb2.Timestamp
+    depends_on: _containers.RepeatedCompositeFieldContainer[TaskDependency]
 
-    def __init__(self, max_retry: _Optional[int]=..., timeout: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., deadline: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., process_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., unique_key: _Optional[str]=..., unique_ttl: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., retention: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., priority: _Optional[int]=..., group: _Optional[str]=..., expires_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=...) -> None:
+    def __init__(self, max_retry: _Optional[int]=..., timeout: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., deadline: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., process_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., unique_key: _Optional[str]=..., unique_ttl: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., retention: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., priority: _Optional[int]=..., group: _Optional[str]=..., expires_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., depends_on: _Optional[_Iterable[_Union[TaskDependency, _Mapping]]]=...) -> None:
         ...

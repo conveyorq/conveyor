@@ -124,6 +124,8 @@ type enqueueOptions struct {
 	uniqueTTL time.Duration
 	// group makes the task an aggregation-group member.
 	group string
+	// dependsOn lists the tasks this task waits for before it becomes eligible.
+	dependsOn []Dependency
 }
 
 // TaskID assigns a client-chosen task id, making Enqueue retries

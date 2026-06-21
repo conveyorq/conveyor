@@ -12,7 +12,36 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file conveyor/v1/task.proto.
  */
 export const file_conveyor_v1_task: GenFile = /*@__PURE__*/
-  fileDesc("ChZjb252ZXlvci92MS90YXNrLnByb3RvEgtjb252ZXlvci52MSKtAwoMVGFza0VudmVsb3BlEgoKAmlkGAEgASgJEg0KBXF1ZXVlGAIgASgJEgwKBHR5cGUYAyABKAkSDwoHcGF5bG9hZBgEIAEoDBIUCgxjb250ZW50X3R5cGUYBSABKAkSOQoIbWV0YWRhdGEYBiADKAsyJy5jb252ZXlvci52MS5UYXNrRW52ZWxvcGUuTWV0YWRhdGFFbnRyeRIpCgdvcHRpb25zGAcgASgLMhguY29udmV5b3IudjEuVGFza09wdGlvbnMSDwoHcmV0cmllZBgIIAEoBRISCgpsYXN0X2Vycm9yGAkgASgJEi8KC2VucXVldWVkX2F0GAogASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIuCgpzdGFydGVkX2F0GAsgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIwCgxjb21wbGV0ZWRfYXQYDCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wGi8KDU1ldGFkYXRhRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASLCAgoLVGFza09wdGlvbnMSEQoJbWF4X3JldHJ5GAEgASgFEioKB3RpbWVvdXQYAiABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24SLAoIZGVhZGxpbmUYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi4KCnByb2Nlc3NfYXQYBCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhIKCnVuaXF1ZV9rZXkYBSABKAkSLQoKdW5pcXVlX3R0bBgGIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbhIsCglyZXRlbnRpb24YByABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24SEAoIcHJpb3JpdHkYCCABKAUSDQoFZ3JvdXAYCSABKAlKBAgKEBAq7gEKCVRhc2tTdGF0ZRIaChZUQVNLX1NUQVRFX1VOU1BFQ0lGSUVEEAASGAoUVEFTS19TVEFURV9TQ0hFRFVMRUQQARIWChJUQVNLX1NUQVRFX1BFTkRJTkcQAhIVChFUQVNLX1NUQVRFX0FDVElWRRADEhQKEFRBU0tfU1RBVEVfUkVUUlkQBBIYChRUQVNLX1NUQVRFX0NPTVBMRVRFRBAFEhcKE1RBU0tfU1RBVEVfQVJDSElWRUQQBhIXChNUQVNLX1NUQVRFX0NBTkNFTEVEEAcSGgoWVEFTS19TVEFURV9BR0dSRUdBVElORxAIYgZwcm90bzM", [file_google_protobuf_duration, file_google_protobuf_timestamp]);
+  fileDesc("ChZjb252ZXlvci92MS90YXNrLnByb3RvEgtjb252ZXlvci52MSJbCg5UYXNrRGVwZW5kZW5jeRIPCgd0YXNrX2lkGAEgASgJEjgKCm9uX2ZhaWx1cmUYAiABKA4yJC5jb252ZXlvci52MS5EZXBlbmRlbmN5RmFpbHVyZVBvbGljeSKtAwoMVGFza0VudmVsb3BlEgoKAmlkGAEgASgJEg0KBXF1ZXVlGAIgASgJEgwKBHR5cGUYAyABKAkSDwoHcGF5bG9hZBgEIAEoDBIUCgxjb250ZW50X3R5cGUYBSABKAkSOQoIbWV0YWRhdGEYBiADKAsyJy5jb252ZXlvci52MS5UYXNrRW52ZWxvcGUuTWV0YWRhdGFFbnRyeRIpCgdvcHRpb25zGAcgASgLMhguY29udmV5b3IudjEuVGFza09wdGlvbnMSDwoHcmV0cmllZBgIIAEoBRISCgpsYXN0X2Vycm9yGAkgASgJEi8KC2VucXVldWVkX2F0GAogASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIuCgpzdGFydGVkX2F0GAsgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIwCgxjb21wbGV0ZWRfYXQYDCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wGi8KDU1ldGFkYXRhRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASKjAwoLVGFza09wdGlvbnMSEQoJbWF4X3JldHJ5GAEgASgFEioKB3RpbWVvdXQYAiABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24SLAoIZGVhZGxpbmUYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi4KCnByb2Nlc3NfYXQYBCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhIKCnVuaXF1ZV9rZXkYBSABKAkSLQoKdW5pcXVlX3R0bBgGIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbhIsCglyZXRlbnRpb24YByABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24SEAoIcHJpb3JpdHkYCCABKAUSDQoFZ3JvdXAYCSABKAkSLgoKZXhwaXJlc19hdBgKIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLwoKZGVwZW5kc19vbhgLIAMoCzIbLmNvbnZleW9yLnYxLlRhc2tEZXBlbmRlbmN5SgQIDBAQKoYCCglUYXNrU3RhdGUSGgoWVEFTS19TVEFURV9VTlNQRUNJRklFRBAAEhgKFFRBU0tfU1RBVEVfU0NIRURVTEVEEAESFgoSVEFTS19TVEFURV9QRU5ESU5HEAISFQoRVEFTS19TVEFURV9BQ1RJVkUQAxIUChBUQVNLX1NUQVRFX1JFVFJZEAQSGAoUVEFTS19TVEFURV9DT01QTEVURUQQBRIXChNUQVNLX1NUQVRFX0FSQ0hJVkVEEAYSFwoTVEFTS19TVEFURV9DQU5DRUxFRBAHEhoKFlRBU0tfU1RBVEVfQUdHUkVHQVRJTkcQCBIWChJUQVNLX1NUQVRFX0JMT0NLRUQQCSq/AQoXRGVwZW5kZW5jeUZhaWx1cmVQb2xpY3kSKQolREVQRU5ERU5DWV9GQUlMVVJFX1BPTElDWV9VTlNQRUNJRklFRBAAEiMKH0RFUEVOREVOQ1lfRkFJTFVSRV9QT0xJQ1lfQkxPQ0sQARIsCihERVBFTkRFTkNZX0ZBSUxVUkVfUE9MSUNZX0NBU0NBREVfQ0FOQ0VMEAISJgoiREVQRU5ERU5DWV9GQUlMVVJFX1BPTElDWV9DT05USU5VRRADYgZwcm90bzM", [file_google_protobuf_duration, file_google_protobuf_timestamp]);
+
+/**
+ * TaskDependency is one edge of a workflow: the enclosing task must wait for the
+ * referenced task to reach a terminal state before it becomes eligible to run.
+ *
+ * @generated from message conveyor.v1.TaskDependency
+ */
+export type TaskDependency = Message<"conveyor.v1.TaskDependency"> & {
+  /**
+   * task_id is the id of the task that must finish first.
+   *
+   * @generated from field: string task_id = 1;
+   */
+  taskId: string;
+
+  /**
+   * on_failure decides the dependent's fate if this dependency fails terminally.
+   *
+   * @generated from field: conveyor.v1.DependencyFailurePolicy on_failure = 2;
+   */
+  onFailure: DependencyFailurePolicy;
+};
+
+/**
+ * Describes the message conveyor.v1.TaskDependency.
+ * Use `create(TaskDependencySchema)` to create a new message.
+ */
+export const TaskDependencySchema: GenMessage<TaskDependency> = /*@__PURE__*/
+  messageDesc(file_conveyor_v1_task, 0);
 
 /**
  * TaskEnvelope is the internal, durable representation of a task.
@@ -118,7 +147,7 @@ export type TaskEnvelope = Message<"conveyor.v1.TaskEnvelope"> & {
  * Use `create(TaskEnvelopeSchema)` to create a new message.
  */
 export const TaskEnvelopeSchema: GenMessage<TaskEnvelope> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_task, 0);
+  messageDesc(file_conveyor_v1_task, 1);
 
 /**
  * TaskOptions captures the per-task execution options.
@@ -191,6 +220,28 @@ export type TaskOptions = Message<"conveyor.v1.TaskOptions"> & {
    * @generated from field: string group = 9;
    */
   group: string;
+
+  /**
+   * expires_at is the absolute time after which the task must not be
+   * dispatched: a task still waiting (scheduled, pending, or retrying) when
+   * this passes is archived instead of run. It is distinct from deadline,
+   * which cancels a task already running, and from retention, which purges a
+   * task already completed. Unset leaves the task with no expiry. The server
+   * resolves the relative EnqueueRequest.expires_in to this absolute time.
+   *
+   * @generated from field: google.protobuf.Timestamp expires_at = 10;
+   */
+  expiresAt?: Timestamp | undefined;
+
+  /**
+   * depends_on lists the tasks this task waits for. While any dependency has
+   * not reached a terminal success the task stays blocked and is not eligible
+   * to lease. An empty list (the default) leaves the task immediately eligible.
+   * Fan-in is a continuation that depends on every task of a fan-out batch.
+   *
+   * @generated from field: repeated conveyor.v1.TaskDependency depends_on = 11;
+   */
+  dependsOn: TaskDependency[];
 };
 
 /**
@@ -198,7 +249,7 @@ export type TaskOptions = Message<"conveyor.v1.TaskOptions"> & {
  * Use `create(TaskOptionsSchema)` to create a new message.
  */
 export const TaskOptionsSchema: GenMessage<TaskOptions> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_task, 1);
+  messageDesc(file_conveyor_v1_task, 2);
 
 /**
  * TaskState enumerates the lifecycle states of a task.
@@ -271,6 +322,15 @@ export enum TaskState {
    * @generated from enum value: TASK_STATE_AGGREGATING = 8;
    */
   AGGREGATING = 8,
+
+  /**
+   * TASK_STATE_BLOCKED is a task held until every task it depends on reaches a
+   * terminal success. It is not eligible to lease while blocked; completing the
+   * last dependency promotes it to pending (or scheduled, if it is also delayed).
+   *
+   * @generated from enum value: TASK_STATE_BLOCKED = 9;
+   */
+  BLOCKED = 9,
 }
 
 /**
@@ -278,4 +338,49 @@ export enum TaskState {
  */
 export const TaskStateSchema: GenEnum<TaskState> = /*@__PURE__*/
   enumDesc(file_conveyor_v1_task, 0);
+
+/**
+ * DependencyFailurePolicy decides what happens to a dependent task when one of
+ * the tasks it depends on fails terminally (archived or canceled).
+ *
+ * @generated from enum conveyor.v1.DependencyFailurePolicy
+ */
+export enum DependencyFailurePolicy {
+  /**
+   * DEPENDENCY_FAILURE_POLICY_UNSPECIFIED defaults to BLOCK.
+   *
+   * @generated from enum value: DEPENDENCY_FAILURE_POLICY_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * DEPENDENCY_FAILURE_POLICY_BLOCK keeps the dependent blocked indefinitely:
+   * the dependency never succeeded, so the dependent never becomes eligible.
+   *
+   * @generated from enum value: DEPENDENCY_FAILURE_POLICY_BLOCK = 1;
+   */
+  BLOCK = 1,
+
+  /**
+   * DEPENDENCY_FAILURE_POLICY_CASCADE_CANCEL cancels the dependent (and, in
+   * turn, its own dependents) when the dependency fails.
+   *
+   * @generated from enum value: DEPENDENCY_FAILURE_POLICY_CASCADE_CANCEL = 2;
+   */
+  CASCADE_CANCEL = 2,
+
+  /**
+   * DEPENDENCY_FAILURE_POLICY_CONTINUE treats the failed dependency as
+   * satisfied, so the dependent proceeds once its remaining dependencies clear.
+   *
+   * @generated from enum value: DEPENDENCY_FAILURE_POLICY_CONTINUE = 3;
+   */
+  CONTINUE = 3,
+}
+
+/**
+ * Describes the enum conveyor.v1.DependencyFailurePolicy.
+ */
+export const DependencyFailurePolicySchema: GenEnum<DependencyFailurePolicy> = /*@__PURE__*/
+  enumDesc(file_conveyor_v1_task, 1);
 

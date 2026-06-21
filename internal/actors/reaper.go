@@ -105,6 +105,19 @@ func (r *Reaper) maintain(ctx *goakt.ReceiveContext) {
 		r.runtime.Logger().Warn("archiving expired tasks failed", "error", err)
 	}
 
+	// Dependency safety net: promote any task whose dependencies have since
+	// reached a terminal state but that an inline resolution missed (a lost
+	// wake, an admin cancel, a node with no resolver pool), and wake the queues
+	// that received the freed work.
+	promoted, err := taskLog.PromoteReadyDependents(goCtx, limit)
+	if err != nil {
+		r.runtime.Logger().Warn("promoting ready dependents failed", "error", err)
+	}
+
+	for _, queue := range promoted {
+		wakeQueue(goCtx, ctx.ActorSystem(), r.runtime, queue, 0)
+	}
+
 	pending, err := taskLog.PendingCount(goCtx)
 	if err != nil {
 		// Do not report this error via ctx.Err: the reaper runs under the

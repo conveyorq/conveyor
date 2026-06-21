@@ -15,8 +15,20 @@ import {
   type TaskInfo as ProtoTaskInfo,
   TaskService,
 } from "./gen/conveyor/v1/service_pb.js";
-import { TaskState as ProtoTaskState } from "./gen/conveyor/v1/task_pb.js";
-import type { ClientOptions, EnqueueFn, EnqueueMiddleware, EnqueueOptions, TaskInfo, TaskState } from "./options.js";
+import {
+  DependencyFailurePolicy as ProtoDependencyFailurePolicy,
+  TaskState as ProtoTaskState,
+} from "./gen/conveyor/v1/task_pb.js";
+import type {
+  ClientOptions,
+  Dependency,
+  DependencyFailure,
+  EnqueueFn,
+  EnqueueMiddleware,
+  EnqueueOptions,
+  TaskInfo,
+  TaskState,
+} from "./options.js";
 import type { Task } from "./task.js";
 import { dateFromTimestamp, durationFromMs, timestampFromDate } from "./time.js";
 import { createTransport } from "./transport.js";
@@ -121,6 +133,7 @@ export class Client {
       ...(options.unique !== undefined ? { uniqueTtl: durationFromMs(options.unique) } : {}),
       ...(options.expiresIn !== undefined ? { expiresIn: durationFromMs(options.expiresIn) } : {}),
       ...(options.expiresAt !== undefined ? { expiresAt: timestampFromDate(options.expiresAt) } : {}),
+      ...(options.dependsOn !== undefined ? { dependsOn: options.dependsOn.map(dependencyToProto) } : {}),
     });
 
     try {
@@ -147,6 +160,32 @@ function derivedUniqueKey(type: string, payload: Uint8Array): string {
   return digest.digest("hex");
 }
 
+/**
+ * dependencyToProto normalizes a dependency option — a plain task id or a
+ * {@link Dependency} — into the wire form, defaulting the failure policy to
+ * block.
+ */
+function dependencyToProto(dependency: string | Dependency): { taskId: string; onFailure: ProtoDependencyFailurePolicy } {
+  const normalized = typeof dependency === "string" ? { taskId: dependency } : dependency;
+
+  return {
+    taskId: normalized.taskId,
+    onFailure: failurePolicyToProto(normalized.onFailure),
+  };
+}
+
+/** failurePolicyToProto maps a public failure policy to its wire enum value. */
+function failurePolicyToProto(policy: DependencyFailure | undefined): ProtoDependencyFailurePolicy {
+  switch (policy) {
+    case "cascade-cancel":
+      return ProtoDependencyFailurePolicy.CASCADE_CANCEL;
+    case "continue":
+      return ProtoDependencyFailurePolicy.CONTINUE;
+    default:
+      return ProtoDependencyFailurePolicy.BLOCK;
+  }
+}
+
 /** mapClientError maps a duplicate-task server error to {@link DuplicateTaskError}. */
 function mapClientError(error: unknown): unknown {
   if (error instanceof ConnectError && error.code === Code.AlreadyExists) {
@@ -166,6 +205,7 @@ const stateNames: Record<ProtoTaskState, TaskState> = {
   [ProtoTaskState.ARCHIVED]: "archived",
   [ProtoTaskState.CANCELED]: "canceled",
   [ProtoTaskState.AGGREGATING]: "aggregating",
+  [ProtoTaskState.BLOCKED]: "blocked",
 };
 
 /** taskInfoFromProto maps a wire TaskInfo to the SDK's plain view. */
