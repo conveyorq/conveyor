@@ -36,6 +36,11 @@ linters:
       checks: ["all", "-ST1000"]
   exclusions:
     generated: lax
+    # The examples live in the module but ship in no binary; like the test
+    # coverage run, CI does not lint them, so example clarity is never gated by
+    # the production linters.
+    paths:
+      - examples/
     presets:
       - comments
       - common-false-positives
@@ -55,6 +60,8 @@ formatters:
     - goimports
   exclusions:
     generated: lax
+    paths:
+      - examples/
 
 issues:
   max-issues-per-linter: 0

@@ -1,0 +1,80 @@
+# Postmark example workload for the Postgres-backed conveyord cluster stood up
+# by `make e2e` / `make postmark-demo` (namespace "conveyor", release "conveyor").
+#
+# It runs the application *inside* the cluster: two worker Deployments serving
+# the three queues and one producer Deployment driving a continuous workload,
+# all reaching the load-balanced API Service. The API token is read from the
+# conveyor-auth Secret the cluster setup already creates. The send is simulated,
+# so no SMTP credentials or egress are needed.
+#
+#   docker build -f examples/postmark/deploy/Dockerfile -t postmark:e2e .
+#   kind load docker-image postmark:e2e --name conveyor-e2e
+#   kubectl -n conveyor apply -f examples/postmark/deploy/postmark.yaml
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postmark-worker
+  labels:
+    app: postmark-worker
+spec:
+  # Two workers so weighted dispatch visibly splits work across sessions.
+  replicas: 2
+  selector:
+    matchLabels:
+      app: postmark-worker
+  template:
+    metadata:
+      labels:
+        app: postmark-worker
+    spec:
+      containers:
+        - name: worker
+          image: postmark:e2e
+          imagePullPolicy: Never
+          # Cycle a simulated provider outage so the circuit breaker trips and
+          # recovers on a schedule, with no shell needed in the pod.
+          command: ["/usr/local/bin/worker", "--outage-every=4m", "--outage-for=40s"]
+          env:
+            # Attach to one node by its stable headless DNS, instead of the
+            # load-balanced Service, so the dashboard (forwarded to that same
+            # node) shows these worker sessions. The dashboard's Workers panel is
+            # per-node; worker session location does not affect task
+            # distribution or failover, which the broker and cluster handle.
+            - name: CONVEYOR_ADDR
+              value: "http://conveyor-0.conveyor-headless.conveyor.svc:8080"
+            - name: CONVEYOR_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: conveyor-auth
+                  key: auth-tokens
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postmark-producer
+  labels:
+    app: postmark-producer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postmark-producer
+  template:
+    metadata:
+      labels:
+        app: postmark-producer
+    spec:
+      containers:
+        - name: producer
+          image: postmark:e2e
+          imagePullPolicy: Never
+          command: ["/usr/local/bin/producer", "--interval=300ms"]
+          env:
+            - name: CONVEYOR_ADDR
+              value: "http://conveyor.conveyor.svc:8080"
+            - name: CONVEYOR_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: conveyor-auth
+                  key: auth-tokens

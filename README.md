@@ -22,7 +22,8 @@ and priorities, backed by Postgres or an in-memory broker, with **no Redis and n
 ## Contents
 
 - [Features](#features)
-- [Quickstart](#quickstart) · [Try it with Docker](#try-it-with-docker)
+- [How it compares](#how-it-compares)
+- [Examples](#examples)
 - [How it works](#how-it-works)
 - [Writing a worker](#writing-a-worker)
 - [Enqueueing work](#enqueueing-work)
@@ -81,55 +82,109 @@ and priorities, backed by Postgres or an in-memory broker, with **no Redis and n
 - **Prometheus metrics** and **OpenTelemetry traces** out of the box.
 - **Lifecycle events**: subscribe to a live push stream of task state transitions
   (enqueued, leased, completed, retried, archived, …) over the API or the
-  `conveyor events` CLI, or have the server POST them to a **webhook** — for
+  `conveyor events` CLI, or have the server POST them to a **webhook** for
   dashboards, alerting, audit logs, and event-driven chaining, without polling.
 
-## Quickstart
+## How it compares
 
-Terminal 1: start a development server (in-memory broker, auth off):
+Conveyor is one of Go's durable task queues. Its closest peers are
+[asynq](https://github.com/hibiken/asynq) (Redis-backed) and
+[River](https://github.com/riverqueue/river) (Postgres-backed). Conveyor is
+Postgres-first like River, but ships as a clustered **server** with a
+language-neutral wire protocol and **push-based** dispatch, and it also runs
+embedded inside a Go process.
+
+| Capability | Conveyor | asynq | River |
+|---|:---:|:---:|:---:|
+| Primary store | Postgres or in-memory | Redis | Postgres |
+| Runs as | Server and embedded library | Library | Library |
+| Dispatch | Push (streaming) | Poll | Poll plus `LISTEN`/`NOTIFY` |
+| HA / failover | Built-in clustering; a lost node's work re-activates elsewhere | Via Redis (Sentinel/Cluster) | Postgres advisory-lock leader election |
+| Transactional enqueue | ✗ | ✗ | ✓ ¹ |
+| SDK languages | Go, TypeScript, Python | Go | Go |
+| Weighted queues | ✓ | ✓ | ✗ |
+| Per-task priority | ✓ (1 to 9) | ✗ (queue weights) | ✓ |
+| Delayed / scheduled | ✓ | ✓ | ✓ |
+| Cron / periodic | ✓ (server-persisted, survives failover) | ✓ (in code) | ✓ (in code) |
+| Unique tasks | ✓ | ✓ | ✓ |
+| Retries with backoff | ✓ | ✓ | ✓ |
+| Dead-letter / archive | ✓ | ✓ | ✓ |
+| Pause / resume queues | ✓ | ✓ | ✓ |
+| Rate limiting | ✓ (per-queue, live) | DIY ² | ✗ |
+| Per-key concurrency | ✓ | ✗ | ✗ |
+| Circuit breaker | ✓ (per task type) | ✗ | ✗ |
+| Task dependencies (workflows) | ✓ (chains, fan-out/in) | ✗ | Pro ³ |
+| Group aggregation / batching | ✓ | ✓ | ✗ |
+| End-to-end payload encryption | ✓ | ✗ | ✗ |
+| Lifecycle events / webhooks | ✓ | ✗ | ✗ |
+| Web operations UI | Embedded, read and write | asynqmon | riverui |
+
+¹ River commits the job inside *your* database transaction (`InsertTx`), so the
+job and your data commit atomically. Conveyor's broker is owned by the server,
+so an enqueue is durable but not part of your application transaction. If you
+need that atomicity, use the
+[outbox pattern](https://microservices.io/patterns/data/transactional-outbox.html)
+or stay on River. It is the main reason to pick River; see
+[migrating from River](docs/migrate-from-river.md).
+² asynq rate limiting is the `RateLimitError` pattern (you supply the limiter),
+not a built-in server-side limiter.
+³ Workflow DAGs are a commercial River Pro feature, not part of the OSS core.
+
+The table reflects each project's open-source core at the time of writing; all
+three are actively developed, so check upstream for changes (corrections welcome
+via a PR). For durable, long-running *business* workflows (sagas, multi-day
+orchestrations), a workflow engine such as Temporal or Cadence is a different and
+complementary category: Conveyor is a task queue, not a workflow engine.
+
+## Examples
+
+Runnable examples live in [`examples/`](examples). Start with Postmark for the
+full picture, or Standalone for the smallest local loop.
+
+### Postmark: the full system on Kubernetes
+
+[`examples/postmark`](examples/postmark) is the flagship: a transactional email
+and notification platform on a Postgres-backed, three-node cluster. One command
+builds the images, stands up the cluster, deploys the workers and producer,
+configures the queues and cron, and opens the dashboard:
 
 ```sh
-go run ./cmd/conveyord --dev
+make postmark-demo
 ```
 
-Terminal 2: run a worker:
+It runs nearly every feature under continuous load: weighted queues, per-task
+priority, retries with backoff, dead-lettering, the circuit breaker, cron,
+per-key concurrency, and crash-safe failover. Drive it with make targets while
+it runs:
 
 ```sh
-go run ./examples/standalone/worker
+make postmark-stats        # per-queue depth and pause flags
+make postmark-pause        # stop marketing sends; transactional keeps flowing
+make postmark-kill-node    # delete a node and watch zero task loss
+make postmark-archived     # the dead-letter queue (hard-bounce mail)
+make postmark-clean        # tear it all down
 ```
 
-Terminal 3: enqueue ten welcome emails:
+It needs docker, kind, kubectl, and helm. The
+[Postmark README](examples/postmark) has the guided tour.
+
+### Standalone: the smallest local loop
+
+[`examples/standalone`](examples/standalone) is one `conveyord`, one worker, and
+one client, in three terminals:
 
 ```sh
-go run ./examples/standalone/client
+go run ./cmd/conveyord --dev          # 1: server (in-memory broker, auth off)
+go run ./examples/standalone/worker   # 2: worker
+go run ./examples/standalone/client   # 3: enqueue ten welcome emails
 ```
 
-The worker prints one line per processed task. The whole flow is scripted
-in [`hack/quickstart.sh`](hack/quickstart.sh) (`make quickstart`), which CI
-runs on every change under a 60-second budget.
+### More
 
-### Try it with Docker
-
-Prebuilt multi-arch images are published to the GitHub Container Registry on
-every push to `main` (`:edge`) and every release (`:vX.Y.Z`, `:latest`).
-
-Run a throwaway server (in-memory broker, auth off) in one line:
-
-```sh
-docker run --rm -p 8080:8080 ghcr.io/conveyorq/conveyor:edge --dev
-```
-
-Or bring up a realistic stack (server + Postgres) with Compose:
-
-```sh
-docker compose -f deploy/compose/quickstart.yaml up
-```
-
-Either way, conveyord serves its API on `http://localhost:8080` (with `/healthz`
-and `/readyz`); the Compose stack also serves metrics on
-`http://localhost:9464/metrics`. Both run the API without authentication for
-local evaluation; a real deployment sets `api.auth_tokens` (see the
-[operations guide](docs/operations.md#security)).
+- **[Embedded](examples/embedded)** runs the whole system in a single Go process
+  with no infrastructure (see [Embedded mode](#embedded-mode)).
+- **[TypeScript](examples/typescript)** and **[Python](examples/python)** are the
+  same worker-and-producer shape on the other two SDKs.
 
 ## How it works
 
@@ -416,8 +471,8 @@ a different-origin UI, and `api.grafana_url` for the metrics link. See the
   SDK/CLI so the server stores ciphertext only and holds no keys.
 - [Expiring tasks](docs/expiring-jobs.md): a pre-dispatch TTL, and how it
   differs from a deadline and from retention.
-- [Lifecycle events](docs/events.md): the push event stream and webhook sink —
-  event types, filtering, delivery semantics, and configuration.
+- [Lifecycle events](docs/events.md): the push event stream and webhook sink,
+  covering event types, filtering, delivery semantics, and configuration.
 - [Wire protocol](docs/protocol.md): the normative protocol spec for SDK
   authors building a Conveyor client or worker in another language.
 - [Go SDK](sdks/go/README.md): the reference client and worker for Go services.

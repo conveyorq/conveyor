@@ -27,6 +27,7 @@ readonly RELEASE="conveyor"
 readonly NAMESPACE="conveyor"
 readonly IMAGE="conveyor:e2e"
 readonly LOAD_IMAGE="conveyor-e2e-load:e2e"
+readonly POSTMARK_IMAGE="postmark:e2e"
 readonly REPLICAS=3
 readonly TOKEN="e2e-token"
 readonly DSN="postgres://conveyor:conveyor@postgres.${NAMESPACE}.svc:5432/conveyor?sslmode=disable"
@@ -162,9 +163,13 @@ dashboard=$(curl -fsS "http://localhost:18080/")
 grep -q 'id="root"' <<<"${dashboard}" || { echo "FAIL: dashboard not served at /"; exit 1; }
 kill "${dash_forward_pid}" >/dev/null 2>&1 || true
 
-log "building workload driver image ${LOAD_IMAGE}"
-docker build -f "${ROOT}/hack/e2e-load.Dockerfile" -t "${LOAD_IMAGE}" "${ROOT}"
-kind load docker-image "${LOAD_IMAGE}" --name "${CLUSTER}"
+# The generic rolling-restart driver image is only needed for the assertion and
+# generic-playground paths, not the Postmark playground, which ships its own.
+if [[ -z "${POSTMARK:-}" ]]; then
+  log "building workload driver image ${LOAD_IMAGE}"
+  docker build -f "${ROOT}/hack/e2e-load.Dockerfile" -t "${LOAD_IMAGE}" "${ROOT}"
+  kind load docker-image "${LOAD_IMAGE}" --name "${CLUSTER}"
+fi
 
 # ---------------------------------------------------------------------------
 # Playground mode (PLAYGROUND=1): run a *continuous* producer/worker and open
@@ -175,8 +180,30 @@ kind load docker-image "${LOAD_IMAGE}" --name "${CLUSTER}"
 if [[ -n "${PLAYGROUND:-}" ]]; then
   kill "${forward_pid}" >/dev/null 2>&1 || true
 
-  log "starting a continuous workload (producer + worker)"
-  kubectl -n "${NAMESPACE}" apply -f - <<YAML
+  if [[ -n "${POSTMARK:-}" ]]; then
+    # Postmark playground: the realistic notification-platform example running
+    # in-cluster against the Postgres-backed broker. Workers and a producer run
+    # as Deployments; queues and the weekly-digest cron are configured through
+    # the conveyor CLI shipped in the server image.
+    log "building the Postmark workload image ${POSTMARK_IMAGE}"
+    docker build -f "${ROOT}/examples/postmark/deploy/Dockerfile" -t "${POSTMARK_IMAGE}" "${ROOT}"
+    kind load docker-image "${POSTMARK_IMAGE}" --name "${CLUSTER}"
+
+    log "deploying the Postmark workers and producer"
+    kubectl -n "${NAMESPACE}" apply -f "${ROOT}/examples/postmark/deploy/postmark.yaml"
+    kubectl -n "${NAMESPACE}" rollout status deployment/postmark-worker --timeout 180s
+    kubectl -n "${NAMESPACE}" rollout status deployment/postmark-producer --timeout 180s
+
+    log "configuring per-tenant concurrency, the marketing rate limit, and the weekly-digest cron"
+    kubectl -n "${NAMESPACE}" exec "${RELEASE}-0" -- \
+      conveyor concurrency set marketing --max 2 --addr http://localhost:8080 --token "${TOKEN}"
+    kubectl -n "${NAMESPACE}" exec "${RELEASE}-0" -- \
+      conveyor ratelimit set marketing --rate 20 --burst 5 --addr http://localhost:8080 --token "${TOKEN}"
+    kubectl -n "${NAMESPACE}" exec "${RELEASE}-0" -- \
+      conveyor cron add weekly-digest "0 * * * * *" digest:weekly --queue default --addr http://localhost:8080 --token "${TOKEN}"
+  else
+    log "starting a continuous workload (producer + worker)"
+    kubectl -n "${NAMESPACE}" apply -f - <<YAML
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -198,14 +225,44 @@ spec:
             - { name: CONVEYOR_ADDR, value: "http://${RELEASE}.${NAMESPACE}.svc:8080" }
             - { name: CONVEYOR_TOKEN, value: "${TOKEN}" }
 YAML
+  fi
+
+  # The Postmark dashboard opens already authenticated: the UI reads ?token= on
+  # first load, stores it client-side, and strips it from the URL. Other modes
+  # show the token to type in.
+  dashboard_url="http://localhost:8080/"
+  forward_target="svc/${RELEASE}"
+  if [[ -n "${POSTMARK:-}" ]]; then
+    dashboard_url="http://localhost:8080/?token=${TOKEN}"
+    # Forward to the same node the workers attach to (conveyor-0), so the
+    # dashboard's per-node Workers panel shows their sessions. Queue, task, and
+    # cron panels are cluster-wide regardless of which node serves them.
+    forward_target="pod/${RELEASE}-0"
+  fi
 
   log "opening the live dashboard"
-  kubectl -n "${NAMESPACE}" port-forward "svc/${RELEASE}" 8080:8080 >/dev/null 2>&1 &
+  kubectl -n "${NAMESPACE}" port-forward "${forward_target}" 8080:8080 >/dev/null 2>&1 &
   forward_pid=$!
   sleep 3
-  if command -v open >/dev/null 2>&1; then open http://localhost:8080/; elif command -v xdg-open >/dev/null 2>&1; then xdg-open http://localhost:8080/; fi
-  printf '\nDashboard live at http://localhost:8080/  (API token: %s)\n' "${TOKEN}"
-  printf 'Turn on "Auto-refresh" in the UI to watch tasks flow. Ctrl-C to stop.\n\n'
+  if command -v open >/dev/null 2>&1; then open "${dashboard_url}"; elif command -v xdg-open >/dev/null 2>&1; then xdg-open "${dashboard_url}"; fi
+
+  if [[ -n "${POSTMARK:-}" ]]; then
+    printf '\nDashboard live at http://localhost:8080/  (opens pre-authenticated)\n'
+  else
+    printf '\nDashboard live at http://localhost:8080/  (API token: %s)\n' "${TOKEN}"
+  fi
+  printf 'Turn on "Auto-refresh" in the UI to watch tasks flow. Ctrl-C to stop.\n'
+
+  if [[ -n "${POSTMARK:-}" ]]; then
+    printf '\nThings to try (in another terminal):\n'
+    printf '  make postmark-pause       # stop all marketing sends; transactional keeps flowing\n'
+    printf '  make postmark-resume      # resume marketing\n'
+    printf '  make postmark-kill-node   # delete a node and watch zero task loss\n'
+    printf '  make postmark-archived    # the dead-letter queue (hard-bounce mail)\n'
+    printf '  make postmark-events      # stream lifecycle events\n'
+    printf '  the workers cycle a provider outage every 4m for 40s, tripping the breaker\n'
+    printf '\nTear down: Ctrl-C here, or  make postmark-clean\n\n'
+  fi
 
   # Ctrl-C is the documented way to stop the demo, so treat SIGINT/SIGTERM as a
   # clean exit. The EXIT trap still tears the cluster down; without this, the

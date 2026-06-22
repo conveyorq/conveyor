@@ -42,7 +42,7 @@ COPYRIGHT_HOLDER   := ConveyorQ
 GO_SOURCES         := $(shell find . -path ./vendor -prune -o -name '*.go' -print)
 ADDLICENSE         := GOFLAGS= $(GO) run github.com/google/addlicense@$(ADDLICENSE_VERSION) -l apache -s -c "$(COPYRIGHT_HOLDER)"
 
-.PHONY: help all image build test lint lint-go lint-ts lint-py license-check license-fix licenses proto proto-format proto-lint proto-breaking quickstart chaos e2e e2e-clean e2e-dashboard e2e-demo benchmark helm-lint release clean dashboard dashboard-gen dashboard-test sdk-gen sdk-ts-gen sdk-ts-test sdk-py-gen sdk-py-test
+.PHONY: help all image build test lint lint-go lint-ts lint-py license-check license-fix licenses proto proto-format proto-lint proto-breaking quickstart chaos e2e e2e-clean e2e-dashboard e2e-demo postmark-demo postmark-stats postmark-pause postmark-resume postmark-archived postmark-events postmark-kill-node postmark-down postmark-clean benchmark helm-lint release clean dashboard dashboard-gen dashboard-test sdk-gen sdk-ts-gen sdk-ts-test sdk-py-gen sdk-py-test
 
 help: ## Show available targets
 	@awk 'BEGIN{FS=":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -146,6 +146,42 @@ e2e-dashboard: ## Open the e2e dashboard in a browser (run after KEEP=1 make e2e
 
 e2e-demo: ## One command: stand up a cluster with continuous load and open the live dashboard
 	PLAYGROUND=1 ./hack/e2e-kind.sh
+
+postmark-demo: ## Run the Postmark example app in-cluster (Postgres broker) and open the live dashboard
+	PLAYGROUND=1 POSTMARK=1 ./hack/e2e-kind.sh
+
+# Postmark demo operations. These act on the cluster `make postmark-demo` stands
+# up, driving the admin API through the conveyor CLI shipped in the server image.
+POSTMARK_MANIFEST    = examples/postmark/deploy/postmark.yaml
+POSTMARK_ADMIN       = kubectl -n $(E2E_NAMESPACE) exec $(E2E_RELEASE)-0 -- conveyor
+POSTMARK_ADMIN_FLAGS = --addr http://localhost:8080 --token $(E2E_TOKEN)
+
+postmark-stats: ## Postmark: print per-queue state counts and pause flags
+	$(POSTMARK_ADMIN) stats $(POSTMARK_ADMIN_FLAGS)
+
+postmark-pause: ## Postmark: pause the marketing queue (the "stop all marketing now" incident button)
+	$(POSTMARK_ADMIN) queues pause marketing $(POSTMARK_ADMIN_FLAGS)
+
+postmark-resume: ## Postmark: resume the marketing queue
+	$(POSTMARK_ADMIN) queues resume marketing $(POSTMARK_ADMIN_FLAGS)
+
+postmark-archived: ## Postmark: list dead-lettered (archived) tasks (the hard-bounce mail)
+	$(POSTMARK_ADMIN) tasks list --state archived $(POSTMARK_ADMIN_FLAGS)
+
+postmark-events: ## Postmark: stream task lifecycle events until interrupted
+	$(POSTMARK_ADMIN) events $(POSTMARK_ADMIN_FLAGS)
+
+postmark-kill-node: ## Postmark: delete a server pod to demonstrate crash-safe failover (zero task loss)
+	kubectl -n $(E2E_NAMESPACE) delete pod $(E2E_RELEASE)-1
+
+postmark-down: ## Postmark: remove the workload and its config, leaving the cluster running
+	kubectl -n $(E2E_NAMESPACE) delete -f $(POSTMARK_MANIFEST) --ignore-not-found
+	-$(POSTMARK_ADMIN) cron pause weekly-digest $(POSTMARK_ADMIN_FLAGS)
+	-$(POSTMARK_ADMIN) concurrency rm marketing $(POSTMARK_ADMIN_FLAGS)
+	-$(POSTMARK_ADMIN) ratelimit rm marketing $(POSTMARK_ADMIN_FLAGS)
+
+postmark-clean: ## Postmark: tear down the throwaway demo cluster entirely
+	kind delete cluster --name $(E2E_CLUSTER)
 
 # Throughput/latency harness on the in-memory broker (no infra). See
 # benchmark/README.md for the Postgres invocation and the honesty notes.
