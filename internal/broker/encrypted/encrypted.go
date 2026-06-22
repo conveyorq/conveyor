@@ -28,6 +28,7 @@ import (
 
 	"github.com/conveyorq/conveyor/encryption"
 	"github.com/conveyorq/conveyor/internal/broker"
+	"github.com/conveyorq/conveyor/internal/events"
 	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 )
 
@@ -339,6 +340,13 @@ func (e *encryptedBroker) UpdateCronNextRun(ctx context.Context, id string, expe
 // DeleteCronEntry delegates to the wrapped broker.
 func (e *encryptedBroker) DeleteCronEntry(ctx context.Context, id string) error {
 	return e.inner.DeleteCronEntry(ctx, id)
+}
+
+// SetEventSink delegates to the wrapped broker. Lifecycle events carry no
+// payload or result bytes, so there is nothing to encrypt: the wrapped broker
+// emits the same events whether or not it is wrapped.
+func (e *encryptedBroker) SetEventSink(sink events.Sink) {
+	e.inner.SetEventSink(sink)
 }
 
 // Close delegates to the wrapped broker.

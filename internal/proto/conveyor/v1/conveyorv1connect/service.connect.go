@@ -112,6 +112,9 @@ const (
 	AdminServiceListWorkerSessionsProcedure = "/conveyor.v1.AdminService/ListWorkerSessions"
 	// AdminServiceBrokerInfoProcedure is the fully-qualified name of the AdminService's BrokerInfo RPC.
 	AdminServiceBrokerInfoProcedure = "/conveyor.v1.AdminService/BrokerInfo"
+	// AdminServiceWatchEventsProcedure is the fully-qualified name of the AdminService's WatchEvents
+	// RPC.
+	AdminServiceWatchEventsProcedure = "/conveyor.v1.AdminService/WatchEvents"
 )
 
 // TaskServiceClient is a client for the conveyor.v1.TaskService service.
@@ -357,6 +360,13 @@ type AdminServiceClient interface {
 	// BrokerInfo reports the storage engine's driver and runtime statistics,
 	// the analogue of a backing-store health page.
 	BrokerInfo(context.Context, *connect.Request[v1.BrokerInfoRequest]) (*connect.Response[v1.BrokerInfoResponse], error)
+	// WatchEvents streams task lifecycle transitions as they occur, replacing
+	// polling for live dashboards, alerting, audit logs, and event-driven
+	// chaining. Delivery is best-effort and non-durable: a watcher receives
+	// events from the moment it subscribes, and a watcher too slow to keep up
+	// has events dropped rather than stalling task processing. The optional
+	// queue and event-type filters narrow the stream server-side.
+	WatchEvents(context.Context, *connect.Request[v1.WatchEventsRequest]) (*connect.ServerStreamForClient[v1.TaskEvent], error)
 }
 
 // NewAdminServiceClient constructs a client for the conveyor.v1.AdminService service. By default,
@@ -526,6 +536,12 @@ func NewAdminServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(adminServiceMethods.ByName("BrokerInfo")),
 			connect.WithClientOptions(opts...),
 		),
+		watchEvents: connect.NewClient[v1.WatchEventsRequest, v1.TaskEvent](
+			httpClient,
+			baseURL+AdminServiceWatchEventsProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("WatchEvents")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -557,6 +573,7 @@ type adminServiceClient struct {
 	clusterInfo                 *connect.Client[v1.ClusterInfoRequest, v1.ClusterInfoResponse]
 	listWorkerSessions          *connect.Client[v1.ListWorkerSessionsRequest, v1.ListWorkerSessionsResponse]
 	brokerInfo                  *connect.Client[v1.BrokerInfoRequest, v1.BrokerInfoResponse]
+	watchEvents                 *connect.Client[v1.WatchEventsRequest, v1.TaskEvent]
 }
 
 // ListQueues calls conveyor.v1.AdminService.ListQueues.
@@ -689,6 +706,11 @@ func (c *adminServiceClient) BrokerInfo(ctx context.Context, req *connect.Reques
 	return c.brokerInfo.CallUnary(ctx, req)
 }
 
+// WatchEvents calls conveyor.v1.AdminService.WatchEvents.
+func (c *adminServiceClient) WatchEvents(ctx context.Context, req *connect.Request[v1.WatchEventsRequest]) (*connect.ServerStreamForClient[v1.TaskEvent], error) {
+	return c.watchEvents.CallServerStream(ctx, req)
+}
+
 // AdminServiceHandler is an implementation of the conveyor.v1.AdminService service.
 type AdminServiceHandler interface {
 	ListQueues(context.Context, *connect.Request[v1.ListQueuesRequest]) (*connect.Response[v1.ListQueuesResponse], error)
@@ -732,6 +754,13 @@ type AdminServiceHandler interface {
 	// BrokerInfo reports the storage engine's driver and runtime statistics,
 	// the analogue of a backing-store health page.
 	BrokerInfo(context.Context, *connect.Request[v1.BrokerInfoRequest]) (*connect.Response[v1.BrokerInfoResponse], error)
+	// WatchEvents streams task lifecycle transitions as they occur, replacing
+	// polling for live dashboards, alerting, audit logs, and event-driven
+	// chaining. Delivery is best-effort and non-durable: a watcher receives
+	// events from the moment it subscribes, and a watcher too slow to keep up
+	// has events dropped rather than stalling task processing. The optional
+	// queue and event-type filters narrow the stream server-side.
+	WatchEvents(context.Context, *connect.Request[v1.WatchEventsRequest], *connect.ServerStream[v1.TaskEvent]) error
 }
 
 // NewAdminServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -897,6 +926,12 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(adminServiceMethods.ByName("BrokerInfo")),
 		connect.WithHandlerOptions(opts...),
 	)
+	adminServiceWatchEventsHandler := connect.NewServerStreamHandler(
+		AdminServiceWatchEventsProcedure,
+		svc.WatchEvents,
+		connect.WithSchema(adminServiceMethods.ByName("WatchEvents")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/conveyor.v1.AdminService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case AdminServiceListQueuesProcedure:
@@ -951,6 +986,8 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 			adminServiceListWorkerSessionsHandler.ServeHTTP(w, r)
 		case AdminServiceBrokerInfoProcedure:
 			adminServiceBrokerInfoHandler.ServeHTTP(w, r)
+		case AdminServiceWatchEventsProcedure:
+			adminServiceWatchEventsHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -1062,4 +1099,8 @@ func (UnimplementedAdminServiceHandler) ListWorkerSessions(context.Context, *con
 
 func (UnimplementedAdminServiceHandler) BrokerInfo(context.Context, *connect.Request[v1.BrokerInfoRequest]) (*connect.Response[v1.BrokerInfoResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("conveyor.v1.AdminService.BrokerInfo is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) WatchEvents(context.Context, *connect.Request[v1.WatchEventsRequest], *connect.ServerStream[v1.TaskEvent]) error {
+	return connect.NewError(connect.CodeUnimplemented, errors.New("conveyor.v1.AdminService.WatchEvents is not implemented"))
 }

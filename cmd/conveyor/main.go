@@ -24,6 +24,7 @@
 //	tasks run|cancel|delete <id>
 //	cron list | pause <id> | resume <id>
 //	cluster info
+//	events [--queue NAME]... [--type TYPE]...
 //
 // The server address and token come from --addr/--token or the
 // CONVEYOR_ADDR/CONVEYOR_TOKEN environment variables; flags win. The
@@ -144,6 +145,7 @@ CONVEYOR_ADDR/CONVEYOR_TOKEN environment variables; flags win.`,
 		newConcurrencyLimitCommand(conn),
 		newCronCommand(conn),
 		newClusterCommand(conn),
+		newEventsCommand(conn),
 	)
 
 	return root

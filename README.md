@@ -76,6 +76,10 @@ and priorities, backed by Postgres or an in-memory broker, with **no Redis and n
 - **Built-in operations dashboard**: an embedded web console to inspect and
   operate queues, tasks, cron, and connected workers; host it anywhere.
 - **Prometheus metrics** and **OpenTelemetry traces** out of the box.
+- **Lifecycle events**: subscribe to a live push stream of task state transitions
+  (enqueued, leased, completed, retried, archived, …) over the API or the
+  `conveyor events` CLI, or have the server POST them to a **webhook** — for
+  dashboards, alerting, audit logs, and event-driven chaining, without polling.
 
 ## Quickstart
 
@@ -409,6 +413,8 @@ a different-origin UI, and `api.grafana_url` for the metrics link. See the
   SDK/CLI so the server stores ciphertext only and holds no keys.
 - [Expiring tasks](docs/expiring-jobs.md): a pre-dispatch TTL, and how it
   differs from a deadline and from retention.
+- [Lifecycle events](docs/events.md): the push event stream and webhook sink —
+  event types, filtering, delivery semantics, and configuration.
 - [Wire protocol](docs/protocol.md): the normative protocol spec for SDK
   authors building a Conveyor client or worker in another language.
 - [Go SDK](sdks/go/README.md): the reference client and worker for Go services.

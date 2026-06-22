@@ -133,6 +133,9 @@ within a queue, and per-queue weights bias a worker that serves several queues.
   enqueue opens a span and stamps a W3C `traceparent` into the task; if your
   worker process has OpenTelemetry configured, its execution span links back to
   the enqueue.
+- **Lifecycle events.** A push stream of per-task state transitions for live
+  dashboards, alerting, audit logs, and event-driven chaining — see
+  [lifecycle events](events.md).
 - `conveyor cluster info` reports cluster membership.
 
 ## Upgrades & restarts

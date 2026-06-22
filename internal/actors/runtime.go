@@ -10,6 +10,7 @@
 package actors
 
 import (
+	"context"
 	"crypto/rand"
 	"log/slog"
 	"sync"
@@ -22,6 +23,7 @@ import (
 
 	"github.com/conveyorq/conveyor/internal/broker"
 	"github.com/conveyorq/conveyor/internal/clock"
+	"github.com/conveyorq/conveyor/internal/events"
 	"github.com/conveyorq/conveyor/internal/metrics"
 )
 
@@ -69,6 +71,12 @@ type Settings struct {
 	// RateLimitBurst is the global default token-bucket depth, paired with
 	// RateLimitRatePerSec.
 	RateLimitBurst int
+	// EventsEnabled gates the task lifecycle event stream. When false, no events
+	// are propagated and WatchEvents is unavailable.
+	EventsEnabled bool
+	// EventBufferSize is the per-watcher event-stream buffer depth; zero selects
+	// the events package default.
+	EventBufferSize int
 }
 
 // Counters are the core engine counters, safe for concurrent use. OTel
@@ -110,6 +118,10 @@ type Runtime struct {
 	counters *Counters
 	// metrics are the synchronous timing/canary instruments.
 	metrics *metrics.Engine
+	// eventBus fans task lifecycle events out to WatchEvents streams and the
+	// webhook sink on this node. The relay actor publishes into it; it is always
+	// present but only fed when events are enabled.
+	eventBus *events.EventBus
 
 	// idMutex guards idEntropy: lease and task ids are generated from any
 	// goroutine (API handlers, grains).
@@ -132,6 +144,10 @@ func NewRuntime(taskLog broker.Broker, timeSource clock.Clock, settings Settings
 		logger.Warn("registering engine metrics instruments failed", "error", err)
 	}
 
+	eventBus := events.NewEventBus(settings.EventBufferSize, func() {
+		instruments.EventDropped(context.Background())
+	})
+
 	return &Runtime{
 		broker:    taskLog,
 		clock:     timeSource,
@@ -139,6 +155,7 @@ func NewRuntime(taskLog broker.Broker, timeSource clock.Clock, settings Settings
 		logger:    logger,
 		counters:  &Counters{},
 		metrics:   instruments,
+		eventBus:  eventBus,
 		idEntropy: ulid.Monotonic(rand.Reader, 0),
 	}
 }
@@ -188,6 +205,11 @@ func (r *Runtime) Counters() *Counters {
 // Metrics returns the synchronous timing and canary instruments.
 func (r *Runtime) Metrics() *metrics.Engine {
 	return r.metrics
+}
+
+// EventBus returns the node-local lifecycle-event fan-out.
+func (r *Runtime) EventBus() *events.EventBus {
+	return r.eventBus
 }
 
 // NewID returns a fresh ULID derived from the injected clock.

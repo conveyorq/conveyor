@@ -35,6 +35,59 @@ enum TaskState {
   TASK_STATE_BLOCKED = 9;
 }
 
+// TaskEventType labels a task lifecycle transition emitted on the event stream.
+// It is the transition that occurred; the resulting TaskState rides alongside it
+// on the TaskEvent, so a watcher can filter on either the action or the state.
+enum TaskEventType {
+  TASK_EVENT_TYPE_UNSPECIFIED = 0;
+  // TASK_EVENT_TYPE_ENQUEUED is a task newly committed and due (or made due
+  // again: a promoted scheduled/blocked task that is now runnable).
+  TASK_EVENT_TYPE_ENQUEUED = 1;
+  // TASK_EVENT_TYPE_SCHEDULED is a task committed with a future process_at.
+  TASK_EVENT_TYPE_SCHEDULED = 2;
+  // TASK_EVENT_TYPE_LEASED is a task leased to a worker (now active).
+  TASK_EVENT_TYPE_LEASED = 3;
+  // TASK_EVENT_TYPE_COMPLETED is a task that executed successfully.
+  TASK_EVENT_TYPE_COMPLETED = 4;
+  // TASK_EVENT_TYPE_RETRIED is a failed attempt scheduled for a later retry.
+  TASK_EVENT_TYPE_RETRIED = 5;
+  // TASK_EVENT_TYPE_ARCHIVED is a dead-lettered task (retries exhausted, skipped,
+  // expired before dispatch, or canceled mid-execution).
+  TASK_EVENT_TYPE_ARCHIVED = 6;
+  // TASK_EVENT_TYPE_CANCELED is a waiting task canceled via the Admin API or by a
+  // failed dependency's cascade-cancel policy.
+  TASK_EVENT_TYPE_CANCELED = 7;
+  // TASK_EVENT_TYPE_RELEASED is an active task returned to pending without a retry
+  // penalty (graceful worker disconnect).
+  TASK_EVENT_TYPE_RELEASED = 8;
+}
+
+// TaskEvent is one task lifecycle transition delivered on the AdminService
+// WatchEvents stream and the optional webhook sink. It is a lightweight
+// notification: it carries the task's identity and new state, not its payload.
+// Delivery is best-effort and non-durable (fire-and-forget, at-least-once to
+// connected listeners); a slow watcher's missed events are dropped, never
+// buffered without bound.
+message TaskEvent {
+  // id is the task ULID the transition applies to.
+  string id = 1;
+  // queue is the task's queue.
+  string queue = 2;
+  // type is the handler routing key, e.g. "email:welcome".
+  string type = 3;
+  // state is the task's lifecycle state after the transition.
+  TaskState state = 4;
+  // event_type is the transition that occurred.
+  TaskEventType event_type = 5;
+  // occurred_at is when the transition was recorded, from the server clock.
+  google.protobuf.Timestamp occurred_at = 6;
+  // attempt is the task's retry count after the transition.
+  int32 attempt = 7;
+  // last_error is the most recent failure message, set on retried and archived
+  // transitions and empty otherwise.
+  string last_error = 8;
+}
+
 // DependencyFailurePolicy decides what happens to a dependent task when one of
 // the tasks it depends on fails terminally (archived or canceled).
 enum DependencyFailurePolicy {

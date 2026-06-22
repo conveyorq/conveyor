@@ -8,6 +8,21 @@ All notable changes to Conveyor are documented here. The format is based on
 
 ### Added
 
+- **Lifecycle events (stream + webhooks)**: a push channel for task state
+  transitions, so external systems react without polling. A server-streaming
+  `AdminService.WatchEvents` emits each transition (enqueued, scheduled, leased,
+  completed, retried, archived, canceled, released) carrying the task id, queue,
+  type, new state, timestamp, attempt, and last error; subscribe with the new
+  `conveyor events` CLI (`--queue`/`--type` filters) or the API. An optional
+  config-driven **webhook** sink POSTs the same events as JSON with retry and
+  backoff. Events originate in the broker (complete coverage, including the
+  reaper, scheduler, and dependency paths) and fan out cluster-wide over GoAkt's
+  topic pub/sub to a per-node bus; delivery is best-effort and non-durable, and a
+  slow watcher's events are dropped (counted by `conveyor_events_dropped`) rather
+  than stalling dispatch. Off by default in production (`events.enabled`; on in
+  `--dev`); when disabled the broker does no per-transition work. See
+  `docs/events.md`.
+
 - **Per-key concurrency limits**: cap how many tasks run at once per key,
   distinct from rate limiting (tasks/second). Tag a task with
   `conveyor.ConcurrencyKey("customer:42")` and set a per-queue limit with

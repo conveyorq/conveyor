@@ -11,6 +11,7 @@ import (
 	"io"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
@@ -634,6 +635,85 @@ func exactCronID(command string) cobra.PositionalArgs {
 
 		return nil
 	}
+}
+
+// taskEventTypePrefix is stripped from TaskEventType enum names for CLI input
+// and output, mapping TASK_EVENT_TYPE_LEASED to "leased".
+const taskEventTypePrefix = "TASK_EVENT_TYPE_"
+
+// newEventsCommand builds the events tail command: a long-lived subscription to
+// the server's lifecycle event stream, printing each transition as it arrives.
+func newEventsCommand(conn *connection) *cobra.Command {
+	var (
+		queues    []string
+		typeNames []string
+	)
+
+	command := &cobra.Command{
+		Use:   "events",
+		Short: "Stream task lifecycle events as they occur (until interrupted)",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			eventTypes, err := parseEventTypes(typeNames)
+			if err != nil {
+				return err
+			}
+
+			stream, err := conn.admin().WatchEvents(cmd.Context(), connect.NewRequest(&conveyorv1.WatchEventsRequest{
+				Queues:     queues,
+				EventTypes: eventTypes,
+			}))
+			if err != nil {
+				return err
+			}
+
+			table := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+			fmt.Fprintln(table, "TIME\tEVENT\tQUEUE\tTYPE\tID\tSTATE\tATTEMPT\tLAST_ERROR")
+			_ = table.Flush()
+
+			for stream.Receive() {
+				event := stream.Msg()
+				fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\n",
+					event.GetOccurredAt().AsTime().Format(time.RFC3339), eventTypeName(event.GetEventType()),
+					event.GetQueue(), event.GetType(), event.GetId(), stateName(event.GetState()),
+					event.GetAttempt(), orDash(event.GetLastError()))
+				_ = table.Flush()
+			}
+
+			return stream.Err()
+		},
+	}
+
+	flags := command.Flags()
+	flags.StringSliceVar(&queues, "queue", nil, "restrict to these queues (repeatable)")
+	flags.StringSliceVar(&typeNames, "type", nil,
+		"restrict to these event types: enqueued|scheduled|leased|completed|retried|archived|canceled|released (repeatable)")
+
+	return command
+}
+
+// parseEventTypes maps CLI event-type names to wire enums; an empty list means
+// no filter.
+func parseEventTypes(names []string) ([]conveyorv1.TaskEventType, error) {
+	eventTypes := make([]conveyorv1.TaskEventType, 0, len(names))
+
+	for _, name := range names {
+		enumName := taskEventTypePrefix + strings.ToUpper(name)
+
+		value, ok := conveyorv1.TaskEventType_value[enumName]
+		if !ok || value == int32(conveyorv1.TaskEventType_TASK_EVENT_TYPE_UNSPECIFIED) {
+			return nil, fmt.Errorf("unknown event type %q (use enqueued|scheduled|leased|completed|retried|archived|canceled|released)", name)
+		}
+
+		eventTypes = append(eventTypes, conveyorv1.TaskEventType(value))
+	}
+
+	return eventTypes, nil
+}
+
+// eventTypeName renders a wire event type as the CLI's lowercase name.
+func eventTypeName(eventType conveyorv1.TaskEventType) string {
+	return strings.ToLower(strings.TrimPrefix(eventType.String(), taskEventTypePrefix))
 }
 
 // parseTaskState maps a CLI state name to the wire enum; empty means no

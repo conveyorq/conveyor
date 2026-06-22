@@ -27,6 +27,8 @@ import (
 	"github.com/conveyorq/conveyor/internal/broker/memory"
 	"github.com/conveyorq/conveyor/internal/broker/postgres"
 	"github.com/conveyorq/conveyor/internal/clock"
+	"github.com/conveyorq/conveyor/internal/events"
+	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 	"github.com/conveyorq/conveyor/internal/proto/conveyor/v1/conveyorv1connect"
 	"github.com/conveyorq/conveyor/server/api"
 )
@@ -80,6 +82,9 @@ type Server struct {
 	metricsServer *http.Server
 	// metricsListener is the bound metrics listener; nil until Start succeeds.
 	metricsListener net.Listener
+	// webhook delivers lifecycle events to a configured HTTP endpoint; nil when
+	// no webhook URL is configured.
+	webhook *events.Webhook
 }
 
 // New assembles a Server from a validated configuration. All components
@@ -151,6 +156,8 @@ func (s *Server) Start(ctx context.Context) error {
 			RateLimitEnabled:    s.config.Engine.RateLimitEnabled,
 			RateLimitRatePerSec: s.config.Engine.RateLimitRatePerSec,
 			RateLimitBurst:      s.config.Engine.RateLimitBurst,
+			EventsEnabled:       s.config.Events.Enabled,
+			EventBufferSize:     s.config.Events.BufferSize,
 		},
 	})
 
@@ -159,6 +166,17 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	s.engine = engine
+
+	// Wire the broker to publish lifecycle transitions through the engine's
+	// cluster-topic sink, and start the optional webhook sink. Both are skipped
+	// when events are disabled.
+	if s.config.Events.Enabled {
+		taskLog.SetEventSink(engine.EventSink())
+
+		if err := s.startWebhook(); err != nil {
+			return err
+		}
+	}
 
 	if s.telemetry != nil {
 		// The worker service is built later in buildMux; read its session
@@ -237,6 +255,50 @@ func (s *Server) buildBroker(ctx context.Context) (broker.Broker, error) {
 	default:
 		return nil, fmt.Errorf("broker.driver: unknown driver %q", s.config.Broker.Driver)
 	}
+}
+
+// startWebhook starts the optional event webhook sink, subscribing it to the
+// engine's event bus. A blank URL leaves it disabled.
+func (s *Server) startWebhook() error {
+	hook := s.config.Events.Webhook
+	if hook.URL == "" {
+		return nil
+	}
+
+	eventTypes, err := parseEventTypes(hook.EventTypes)
+	if err != nil {
+		return err
+	}
+
+	s.webhook = events.NewWebhook(events.WebhookConfig{
+		URL:        hook.URL,
+		Timeout:    hook.Timeout,
+		MaxRetries: hook.MaxRetries,
+		Secret:     hook.Secret,
+		Filter:     events.NewFilter(hook.Queues, eventTypes),
+	}, s.logger)
+
+	s.webhook.Start(s.engine.EventBus())
+	s.logger.Info("event webhook enabled", "url", hook.URL)
+
+	return nil
+}
+
+// parseEventTypes resolves configured event-type names (proto enum names) to
+// their values, rejecting any unknown name.
+func parseEventTypes(names []string) ([]conveyorv1.TaskEventType, error) {
+	eventTypes := make([]conveyorv1.TaskEventType, 0, len(names))
+
+	for _, name := range names {
+		value, ok := conveyorv1.TaskEventType_value[name]
+		if !ok {
+			return nil, fmt.Errorf("events.webhook.event_types: unknown event type %q", name)
+		}
+
+		eventTypes = append(eventTypes, conveyorv1.TaskEventType(value))
+	}
+
+	return eventTypes, nil
 }
 
 // buildDiscovery constructs the configured cluster discovery provider.
@@ -425,6 +487,13 @@ func (s *Server) Stop(ctx context.Context) error {
 	s.logger.Info("conveyord stopping")
 
 	var errs []error
+
+	// Stop the webhook first so it unsubscribes from the event bus and no
+	// delivery is in flight while the engine winds down.
+	if s.webhook != nil {
+		s.webhook.Stop()
+		s.webhook = nil
+	}
 
 	// The drain must complete before the engine stops: GoAkt rejects all
 	// user messages once its stop sequence begins, after which gateways
