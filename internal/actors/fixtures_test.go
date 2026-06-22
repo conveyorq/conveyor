@@ -296,6 +296,9 @@ type mockGateway struct {
 	queue string
 	// capacity is the declared concurrency.
 	capacity int32
+	// weight is the declared dispatch weight for this queue; zero registers as
+	// the neutral weight one, matching an unweighted worker.
+	weight int32
 	// handler decides each execution's outcome; nil always succeeds.
 	handler func(task *conveyorv1.TaskEnvelope) error
 	// log optionally records dispatch order.
@@ -358,6 +361,7 @@ func (m *mockGateway) register(ctx *goakt.ReceiveContext) {
 		Queue:       m.queue,
 		GatewayName: m.name,
 		Capacity:    m.capacity,
+		Weight:      m.weight,
 	})
 	if err != nil {
 		ctx.Err(fmt.Errorf("registering gateway: %w", err))

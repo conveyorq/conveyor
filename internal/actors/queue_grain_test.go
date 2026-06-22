@@ -156,6 +156,20 @@ func TestRegisterGatewayGrantsInitialCredits(t *testing.T) {
 	require.Len(t, grain.gateways, 1)
 	require.EqualValues(t, 4, grain.gateways[0].credits)
 	require.Equal(t, 4, grain.totalCredits())
+	require.EqualValues(t, 1, grain.gateways[0].weight, "an omitted weight registers as the neutral weight one")
+}
+
+func TestRegisterGatewayStoresAndRefreshesWeight(t *testing.T) {
+	grain := &QueueGrain{runtime: newTestRuntime(t)}
+
+	grain.registerGateway(&conveyorv1.RegisterGateway{GatewayName: "gateway-1", Capacity: 4, Weight: 3})
+	require.EqualValues(t, 3, grain.gateways[0].weight, "a declared weight is stored")
+
+	grain.registerGateway(&conveyorv1.RegisterGateway{GatewayName: "gateway-1", Capacity: 4, Weight: 7})
+	require.EqualValues(t, 7, grain.gateways[0].weight, "re-registration refreshes the weight")
+
+	grain.registerGateway(&conveyorv1.RegisterGateway{GatewayName: "gateway-1", Capacity: 4, Weight: -2})
+	require.EqualValues(t, 1, grain.gateways[0].weight, "a non-positive weight clamps to one")
 }
 
 func TestRegisterGatewayReRegistrationDoesNotDoubleGrant(t *testing.T) {
@@ -224,6 +238,60 @@ func TestPickGatewayRoundRobinSkipsExhausted(t *testing.T) {
 	grain.gateways[0].credits = 0
 	grain.gateways[2].credits = 0
 	require.Nil(t, grain.pickGateway(), "no gateway with credits left")
+}
+
+// TestPickGatewayWeightedProportions proves the selection step alone hands out
+// turns in proportion to the declared weights: with weights 3 and 1 and credits
+// that never run out, a long run of picks splits exactly three to one and never
+// clusters a gateway's turns (smooth weighted round-robin).
+func TestPickGatewayWeightedProportions(t *testing.T) {
+	grain := &QueueGrain{runtime: newTestRuntime(t)}
+
+	grain.registerGateway(&conveyorv1.RegisterGateway{GatewayName: "heavy", Capacity: 1000, Weight: 3})
+	grain.registerGateway(&conveyorv1.RegisterGateway{GatewayName: "light", Capacity: 1000, Weight: 1})
+
+	counts := map[string]int{}
+
+	const picks = 400
+
+	maxRun := map[string]int{}
+	runOf := ""
+	runLen := 0
+
+	for range picks {
+		gateway := grain.pickGateway()
+		require.NotNil(t, gateway)
+		counts[gateway.name]++
+
+		if gateway.name == runOf {
+			runLen++
+		} else {
+			runOf, runLen = gateway.name, 1
+		}
+
+		maxRun[gateway.name] = max(maxRun[gateway.name], runLen)
+	}
+
+	require.Equal(t, 300, counts["heavy"], "weight 3 of 4 draws three quarters of the picks")
+	require.Equal(t, 100, counts["light"], "weight 1 of 4 draws one quarter of the picks")
+	require.LessOrEqual(t, maxRun["heavy"], 3, "smooth weighting must not cluster the heavy gateway's turns")
+}
+
+// TestPickGatewayWeightingExcludesExhausted confirms weighting only ranks
+// gateways that still have credits: a heavy gateway out of credits is skipped
+// entirely, so a lighter peer takes every pick rather than being starved.
+func TestPickGatewayWeightingExcludesExhausted(t *testing.T) {
+	grain := &QueueGrain{runtime: newTestRuntime(t)}
+
+	grain.registerGateway(&conveyorv1.RegisterGateway{GatewayName: "heavy", Capacity: 10, Weight: 5})
+	grain.registerGateway(&conveyorv1.RegisterGateway{GatewayName: "light", Capacity: 10, Weight: 1})
+	grain.gateways[0].credits = 0
+
+	for range 5 {
+		gateway := grain.pickGateway()
+		require.NotNil(t, gateway)
+		require.Equal(t, "light", gateway.name, "an exhausted heavy gateway is excluded from weighting")
+	}
 }
 
 func TestRemoveGatewayForgetsCredits(t *testing.T) {
@@ -444,6 +512,44 @@ func TestQueueGrainReleaseLeasedBrokerError(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, conveyorv1.TaskState_TASK_STATE_ACTIVE, state,
 		"a task whose release failed stays leased until the reaper reclaims it")
+}
+
+// TestQueueGrainWeightedDispatchTracksWeights drives the full dispatch path with
+// two gateways of different declared weights on one queue and asserts the
+// delivered task counts track the 3:1 weight ratio within tolerance. Both
+// gateways carry capacity well above their share of the stream, so the weighting
+// — not credit exhaustion — sets the proportions: credit flow control caps a
+// saturated gateway and spills its overflow to peers, which would equalize the
+// split and mask the weights. The guarantee under test is that while credits are
+// available, selection follows the declared weights.
+func TestQueueGrainWeightedDispatchTracksWeights(t *testing.T) {
+	const (
+		queue = "weighted"
+		total = 400
+	)
+
+	taskLog := memory.New(clock.System())
+	engine := startEngine(t, taskLog)
+
+	heavyLog := &dispatchLog{}
+	lightLog := &dispatchLog{}
+
+	spawnGateway(t, engine, &mockGateway{queue: queue, name: "heavy", capacity: 1000, weight: 3, log: heavyLog})
+	spawnGateway(t, engine, &mockGateway{queue: queue, name: "light", capacity: 1000, weight: 1, log: lightLog})
+
+	enqueueTasks(t, engine, queue, total)
+
+	require.Eventually(t, func() bool {
+		return len(heavyLog.snapshot())+len(lightLog.snapshot()) >= total
+	}, 30*time.Second, 20*time.Millisecond, "every enqueued task must be dispatched")
+
+	heavy, light := len(heavyLog.snapshot()), len(lightLog.snapshot())
+	require.Equal(t, total, heavy+light, "no task is dispatched twice")
+
+	// Expected split is 300:100. Allow a generous tolerance: a lease batch can
+	// straddle a credit boundary and shift a handful of tasks between gateways.
+	require.InDelta(t, 300, heavy, 40, "the weight-3 gateway draws ~three quarters of the stream")
+	require.InDelta(t, 100, light, 40, "the weight-1 gateway draws ~one quarter of the stream")
 }
 
 // concurrencyGrain builds a bare grain backed by a fake clock and empty memory

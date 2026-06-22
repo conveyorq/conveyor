@@ -34,6 +34,11 @@ message RegisterGateway {
   // batch_types are the task types this gateway's worker handles as batches,
   // so the grain dispatches a fired group only to a capable gateway.
   repeated string batch_types = 4;
+  // weight is the worker's declared dispatch weight for this queue. The grain
+  // distributes leased tasks across gateways in proportion to their weights, so
+  // a higher weight draws proportionally more work. A non-positive value (an
+  // older worker that predates weighted dispatch) is treated as weight one.
+  int32 weight = 5;
 }
 
 // GatewayCredit grants dispatch credits from a gateway to a queue grain.

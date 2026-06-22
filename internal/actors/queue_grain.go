@@ -41,6 +41,15 @@ type gatewayCredits struct {
 	capacity int32
 	// credits is the number of tasks the grain may still dispatch to it.
 	credits int32
+	// weight is the gateway's declared dispatch weight for this queue. Dispatch
+	// is proportional to weight: a gateway with twice the weight of a peer draws
+	// twice the share of leased tasks, credits permitting. Always at least one.
+	weight int32
+	// currentWeight is the smooth weighted round-robin accumulator. Each pick
+	// adds weight to every eligible gateway, selects the highest, then subtracts
+	// the eligible total from the winner. This spreads each gateway's turns
+	// evenly across the cycle rather than clustering them in bursts.
+	currentWeight int32
 	// batchTypes are the task types this gateway's worker handles as batches;
 	// a fired group dispatches only to a gateway advertising the group's type.
 	batchTypes []string
@@ -48,8 +57,9 @@ type gatewayCredits struct {
 
 // QueueGrain is the per-queue dispatcher: a virtual actor with exactly one
 // live activation cluster-wide. It leases due tasks from the broker when
-// gateways have credits and distributes them round-robin. All of its state
-// is disposable and rebuilt from the broker on activation.
+// gateways have credits and distributes them across gateways in proportion to
+// their declared weights. All of its state is disposable and rebuilt from the
+// broker on activation.
 type QueueGrain struct {
 	// runtime is the engine runtime, resolved from the system extension on
 	// activation.
@@ -64,8 +74,6 @@ type QueueGrain struct {
 	leasing bool
 	// gateways are the registered gateways in registration order.
 	gateways []*gatewayCredits
-	// nextGateway is the round-robin cursor into gateways.
-	nextGateway int
 	// limiter caps how fast this queue dispatches, or nil when the queue is
 	// unlimited. It is the queue's effective rate limit — its own override or
 	// the server's global default — rebuilt on activation and on change. The
@@ -118,7 +126,6 @@ func (x *QueueGrain) OnActivate(ctx context.Context, props *goakt.GrainProps) er
 	x.paused = paused
 	x.leasing = false
 	x.gateways = nil
-	x.nextGateway = 0
 	x.throttled = false
 	x.activeByKey = make(map[string]int)
 	x.inFlightKey = make(map[string]string)
@@ -331,9 +338,15 @@ func (x *QueueGrain) releaseConcurrencyKey(taskID string) {
 // equal to its capacity; a re-registration (heartbeat, relocation healing)
 // only refreshes the capacity so credits are never double-granted.
 func (x *QueueGrain) registerGateway(message *conveyorv1.RegisterGateway) {
+	// A non-positive weight (an older worker that predates weighted dispatch, or
+	// the proto zero value) is treated as the neutral weight one, so an
+	// unweighted fleet falls back to plain round-robin.
+	weight := max(message.GetWeight(), 1)
+
 	for _, gateway := range x.gateways {
 		if gateway.name == message.GetGatewayName() {
 			gateway.capacity = message.GetCapacity()
+			gateway.weight = weight
 			gateway.batchTypes = message.GetBatchTypes()
 
 			return
@@ -344,10 +357,11 @@ func (x *QueueGrain) registerGateway(message *conveyorv1.RegisterGateway) {
 		name:       message.GetGatewayName(),
 		capacity:   message.GetCapacity(),
 		credits:    message.GetCapacity(),
+		weight:     weight,
 		batchTypes: message.GetBatchTypes(),
 	})
 
-	x.runtime.Logger().Debug("gateway registered", "queue", x.queue, "gateway", message.GetGatewayName(), "capacity", message.GetCapacity())
+	x.runtime.Logger().Debug("gateway registered", "queue", x.queue, "gateway", message.GetGatewayName(), "capacity", message.GetCapacity(), "weight", weight)
 }
 
 // addCredits grants returned dispatch credits to a registered gateway,
@@ -602,19 +616,47 @@ func (x *QueueGrain) releaseLeased(ctx *goakt.GrainContext, leaseID string, task
 	}
 }
 
-// pickGateway returns the next gateway with credits in round-robin order,
+// pickGateway returns a gateway with credits chosen by weighted round-robin,
 // or nil when none has capacity left.
 func (x *QueueGrain) pickGateway() *gatewayCredits {
-	for range x.gateways {
-		gateway := x.gateways[x.nextGateway%len(x.gateways)]
-		x.nextGateway++
+	return x.selectWeightedGateway(func(gateway *gatewayCredits) bool {
+		return gateway.credits > 0
+	})
+}
 
-		if gateway.credits > 0 {
-			return gateway
+// selectWeightedGateway runs one step of smooth weighted round-robin over the
+// gateways the eligible predicate admits, returning the chosen gateway or nil
+// when none qualifies. Each step adds every eligible gateway's weight to its
+// running accumulator, selects the gateway with the highest accumulator, then
+// debits the eligible weight total from the winner. Across many steps each
+// gateway is chosen in proportion to its weight, with its turns spread evenly
+// rather than clustered. The accumulator sum is conserved at zero each step, so
+// restricting eligibility per call (credits, batch capability) keeps the scheme
+// stable as the eligible set shifts.
+func (x *QueueGrain) selectWeightedGateway(eligible func(*gatewayCredits) bool) *gatewayCredits {
+	var selected *gatewayCredits
+	var total int32
+
+	for _, gateway := range x.gateways {
+		if !eligible(gateway) {
+			continue
+		}
+
+		gateway.currentWeight += gateway.weight
+		total += gateway.weight
+
+		if selected == nil || gateway.currentWeight > selected.currentWeight {
+			selected = gateway
 		}
 	}
 
-	return nil
+	if selected == nil {
+		return nil
+	}
+
+	selected.currentWeight -= total
+
+	return selected
 }
 
 // broadcastCancel forwards an admin cancel request for an active task to

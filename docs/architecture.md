@@ -101,10 +101,12 @@ It reacts to wakes (`TasksAvailable`), gateway registrations and credits, and
 completion messages. Its core loop, `maybeLease`, runs whenever the queue is
 unpaused, no lease cycle is already in flight, and credits are available: it
 leases up to `min(credits, batchMax)` due tasks (further capped by available
-rate-limiter tokens), then distributes them **round-robin** across the
-registered gateways, decrementing one credit per dispatched task. Leasing
-happens off the mailbox turn via `PipeToSelf` so the grain never blocks on the
-broker.
+rate-limiter tokens), then distributes them across the registered gateways in
+proportion to their declared weights (smooth weighted round-robin over the
+gateways that still have credits), decrementing one credit per dispatched task.
+A gateway that declared no weight counts as weight one, so an unweighted fleet
+falls back to plain round-robin. Leasing happens off the mailbox turn via
+`PipeToSelf` so the grain never blocks on the broker.
 
 ### Gateway (`gateway.go`): actor (one per worker session)
 
