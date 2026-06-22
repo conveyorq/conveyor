@@ -13,6 +13,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/conveyorq/conveyor/internal/events"
 	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 )
 
@@ -424,6 +425,11 @@ type Broker interface {
 
 	// DeleteCronEntry removes an entry; deleting an absent id is a no-op.
 	DeleteCronEntry(ctx context.Context, id string) error
+
+	// SetEventSink wires the lifecycle-event sink that receives a TaskEvent on
+	// every state transition. It is set once at startup before the broker serves
+	// traffic; a nil sink disables emission. The sink must be non-blocking.
+	SetEventSink(sink events.Sink)
 
 	// Close releases the broker's resources.
 	Close() error

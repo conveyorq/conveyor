@@ -69,6 +69,13 @@ service AdminService {
   // BrokerInfo reports the storage engine's driver and runtime statistics,
   // the analogue of a backing-store health page.
   rpc BrokerInfo(BrokerInfoRequest) returns (BrokerInfoResponse) {}
+  // WatchEvents streams task lifecycle transitions as they occur, replacing
+  // polling for live dashboards, alerting, audit logs, and event-driven
+  // chaining. Delivery is best-effort and non-durable: a watcher receives
+  // events from the moment it subscribes, and a watcher too slow to keep up
+  // has events dropped rather than stalling task processing. The optional
+  // queue and event-type filters narrow the stream server-side.
+  rpc WatchEvents(WatchEventsRequest) returns (stream TaskEvent) {}
 }
 
 // ---- TaskService messages ----
@@ -539,4 +546,15 @@ message BrokerInfoResponse {
   // metrics carries freeform engine statistics (connection pool counters,
   // row counts, server version) as display-ready key/value strings.
   map<string, string> metrics = 2;
+}
+
+// WatchEventsRequest subscribes to the task lifecycle event stream, optionally
+// narrowed by queue and event type. Both filters are server-side and additive
+// within a field (any listed value matches); an empty list places no constraint.
+message WatchEventsRequest {
+  // queues restricts the stream to these queues; empty means every queue.
+  repeated string queues = 1;
+  // event_types restricts the stream to these transitions; empty means every
+  // transition.
+  repeated TaskEventType event_types = 2;
 }

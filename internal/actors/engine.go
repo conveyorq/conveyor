@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	goakt "github.com/tochemey/goakt/v4/actor"
 	"github.com/tochemey/goakt/v4/discovery"
@@ -21,8 +22,15 @@ import (
 
 	"github.com/conveyorq/conveyor/internal/broker"
 	"github.com/conveyorq/conveyor/internal/clock"
+	"github.com/conveyorq/conveyor/internal/events"
 	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 )
+
+// eventDedupWindow bounds the topic actor's deduplication memory. Conveyor
+// publishes each event once with a unique id, so the only duplicates are
+// sub-second cluster fan-out re-deliveries; a short window dedups those while
+// keeping the dedup footprint tiny under a high event rate.
+const eventDedupWindow = 30 * time.Second
 
 // Names of the maintenance singletons. Each is spawned as a cluster
 // singleton: exactly one instance runs cluster-wide, placed on the leader
@@ -73,6 +81,9 @@ type Engine struct {
 	system goakt.ActorSystem
 	// wakers coalesces enqueue wake-ups per queue (queue -> *queueWaker).
 	wakers sync.Map
+	// eventSink publishes broker transitions to the cluster topic; nil until
+	// Start succeeds and only when events are enabled.
+	eventSink events.Sink
 }
 
 // queueWaker coalesces wake-up hints for one queue. A burst of enqueues
@@ -119,6 +130,9 @@ func (e *Engine) Start(ctx context.Context) error {
 			WithReplicaCount(1).
 			WithKinds(NewScheduler(), NewReaper(), NewGroupSweeper()).
 			WithGrains(new(QueueGrain))),
+		// Bound the cluster pub/sub dedup window used by the lifecycle event
+		// stream, so its memory stays flat under sustained publishing.
+		goakt.WithMessageRetention(eventDedupWindow),
 	}
 
 	if e.config.TLS != nil {
@@ -172,9 +186,41 @@ func (e *Engine) Start(ctx context.Context) error {
 		e.runtime.SetResolver(resolver)
 	}
 
+	// Lifecycle event stream: a per-node relay subscribes to the cluster topic
+	// and feeds this node's event bus, and the broker publishes transitions
+	// through the topic sink. Both are skipped when events are disabled.
+	if e.runtime.Settings().EventsEnabled {
+		e.eventSink = &topicSink{system: system, newID: e.runtime.NewID, logger: e.runtime.Logger()}
+
+		// Node-local but cluster-unique, like the resolver router.
+		relayName := fmt.Sprintf("%s-%s-%d", eventRelayName, e.config.BindAddr, e.config.RemotingPort)
+
+		if _, spawnErr := system.Spawn(ctx, relayName, &eventRelay{},
+			goakt.WithLongLived(), goakt.WithRelocationDisabled()); spawnErr != nil {
+			return fmt.Errorf("spawning event relay: %w", spawnErr)
+		}
+	}
+
 	e.runtime.Logger().Info("engine started", "system", e.config.Name, "bind", e.config.BindAddr, "discovery", e.config.Provider.ID())
 
 	return nil
+}
+
+// EventBus returns the node-local lifecycle-event fan-out, for the API layer to
+// subscribe WatchEvents streams to.
+func (e *Engine) EventBus() *events.EventBus {
+	return e.runtime.EventBus()
+}
+
+// EventSink returns the cluster-topic sink the broker emits transitions into, or
+// nil when events are disabled or the engine has not started.
+func (e *Engine) EventSink() events.Sink {
+	return e.eventSink
+}
+
+// EventsEnabled reports whether the lifecycle event stream is enabled.
+func (e *Engine) EventsEnabled() bool {
+	return e.runtime.Settings().EventsEnabled
 }
 
 // spawnSingleton spawns a cluster singleton, tolerating the already-exists

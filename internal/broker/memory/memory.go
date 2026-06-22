@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -22,6 +23,7 @@ import (
 
 	"github.com/conveyorq/conveyor/internal/broker"
 	"github.com/conveyorq/conveyor/internal/clock"
+	"github.com/conveyorq/conveyor/internal/events"
 	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 )
 
@@ -94,6 +96,31 @@ type Broker struct {
 	// the total task count, which matters because resolution runs on every
 	// successful completion.
 	dependents map[string]map[string]struct{}
+	// sink receives lifecycle events on each state transition; nil until wired
+	// by the server. It is a pointer to an interface so SetEventSink is race-free
+	// against concurrent transitions.
+	sink atomic.Pointer[events.Sink]
+}
+
+// SetEventSink wires the lifecycle-event sink. It is set once at startup, before
+// the broker serves traffic; a nil or unset sink makes every emission a no-op.
+func (b *Broker) SetEventSink(sink events.Sink) {
+	b.sink.Store(&sink)
+}
+
+// emit derives and delivers the lifecycle event for a transition to the
+// configured sink, if any. It builds the event only when a sink is wired, so a
+// broker with events disabled does no per-transition allocation. The sink is
+// non-blocking, so this is safe to call while holding the broker mutex.
+func (b *Broker) emit(oldState, newState conveyorv1.TaskState, id, queue, taskType, lastError string, attempt int32, occurredAt time.Time) {
+	sink := b.sink.Load()
+	if sink == nil {
+		return
+	}
+
+	if event := events.Derive(oldState, newState, id, queue, taskType, lastError, attempt, occurredAt); event != nil {
+		(*sink).Emit(event)
+	}
 }
 
 // enforce interface compliance at compile time.
@@ -227,6 +254,9 @@ func (b *Broker) Enqueue(_ context.Context, task *conveyorv1.TaskEnvelope) error
 
 	b.tasks[task.GetId()] = row
 
+	b.emit(conveyorv1.TaskState_TASK_STATE_UNSPECIFIED, state,
+		task.GetId(), task.GetQueue(), task.GetType(), row.lastError, row.retried, now)
+
 	return nil
 }
 
@@ -356,11 +386,13 @@ func (b *Broker) Lease(_ context.Context, queue string, limit int, ttl time.Dura
 	leased := make([]*conveyorv1.TaskEnvelope, 0, len(due))
 
 	for _, row := range due {
+		oldState := row.state
 		row.state = conveyorv1.TaskState_TASK_STATE_ACTIVE
 		row.leaseID = leaseID
 		row.leaseExpiresAt = now.Add(ttl)
 		row.startedAt = now
 		leased = append(leased, overlay(row))
+		b.emit(oldState, row.state, row.envelope.GetId(), row.envelope.GetQueue(), row.envelope.GetType(), row.lastError, row.retried, now)
 	}
 
 	return leased, nil
@@ -400,11 +432,13 @@ func (b *Broker) LeaseGroup(_ context.Context, queue, group string, limit int, t
 	leased := make([]*conveyorv1.TaskEnvelope, 0, len(members))
 
 	for _, row := range members {
+		oldState := row.state
 		row.state = conveyorv1.TaskState_TASK_STATE_ACTIVE
 		row.leaseID = leaseID
 		row.leaseExpiresAt = now.Add(ttl)
 		row.startedAt = now
 		leased = append(leased, overlay(row))
+		b.emit(oldState, row.state, row.envelope.GetId(), row.envelope.GetQueue(), row.envelope.GetType(), row.lastError, row.retried, now)
 	}
 
 	return leased, nil
@@ -535,9 +569,13 @@ func (b *Broker) Ack(_ context.Context, taskID, leaseID string, _ []byte) error 
 		return err
 	}
 
+	now := b.clock.Now()
+	oldState := row.state
 	row.state = conveyorv1.TaskState_TASK_STATE_COMPLETED
-	row.completedAt = b.clock.Now()
+	row.completedAt = now
 	row.leaseID = ""
+
+	b.emit(oldState, row.state, taskID, row.envelope.GetQueue(), row.envelope.GetType(), row.lastError, row.retried, now)
 
 	return nil
 }
@@ -552,11 +590,14 @@ func (b *Broker) Fail(_ context.Context, taskID, leaseID, errMsg string, process
 		return err
 	}
 
+	oldState := row.state
 	row.state = conveyorv1.TaskState_TASK_STATE_RETRY
 	row.retried++
 	row.lastError = errMsg
 	row.processAt = processAt
 	row.leaseID = ""
+
+	b.emit(oldState, row.state, taskID, row.envelope.GetQueue(), row.envelope.GetType(), row.lastError, row.retried, b.clock.Now())
 
 	return nil
 }
@@ -572,9 +613,13 @@ func (b *Broker) Release(_ context.Context, taskID, leaseID string) error {
 		return err
 	}
 
+	now := b.clock.Now()
+	oldState := row.state
 	row.state = conveyorv1.TaskState_TASK_STATE_PENDING
-	row.processAt = b.clock.Now()
+	row.processAt = now
 	row.leaseID = ""
+
+	b.emit(oldState, row.state, taskID, row.envelope.GetQueue(), row.envelope.GetType(), row.lastError, row.retried, now)
 
 	return nil
 }
@@ -606,10 +651,14 @@ func (b *Broker) Archive(_ context.Context, taskID, leaseID, errMsg string) erro
 		row = storedRow
 	}
 
+	now := b.clock.Now()
+	oldState := row.state
 	row.state = conveyorv1.TaskState_TASK_STATE_ARCHIVED
 	row.lastError = errMsg
-	row.completedAt = b.clock.Now()
+	row.completedAt = now
 	row.leaseID = ""
+
+	b.emit(oldState, row.state, taskID, row.envelope.GetQueue(), row.envelope.GetType(), row.lastError, row.retried, now)
 
 	return nil
 }
@@ -638,6 +687,7 @@ func (b *Broker) ReapExpiredLeases(_ context.Context, limit int) ([]string, erro
 
 		row.leaseID = ""
 		row.lastError = broker.LeaseExpiredMessage
+		oldState := row.state
 
 		if row.retried >= row.maxRetry {
 			row.state = conveyorv1.TaskState_TASK_STATE_ARCHIVED
@@ -648,6 +698,8 @@ func (b *Broker) ReapExpiredLeases(_ context.Context, limit int) ([]string, erro
 			row.processAt = now
 			queues[row.envelope.GetQueue()] = struct{}{}
 		}
+
+		b.emit(oldState, row.state, row.envelope.GetId(), row.envelope.GetQueue(), row.envelope.GetType(), row.lastError, row.retried, now)
 
 		reaped++
 	}
@@ -677,8 +729,10 @@ func (b *Broker) PromoteScheduled(_ context.Context, limit int) ([]string, error
 			continue
 		}
 
+		oldState := row.state
 		row.state = conveyorv1.TaskState_TASK_STATE_PENDING
 		queues[row.envelope.GetQueue()] = struct{}{}
+		b.emit(oldState, row.state, row.envelope.GetId(), row.envelope.GetQueue(), row.envelope.GetType(), row.lastError, row.retried, now)
 		promoted++
 	}
 
@@ -748,6 +802,7 @@ func (b *Broker) resolveDependents(taskID string, now time.Time) []string {
 			}
 
 			if failed && policy == conveyorv1.DependencyFailurePolicy_DEPENDENCY_FAILURE_POLICY_CASCADE_CANCEL {
+				oldState := dependent.state
 				dependent.state = conveyorv1.TaskState_TASK_STATE_CANCELED
 				dependent.completedAt = now
 				dependent.lastError = broker.CascadeCanceledMessage
@@ -757,6 +812,7 @@ func (b *Broker) resolveDependents(taskID string, now time.Time) []string {
 				}
 
 				dependent.deps = nil
+				b.emit(oldState, dependent.state, dependentID, dependent.envelope.GetQueue(), dependent.envelope.GetType(), dependent.lastError, dependent.retried, now)
 				worklist = append(worklist, dependentID)
 
 				continue
@@ -784,6 +840,8 @@ func (b *Broker) promoteIfReady(row *taskRow, now time.Time) (string, bool) {
 		return "", false
 	}
 
+	oldState := row.state
+
 	switch {
 	case row.group != "":
 		row.state = conveyorv1.TaskState_TASK_STATE_AGGREGATING
@@ -792,6 +850,8 @@ func (b *Broker) promoteIfReady(row *taskRow, now time.Time) (string, bool) {
 	default:
 		row.state = conveyorv1.TaskState_TASK_STATE_PENDING
 	}
+
+	b.emit(oldState, row.state, row.envelope.GetId(), row.envelope.GetQueue(), row.envelope.GetType(), row.lastError, row.retried, now)
 
 	return row.envelope.GetQueue(), true
 }
@@ -929,10 +989,12 @@ func (b *Broker) ArchiveExpired(_ context.Context, limit int) (int, error) {
 			continue
 		}
 
+		oldState := row.state
 		row.state = conveyorv1.TaskState_TASK_STATE_ARCHIVED
 		row.lastError = broker.TaskExpiredMessage
 		row.completedAt = now
 		row.leaseID = ""
+		b.emit(oldState, row.state, row.envelope.GetId(), row.envelope.GetQueue(), row.envelope.GetType(), row.lastError, row.retried, now)
 		archived++
 	}
 
@@ -1222,8 +1284,12 @@ func (b *Broker) CancelTask(_ context.Context, id string) error {
 		conveyorv1.TaskState_TASK_STATE_RETRY,
 		conveyorv1.TaskState_TASK_STATE_AGGREGATING,
 		conveyorv1.TaskState_TASK_STATE_BLOCKED:
+		now := b.clock.Now()
+		oldState := row.state
 		row.state = conveyorv1.TaskState_TASK_STATE_CANCELED
-		row.completedAt = b.clock.Now()
+		row.completedAt = now
+
+		b.emit(oldState, row.state, id, row.envelope.GetQueue(), row.envelope.GetType(), row.lastError, row.retried, now)
 
 		return nil
 	default:
@@ -1271,9 +1337,16 @@ func (b *Broker) RunTaskNow(_ context.Context, id string) error {
 		conveyorv1.TaskState_TASK_STATE_PENDING,
 		conveyorv1.TaskState_TASK_STATE_RETRY,
 		conveyorv1.TaskState_TASK_STATE_ARCHIVED:
+		now := b.clock.Now()
+		oldState := row.state
 		row.state = conveyorv1.TaskState_TASK_STATE_PENDING
-		row.processAt = b.clock.Now()
+		row.processAt = now
 		row.completedAt = time.Time{}
+
+		// A pending task made due again is a no-op state-wise and carries no event.
+		if oldState != row.state {
+			b.emit(oldState, row.state, id, row.envelope.GetQueue(), row.envelope.GetType(), row.lastError, row.retried, now)
+		}
 
 		return nil
 	default:
@@ -1296,8 +1369,12 @@ func (b *Broker) ArchiveTask(_ context.Context, id string) error {
 		conveyorv1.TaskState_TASK_STATE_PENDING,
 		conveyorv1.TaskState_TASK_STATE_RETRY,
 		conveyorv1.TaskState_TASK_STATE_BLOCKED:
+		now := b.clock.Now()
+		oldState := row.state
 		row.state = conveyorv1.TaskState_TASK_STATE_ARCHIVED
-		row.completedAt = b.clock.Now()
+		row.completedAt = now
+
+		b.emit(oldState, row.state, id, row.envelope.GetQueue(), row.envelope.GetType(), row.lastError, row.retried, now)
 
 		return nil
 	default:

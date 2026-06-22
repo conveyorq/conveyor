@@ -18,6 +18,7 @@ import (
 	"github.com/conveyorq/conveyor/internal/actors"
 	"github.com/conveyorq/conveyor/internal/broker"
 	"github.com/conveyorq/conveyor/internal/clock"
+	"github.com/conveyorq/conveyor/internal/events"
 	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 	"github.com/conveyorq/conveyor/internal/proto/conveyor/v1/conveyorv1connect"
 )
@@ -613,6 +614,37 @@ func (s *AdminService) ListWorkerSessions(_ context.Context, _ *connect.Request[
 	}
 
 	return connect.NewResponse(&conveyorv1.ListWorkerSessionsResponse{Sessions: sessions}), nil
+}
+
+// WatchEvents streams task lifecycle transitions to the caller until the client
+// disconnects. It subscribes to the node-local event bus with the request's
+// queue and event-type filters; a watcher too slow to keep up has events
+// dropped (counted by the events.dropped metric), never stalling dispatch.
+func (s *AdminService) WatchEvents(ctx context.Context, request *connect.Request[conveyorv1.WatchEventsRequest], stream *connect.ServerStream[conveyorv1.TaskEvent]) error {
+	if !s.engine.EventsEnabled() {
+		return connect.NewError(connect.CodeUnavailable, errors.New("the lifecycle event stream is disabled on this server"))
+	}
+
+	filter := events.NewFilter(request.Msg.GetQueues(), request.Msg.GetEventTypes())
+
+	channel, cancel := s.engine.EventBus().Subscribe(filter)
+	defer cancel()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+
+		case event, ok := <-channel:
+			if !ok {
+				return nil
+			}
+
+			if err := stream.Send(event); err != nil {
+				return err
+			}
+		}
+	}
 }
 
 // BrokerInfo reports the storage engine's driver and runtime statistics.

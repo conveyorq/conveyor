@@ -10,6 +10,7 @@ package server
 import (
 	"fmt"
 	"math"
+	"net/url"
 	"os"
 	"slices"
 	"strings"
@@ -102,7 +103,11 @@ const (
 	defaultGroupGracePeriod  = 10 * time.Second
 	defaultGroupSweep        = time.Second
 	defaultRateLimitEnabled  = true
-	defaultOtelServiceName   = "conveyord"
+	// defaultEventsEnabled is off: nothing consumes the stream out of the box, so
+	// a production node pays no per-transition cost until an operator opts in
+	// (a webhook or a live watcher). The --dev preset turns it on.
+	defaultEventsEnabled   = false
+	defaultOtelServiceName = "conveyord"
 	// defaultMetricsListen is the OpenTelemetry Prometheus exporter's
 	// conventional port; metrics bind here, kept off the public API listener.
 	defaultMetricsListen = ":9464"
@@ -127,6 +132,41 @@ type Config struct {
 	Otel OtelConfig `koanf:"otel"`
 	// Metrics configures the Prometheus metrics listener.
 	Metrics MetricsConfig `koanf:"metrics"`
+	// Events configures the task lifecycle event stream and optional webhook.
+	Events EventsConfig `koanf:"events"`
+}
+
+// EventsConfig configures the task lifecycle event stream and the optional
+// webhook sink.
+type EventsConfig struct {
+	// Enabled gates the whole event subsystem: the cluster-topic relay,
+	// WatchEvents, and the webhook. It defaults on so the dashboard and external
+	// watchers get a push channel; set it false to drop all event propagation.
+	Enabled bool `koanf:"enabled"`
+	// BufferSize is the per-watcher event buffer depth. A watcher that falls
+	// further behind than this has events dropped rather than stalling dispatch.
+	// Zero selects the built-in default.
+	BufferSize int `koanf:"buffer_size"`
+	// Webhook optionally posts every event to an HTTP endpoint.
+	Webhook WebhookConfig `koanf:"webhook"`
+}
+
+// WebhookConfig configures the optional HTTP webhook sink.
+type WebhookConfig struct {
+	// URL is the endpoint events are POSTed to as JSON. Empty disables the sink.
+	URL string `koanf:"url"`
+	// Timeout bounds one delivery attempt; zero selects the default.
+	Timeout time.Duration `koanf:"timeout"`
+	// MaxRetries is the number of retries after a failed delivery; negative
+	// selects the default.
+	MaxRetries int `koanf:"max_retries"`
+	// Secret, when set, is sent as an Authorization: Bearer header.
+	Secret string `koanf:"secret"`
+	// Queues restricts delivery to these queues; empty means every queue.
+	Queues []string `koanf:"queues"`
+	// EventTypes restricts delivery to these event types (proto enum names, e.g.
+	// "TASK_EVENT_TYPE_ARCHIVED"); empty means every type.
+	EventTypes []string `koanf:"event_types"`
 }
 
 // MetricsConfig configures the Prometheus metrics endpoint. Metrics are
@@ -334,6 +374,7 @@ func DefaultConfig() *Config {
 		Log:     LogConfig{Level: LogLevelInfo, Format: LogFormatJSON},
 		Otel:    OtelConfig{ServiceName: defaultOtelServiceName},
 		Metrics: MetricsConfig{Listen: defaultMetricsListen},
+		Events:  EventsConfig{Enabled: defaultEventsEnabled},
 	}
 }
 
@@ -349,6 +390,9 @@ func DevConfig() *Config {
 	// Dev runs without authentication by design; opt in explicitly so the
 	// fail-closed auth check in Validate accepts it.
 	config.API.AllowUnauthenticated = true
+	// Dev turns the lifecycle event stream on so the local experience (and
+	// `conveyor events`) is events-first; production leaves it off by default.
+	config.Events.Enabled = true
 
 	return config
 }
@@ -437,6 +481,26 @@ func validateRateLimitDefault(engine EngineConfig) error {
 
 	if engine.RateLimitRatePerSec > 0 && engine.RateLimitBurst < 1 {
 		return fmt.Errorf("engine.rate_limit_burst: must be at least 1 when a default rate is set, got %d", engine.RateLimitBurst)
+	}
+
+	return nil
+}
+
+// validateEvents checks the optional webhook endpoint: when set it must be a
+// valid absolute http(s) URL, and the retry budget must not be negative.
+func validateEvents(events EventsConfig) error {
+	if events.Webhook.MaxRetries < 0 {
+		return fmt.Errorf("events.webhook.max_retries: must not be negative, got %d", events.Webhook.MaxRetries)
+	}
+
+	raw := events.Webhook.URL
+	if raw == "" {
+		return nil
+	}
+
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return fmt.Errorf("events.webhook.url: must be a valid http(s) URL, got %q", raw)
 	}
 
 	return nil
@@ -542,6 +606,10 @@ func (c *Config) Validate() error {
 	}
 
 	if err := validateRateLimitDefault(c.Engine); err != nil {
+		return err
+	}
+
+	if err := validateEvents(c.Events); err != nil {
 		return err
 	}
 

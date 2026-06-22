@@ -215,6 +215,16 @@ func TestLoadConfigMissingFile(t *testing.T) {
 	}
 }
 
+func TestEventsEnabledDefaults(t *testing.T) {
+	if DefaultConfig().Events.Enabled {
+		t.Error("events must be off by default in production")
+	}
+
+	if !DevConfig().Events.Enabled {
+		t.Error("events must be on in the --dev preset")
+	}
+}
+
 func TestValidateRejections(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -243,6 +253,9 @@ func TestValidateRejections(t *testing.T) {
 		{"rate without burst", func(c *Config) { c.Engine.RateLimitRatePerSec = 50 }, "engine.rate_limit_burst"},
 		{"bad log level", func(c *Config) { c.Log.Level = "verbose" }, "log.level"},
 		{"bad log format", func(c *Config) { c.Log.Format = "xml" }, "log.format"},
+		{"bad webhook url", func(c *Config) { c.Events.Webhook.URL = "://nope" }, "events.webhook.url"},
+		{"non-http webhook url", func(c *Config) { c.Events.Webhook.URL = "ftp://example.com" }, "events.webhook.url"},
+		{"negative webhook retries", func(c *Config) { c.Events.Webhook.MaxRetries = -1 }, "events.webhook.max_retries"},
 	}
 
 	for _, tc := range cases {

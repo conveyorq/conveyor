@@ -123,6 +123,11 @@ func TestTasksListRejectsUnknownState(t *testing.T) {
 	require.ErrorContains(t, err, `unknown state "limbo"`)
 }
 
+func TestEventsRejectsUnknownType(t *testing.T) {
+	err := run([]string{"events", "--type", "exploded"}, &bytes.Buffer{})
+	require.ErrorContains(t, err, `unknown event type "exploded"`)
+}
+
 func TestStatsAndQueuePauseAgainstEmbeddedServer(t *testing.T) {
 	addr := startEmbeddedNode(t)
 

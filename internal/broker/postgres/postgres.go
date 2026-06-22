@@ -18,6 +18,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -28,6 +29,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/conveyorq/conveyor/internal/clock"
+	"github.com/conveyorq/conveyor/internal/events"
 	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 
 	"github.com/conveyorq/conveyor/internal/broker"
@@ -146,7 +148,7 @@ UPDATE conveyor_tasks t SET
   completed_at = CASE WHEN t.retried >= t.max_retry THEN $2 ELSE t.completed_at END,
   last_error = $3, lease_id = NULL, lease_expires_at = NULL, updated_at = $2
 FROM expired WHERE t.id = expired.id
-RETURNING t.queue, t.state`,
+RETURNING t.id, t.queue, t.type, t.state, t.retried, t.last_error`,
 	stateActive, stateArchived, stateRetry)
 
 // promoteQuery moves due scheduled tasks to pending.
@@ -159,7 +161,7 @@ var promoteQuery = fmt.Sprintf(`WITH due AS (
 )
 UPDATE conveyor_tasks t SET state = %d, updated_at = $2
 FROM due WHERE t.id = due.id
-RETURNING t.queue`,
+RETURNING t.id, t.queue, t.type, t.retried, t.last_error`,
 	stateScheduled, statePending)
 
 // extendLeaseQuery pushes an active task's lease expiry forward.
@@ -167,40 +169,52 @@ var extendLeaseQuery = fmt.Sprintf(`UPDATE conveyor_tasks
   SET lease_expires_at = $3, updated_at = $4
   WHERE id = $1 AND state = %d AND lease_id = $2`, stateActive)
 
+// returningChange is the RETURNING projection mutateScoped scans for event
+// emission: the affected task's queue, type, resulting state, retry count, and
+// last error.
+const returningChange = " RETURNING queue, type, state, retried, last_error"
+
 // ackQuery completes an active task.
 var ackQuery = fmt.Sprintf(`UPDATE conveyor_tasks
   SET state = %d, result = $3, completed_at = $4, lease_id = NULL,
     lease_expires_at = NULL, updated_at = $4
-  WHERE id = $1 AND state = %d AND lease_id = $2`, stateCompleted, stateActive)
+  WHERE id = $1 AND state = %d AND lease_id = $2`+returningChange, stateCompleted, stateActive)
 
 // failQuery records a failed attempt and schedules the retry.
 var failQuery = fmt.Sprintf(`UPDATE conveyor_tasks
   SET state = %d, retried = retried + 1, last_error = $3, process_at = $4,
     lease_id = NULL, lease_expires_at = NULL, updated_at = $5
-  WHERE id = $1 AND state = %d AND lease_id = $2`, stateRetry, stateActive)
+  WHERE id = $1 AND state = %d AND lease_id = $2`+returningChange, stateRetry, stateActive)
 
 // releaseQuery returns an active task to pending without a retry penalty.
 var releaseQuery = fmt.Sprintf(`UPDATE conveyor_tasks
   SET state = %d, process_at = $3, lease_id = NULL, lease_expires_at = NULL,
     updated_at = $3
-  WHERE id = $1 AND state = %d AND lease_id = $2`, statePending, stateActive)
+  WHERE id = $1 AND state = %d AND lease_id = $2`+returningChange, statePending, stateActive)
 
 // archiveLeasedQuery dead-letters a task held under the caller's lease.
 var archiveLeasedQuery = fmt.Sprintf(`UPDATE conveyor_tasks
   SET state = %d, last_error = $3, completed_at = $4, lease_id = NULL,
     lease_expires_at = NULL, updated_at = $4
-  WHERE id = $1 AND state = %d AND lease_id = $2`, stateArchived, stateActive)
+  WHERE id = $1 AND state = %d AND lease_id = $2`+returningChange, stateArchived, stateActive)
 
-// archiveAnyQuery dead-letters any non-completed task (reaper and admin).
-var archiveAnyQuery = fmt.Sprintf(`UPDATE conveyor_tasks
+// archiveAnyQuery dead-letters any non-completed task (reaper and admin). The
+// prev CTE captures the pre-update state so the event reflects the true
+// transition (and is suppressed for an already-archived task).
+var archiveAnyQuery = fmt.Sprintf(`WITH prev AS (
+  SELECT id, state AS old_state FROM conveyor_tasks WHERE id = $1 FOR UPDATE
+)
+UPDATE conveyor_tasks t
   SET state = %d, last_error = $2, completed_at = $3, lease_id = NULL,
     lease_expires_at = NULL, updated_at = $3
-  WHERE id = $1 AND state <> %d`, stateArchived, stateCompleted)
+  FROM prev WHERE t.id = prev.id AND t.state <> %d
+  RETURNING t.queue, t.type, prev.old_state, t.state, t.retried, t.last_error`,
+	stateArchived, stateCompleted)
 
 // cancelTaskQuery cancels a task that is not yet running.
 var cancelTaskQuery = fmt.Sprintf(`UPDATE conveyor_tasks
   SET state = %d, completed_at = $2, updated_at = $2
-  WHERE id = $1 AND state IN (%d, %d, %d, %d, %d)`,
+  WHERE id = $1 AND state IN (%d, %d, %d, %d, %d)`+returningChange,
 	stateCanceled, stateScheduled, statePending, stateRetry, stateAggregating, stateBlocked)
 
 // deleteTaskQuery removes a task unless it is actively executing.
@@ -208,16 +222,22 @@ var deleteTaskQuery = fmt.Sprintf(
 	"DELETE FROM conveyor_tasks WHERE id = $1 AND state <> %d", stateActive)
 
 // runTaskNowQuery makes a waiting or archived task due immediately; re-running
-// an archived task clears its completion stamp so it lives again.
-var runTaskNowQuery = fmt.Sprintf(`UPDATE conveyor_tasks
+// an archived task clears its completion stamp so it lives again. The prev CTE
+// captures the pre-update state so the resulting event is suppressed when the
+// task was already pending (a no-op state-wise).
+var runTaskNowQuery = fmt.Sprintf(`WITH prev AS (
+  SELECT id, state AS old_state FROM conveyor_tasks WHERE id = $1 FOR UPDATE
+)
+UPDATE conveyor_tasks t
   SET state = %d, process_at = $2, completed_at = NULL, updated_at = $2
-  WHERE id = $1 AND state IN (%d, %d, %d, %d)`,
+  FROM prev WHERE t.id = prev.id AND t.state IN (%d, %d, %d, %d)
+  RETURNING t.queue, t.type, prev.old_state, t.state, t.retried, t.last_error`,
 	statePending, stateScheduled, statePending, stateRetry, stateArchived)
 
 // archiveWaitingQuery dead-letters a scheduled, pending, retry, or blocked task.
 var archiveWaitingQuery = fmt.Sprintf(`UPDATE conveyor_tasks
   SET state = %d, completed_at = $2, updated_at = $2
-  WHERE id = $1 AND state IN (%d, %d, %d, %d)`,
+  WHERE id = $1 AND state IN (%d, %d, %d, %d)`+returningChange,
 	stateArchived, stateScheduled, statePending, stateRetry, stateBlocked)
 
 // pendingCountQuery counts due tasks per queue.
@@ -251,7 +271,8 @@ var archiveExpiredQuery = fmt.Sprintf(`WITH expired AS (
 UPDATE conveyor_tasks t
 SET state = %d, last_error = $3, completed_at = $1,
     lease_id = NULL, lease_expires_at = NULL, updated_at = $1
-FROM expired WHERE t.id = expired.id`,
+FROM expired WHERE t.id = expired.id
+RETURNING t.id, t.queue, t.type, t.retried, t.last_error`,
 	stateScheduled, statePending, stateRetry, stateBlocked, stateArchived)
 
 // stampCanceledQuery marks a task canceled at enqueue time, used only when a
@@ -263,7 +284,7 @@ var stampCanceledQuery = fmt.Sprintf(
 // the cascade-cancel policy.
 var cascadeCancelQuery = fmt.Sprintf(`UPDATE conveyor_tasks
   SET state = %d, completed_at = $2, last_error = $3, updated_at = $2
-  WHERE id = $1 AND state = %d`, stateCanceled, stateBlocked)
+  WHERE id = $1 AND state = %d`+returningChange, stateCanceled, stateBlocked)
 
 // lockBlockedDependentQuery takes a row lock on a still-blocked dependent so
 // concurrent resolvers of its sibling dependencies serialize: each waits its
@@ -283,7 +304,7 @@ var promoteDependentQuery = fmt.Sprintf(`UPDATE conveyor_tasks t
     updated_at = $2
   WHERE t.id = $1 AND t.state = %d
     AND NOT EXISTS (SELECT 1 FROM conveyor_task_deps d WHERE d.dependent_id = t.id)
-  RETURNING t.queue`,
+  RETURNING t.queue, t.type, t.state, t.retried, t.last_error`,
 	stateAggregating, stateScheduled, statePending, stateBlocked)
 
 // readyDependenciesQuery finds dependency ids that have reached a terminal state
@@ -308,7 +329,7 @@ UPDATE conveyor_tasks t
 SET state = CASE WHEN t.group_key <> '' THEN %d WHEN t.process_at > $2 THEN %d ELSE %d END,
     updated_at = $2
 FROM ready WHERE t.id = ready.id
-RETURNING t.queue`,
+RETURNING t.id, t.queue, t.type, t.state, t.retried, t.last_error`,
 	stateBlocked, stateAggregating, stateScheduled, statePending)
 
 // enforce interface compliance at compile time.
@@ -355,6 +376,106 @@ type Broker struct {
 	pool *pgxpool.Pool
 	// clock supplies the current time for every statement.
 	clock clock.Clock
+	// sink receives lifecycle events on each state transition; nil until wired
+	// by the server. It is a pointer to an interface so SetEventSink is race-free
+	// against concurrent transitions.
+	sink atomic.Pointer[events.Sink]
+}
+
+// rowChange holds the columns a mutating query returns for event emission: the
+// affected task's identity and its state after the transition.
+type rowChange struct {
+	id        string
+	queue     string
+	taskType  string
+	state     int16
+	retried   int32
+	lastError string
+}
+
+// SetEventSink wires the lifecycle-event sink. It is set once at startup, before
+// the broker serves traffic; a nil or unset sink makes every emission a no-op.
+func (b *Broker) SetEventSink(sink events.Sink) {
+	b.sink.Store(&sink)
+}
+
+// eventSink returns the configured sink, or nil when events are disabled. The
+// transition paths check it before building an event so a broker with events
+// disabled does no per-transition allocation.
+func (b *Broker) eventSink() events.Sink {
+	if sink := b.sink.Load(); sink != nil {
+		return *sink
+	}
+
+	return nil
+}
+
+// emit derives and delivers the lifecycle event for a transition to the
+// configured sink, if any, building the event only when a sink is wired.
+func (b *Broker) emit(oldState, newState conveyorv1.TaskState, id, queue, taskType, lastError string, attempt int32, occurredAt time.Time) {
+	sink := b.eventSink()
+	if sink == nil {
+		return
+	}
+
+	if event := events.Derive(oldState, newState, id, queue, taskType, lastError, attempt, occurredAt); event != nil {
+		sink.Emit(event)
+	}
+}
+
+// emitEvent delivers an already-built event to the sink, if any. It backs the
+// transactional paths, which build events inside the transaction and emit them
+// only after commit. A nil event is a no-op.
+func (b *Broker) emitEvent(event *conveyorv1.TaskEvent) {
+	if event == nil {
+		return
+	}
+
+	if sink := b.eventSink(); sink != nil {
+		sink.Emit(event)
+	}
+}
+
+// emitChange emits the event for a transition from oldState to the state carried
+// in the returned row change.
+func (b *Broker) emitChange(taskID string, oldState int16, change rowChange, occurredAt time.Time) {
+	b.emit(conveyorv1.TaskState(oldState), conveyorv1.TaskState(change.state),
+		taskID, change.queue, change.taskType, change.lastError, change.retried, occurredAt)
+}
+
+// mutateScoped runs a single-row mutating query that RETURNs
+// (queue, type, state, retried, last_error). found is false when no row matched,
+// which the caller maps to its miss error (lease lost or an invalid state).
+func (b *Broker) mutateScoped(ctx context.Context, query string, args ...any) (change rowChange, found bool, err error) {
+	err = b.pool.QueryRow(ctx, query, args...).
+		Scan(&change.queue, &change.taskType, &change.state, &change.retried, &change.lastError)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return rowChange{}, false, nil
+	}
+
+	if err != nil {
+		return rowChange{}, false, err
+	}
+
+	return change, true, nil
+}
+
+// mutateScopedOld runs a single-row mutating query that RETURNs
+// (queue, type, old_state, state, retried, last_error), for transitions whose
+// prior state is not fixed and is needed to classify the event correctly. found
+// is false when no row matched.
+func (b *Broker) mutateScopedOld(ctx context.Context, query string, args ...any) (oldState int16, change rowChange, found bool, err error) {
+	err = b.pool.QueryRow(ctx, query, args...).
+		Scan(&change.queue, &change.taskType, &oldState, &change.state, &change.retried, &change.lastError)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, rowChange{}, false, nil
+	}
+
+	if err != nil {
+		return 0, rowChange{}, false, err
+	}
+
+	return oldState, change, true, nil
 }
 
 // New connects to the database at dsn, applies any pending embedded
@@ -440,13 +561,29 @@ func (b *Broker) Enqueue(ctx context.Context, task *conveyorv1.TaskEnvelope) (er
 	if uniqueKey == nil && len(edges) == 0 {
 		// Common path: one round trip. The lapsed-claim release is only
 		// needed when a unique key may collide with an expired claim.
-		if _, err = b.pool.Exec(ctx, insertTaskQuery, buildArguments(state)...); err != nil {
-			return fmt.Errorf("postgres: insert task: %w", err)
+		tag, execErr := b.pool.Exec(ctx, insertTaskQuery, buildArguments(state)...)
+		if execErr != nil {
+			return fmt.Errorf("postgres: insert task: %w", execErr)
+		}
+
+		// A conflict on the id is an idempotent retry (DO NOTHING): no event.
+		if tag.RowsAffected() > 0 {
+			b.emit(conveyorv1.TaskState_TASK_STATE_UNSPECIFIED, conveyorv1.TaskState(state),
+				task.GetId(), task.GetQueue(), task.GetType(), task.GetLastError(), task.GetRetried(), now)
 		}
 
 		return nil
 	}
 
+	return b.enqueueWithEdges(ctx, task, state, buildArguments, uniqueKey, edges, now)
+}
+
+// enqueueWithEdges commits a task that carries a unique key and/or dependency
+// edges inside one transaction: it releases any lapsed unique claim, resolves
+// the initial dependency state, inserts the task in its resulting state, records
+// its edges, and emits the lifecycle event after commit. It backs Enqueue's
+// uncommon path, keeping the dispatch-common path a single round trip.
+func (b *Broker) enqueueWithEdges(ctx context.Context, task *conveyorv1.TaskEnvelope, state int16, buildArguments func(int16) []any, uniqueKey *string, edges []*conveyorv1.TaskDependency, now time.Time) (err error) {
 	transaction, err := b.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("postgres: begin enqueue: %w", err)
@@ -514,6 +651,9 @@ func (b *Broker) Enqueue(ctx context.Context, task *conveyorv1.TaskEnvelope) (er
 		return fmt.Errorf("postgres: commit enqueue: %w", err)
 	}
 
+	b.emit(conveyorv1.TaskState_TASK_STATE_UNSPECIFIED, conveyorv1.TaskState(state),
+		task.GetId(), task.GetQueue(), task.GetType(), task.GetLastError(), task.GetRetried(), now)
+
 	return nil
 }
 
@@ -531,7 +671,26 @@ func (b *Broker) Lease(ctx context.Context, queue string, limit int, ttl time.Du
 	}
 	defer rows.Close()
 
-	return scanEnvelopes(rows)
+	leased, err := scanEnvelopes(rows)
+	if err != nil {
+		return nil, err
+	}
+
+	b.emitLeased(leased, now)
+
+	return leased, nil
+}
+
+// emitLeased emits a LEASED event for each task the lease claimed.
+func (b *Broker) emitLeased(leased []*conveyorv1.TaskEnvelope, occurredAt time.Time) {
+	if b.eventSink() == nil {
+		return
+	}
+
+	for _, task := range leased {
+		b.emit(conveyorv1.TaskState_TASK_STATE_PENDING, conveyorv1.TaskState_TASK_STATE_ACTIVE,
+			task.GetId(), task.GetQueue(), task.GetType(), task.GetLastError(), task.GetRetried(), occurredAt)
+	}
 }
 
 // LeaseGroup claims a group's aggregating members as one batch; see broker.Broker.
@@ -548,7 +707,14 @@ func (b *Broker) LeaseGroup(ctx context.Context, queue, group string, limit int,
 	}
 	defer rows.Close()
 
-	return scanEnvelopes(rows)
+	leased, err := scanEnvelopes(rows)
+	if err != nil {
+		return nil, err
+	}
+
+	b.emitLeased(leased, now)
+
+	return leased, nil
 }
 
 // GroupStats summarizes the aggregating groups across all queues; see
@@ -602,18 +768,57 @@ func (b *Broker) ExtendLease(ctx context.Context, taskID, leaseID string, ttl ti
 
 // Ack completes an active task; see broker.Broker.
 func (b *Broker) Ack(ctx context.Context, taskID, leaseID string, result []byte) error {
-	return b.leaseScopedExec(ctx, ackQuery, taskID, leaseID, result, b.clock.Now())
+	now := b.clock.Now()
+
+	change, found, err := b.mutateScoped(ctx, ackQuery, taskID, leaseID, result, now)
+	if err != nil {
+		return fmt.Errorf("postgres: ack: %w", err)
+	}
+
+	if !found {
+		return broker.ErrLeaseLost
+	}
+
+	b.emitChange(taskID, stateActive, change, now)
+
+	return nil
 }
 
 // Fail records a failed attempt and schedules the retry; see broker.Broker.
 func (b *Broker) Fail(ctx context.Context, taskID, leaseID, errMsg string, processAt time.Time) error {
-	return b.leaseScopedExec(ctx, failQuery, taskID, leaseID, errMsg, processAt, b.clock.Now())
+	now := b.clock.Now()
+
+	change, found, err := b.mutateScoped(ctx, failQuery, taskID, leaseID, errMsg, processAt, now)
+	if err != nil {
+		return fmt.Errorf("postgres: fail: %w", err)
+	}
+
+	if !found {
+		return broker.ErrLeaseLost
+	}
+
+	b.emitChange(taskID, stateActive, change, now)
+
+	return nil
 }
 
 // Release returns an active task to pending without a retry penalty; see
 // broker.Broker.
 func (b *Broker) Release(ctx context.Context, taskID, leaseID string) error {
-	return b.leaseScopedExec(ctx, releaseQuery, taskID, leaseID, b.clock.Now())
+	now := b.clock.Now()
+
+	change, found, err := b.mutateScoped(ctx, releaseQuery, taskID, leaseID, now)
+	if err != nil {
+		return fmt.Errorf("postgres: release: %w", err)
+	}
+
+	if !found {
+		return broker.ErrLeaseLost
+	}
+
+	b.emitChange(taskID, stateActive, change, now)
+
+	return nil
 }
 
 // Archive dead-letters a task; see broker.Broker.
@@ -621,17 +826,30 @@ func (b *Broker) Archive(ctx context.Context, taskID, leaseID, errMsg string) er
 	now := b.clock.Now()
 
 	if leaseID != "" {
-		return b.leaseScopedExec(ctx, archiveLeasedQuery, taskID, leaseID, errMsg, now)
+		change, found, err := b.mutateScoped(ctx, archiveLeasedQuery, taskID, leaseID, errMsg, now)
+		if err != nil {
+			return fmt.Errorf("postgres: archive: %w", err)
+		}
+
+		if !found {
+			return broker.ErrLeaseLost
+		}
+
+		b.emitChange(taskID, stateActive, change, now)
+
+		return nil
 	}
 
-	tag, err := b.pool.Exec(ctx, archiveAnyQuery, taskID, errMsg, now)
+	oldState, change, found, err := b.mutateScopedOld(ctx, archiveAnyQuery, taskID, errMsg, now)
 	if err != nil {
 		return fmt.Errorf("postgres: archive: %w", err)
 	}
 
-	if tag.RowsAffected() == 0 {
+	if !found {
 		return b.explainMiss(ctx, taskID)
 	}
+
+	b.emitChange(taskID, oldState, change, now)
 
 	return nil
 }
@@ -642,7 +860,9 @@ func (b *Broker) ReapExpiredLeases(ctx context.Context, limit int) ([]string, er
 		return nil, nil
 	}
 
-	rows, err := b.pool.Query(ctx, reapQuery, limit, b.clock.Now(), broker.LeaseExpiredMessage)
+	now := b.clock.Now()
+
+	rows, err := b.pool.Query(ctx, reapQuery, limit, now, broker.LeaseExpiredMessage)
 	if err != nil {
 		return nil, fmt.Errorf("postgres: reap expired leases: %w", err)
 	}
@@ -650,23 +870,28 @@ func (b *Broker) ReapExpiredLeases(ctx context.Context, limit int) ([]string, er
 
 	queues := make(map[string]struct{})
 
-	for rows.Next() {
-		var (
-			queue string
-			state int16
-		)
+	var reaped []rowChange
 
-		if err = rows.Scan(&queue, &state); err != nil {
+	for rows.Next() {
+		var change rowChange
+		if err = rows.Scan(&change.id, &change.queue, &change.taskType, &change.state, &change.retried, &change.lastError); err != nil {
 			return nil, fmt.Errorf("postgres: scan reaped task: %w", err)
 		}
 
-		if state == stateRetry {
-			queues[queue] = struct{}{}
+		if change.state == stateRetry {
+			queues[change.queue] = struct{}{}
 		}
+
+		reaped = append(reaped, change)
 	}
 
 	if err = rows.Err(); err != nil {
 		return nil, fmt.Errorf("postgres: reap expired leases: %w", err)
+	}
+
+	for _, change := range reaped {
+		b.emit(conveyorv1.TaskState_TASK_STATE_ACTIVE, conveyorv1.TaskState(change.state),
+			change.id, change.queue, change.taskType, change.lastError, change.retried, now)
 	}
 
 	return slices.Collect(maps.Keys(queues)), nil
@@ -678,7 +903,9 @@ func (b *Broker) PromoteScheduled(ctx context.Context, limit int) ([]string, err
 		return nil, nil
 	}
 
-	rows, err := b.pool.Query(ctx, promoteQuery, limit, b.clock.Now())
+	now := b.clock.Now()
+
+	rows, err := b.pool.Query(ctx, promoteQuery, limit, now)
 	if err != nil {
 		return nil, fmt.Errorf("postgres: promote scheduled: %w", err)
 	}
@@ -686,17 +913,25 @@ func (b *Broker) PromoteScheduled(ctx context.Context, limit int) ([]string, err
 
 	queues := make(map[string]struct{})
 
+	var promoted []rowChange
+
 	for rows.Next() {
-		var queue string
-		if err = rows.Scan(&queue); err != nil {
+		var change rowChange
+		if err = rows.Scan(&change.id, &change.queue, &change.taskType, &change.retried, &change.lastError); err != nil {
 			return nil, fmt.Errorf("postgres: scan promoted task: %w", err)
 		}
 
-		queues[queue] = struct{}{}
+		queues[change.queue] = struct{}{}
+		promoted = append(promoted, change)
 	}
 
 	if err = rows.Err(); err != nil {
 		return nil, fmt.Errorf("postgres: promote scheduled: %w", err)
+	}
+
+	for _, change := range promoted {
+		b.emit(conveyorv1.TaskState_TASK_STATE_SCHEDULED, conveyorv1.TaskState_TASK_STATE_PENDING,
+			change.id, change.queue, change.taskType, change.lastError, change.retried, now)
 	}
 
 	return slices.Collect(maps.Keys(queues)), nil
@@ -725,13 +960,17 @@ func (b *Broker) ResolveDependents(ctx context.Context, taskID string) (woken []
 	}
 	defer func() { err = rollback(ctx, transaction, err) }()
 
-	queues, err := b.resolveWithin(ctx, transaction, []string{taskID})
+	queues, emitted, err := b.resolveWithin(ctx, transaction, []string{taskID})
 	if err != nil {
 		return nil, err
 	}
 
 	if err = transaction.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("postgres: commit resolve dependents: %w", err)
+	}
+
+	for _, event := range emitted {
+		b.emitEvent(event)
 	}
 
 	return slices.Collect(maps.Keys(queues)), nil
@@ -776,24 +1015,35 @@ func (b *Broker) PromoteReadyDependents(ctx context.Context, limit int) (woken [
 		return nil, fmt.Errorf("postgres: read ready dependencies: %w", err)
 	}
 
-	queues, err := b.resolveWithin(ctx, transaction, seed)
+	queues, emitted, err := b.resolveWithin(ctx, transaction, seed)
 	if err != nil {
 		return nil, err
 	}
 
-	orphanRows, err := transaction.Query(ctx, promoteOrphanBlockedQuery, limit, b.clock.Now())
+	now := b.clock.Now()
+	sink := b.eventSink()
+
+	orphanRows, err := transaction.Query(ctx, promoteOrphanBlockedQuery, limit, now)
 	if err != nil {
 		return nil, fmt.Errorf("postgres: promote orphaned blocked tasks: %w", err)
 	}
 
 	for orphanRows.Next() {
-		var queue string
-		if err = orphanRows.Scan(&queue); err != nil {
+		var change rowChange
+		if err = orphanRows.Scan(&change.id, &change.queue, &change.taskType, &change.state, &change.retried, &change.lastError); err != nil {
 			orphanRows.Close()
+
 			return nil, fmt.Errorf("postgres: scan promoted orphan: %w", err)
 		}
 
-		queues[queue] = struct{}{}
+		queues[change.queue] = struct{}{}
+
+		if sink != nil {
+			if event := events.Derive(conveyorv1.TaskState_TASK_STATE_BLOCKED, conveyorv1.TaskState(change.state),
+				change.id, change.queue, change.taskType, change.lastError, change.retried, now); event != nil {
+				emitted = append(emitted, event)
+			}
+		}
 	}
 
 	orphanRows.Close()
@@ -804,6 +1054,10 @@ func (b *Broker) PromoteReadyDependents(ctx context.Context, limit int) (woken [
 
 	if err = transaction.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("postgres: commit promote ready dependents: %w", err)
+	}
+
+	for _, event := range emitted {
+		b.emitEvent(event)
 	}
 
 	return slices.Collect(maps.Keys(queues)), nil
@@ -839,12 +1093,38 @@ func (b *Broker) ArchiveExpired(ctx context.Context, limit int) (int, error) {
 		return 0, nil
 	}
 
-	tag, err := b.pool.Exec(ctx, archiveExpiredQuery, b.clock.Now(), limit, broker.TaskExpiredMessage)
+	now := b.clock.Now()
+
+	rows, err := b.pool.Query(ctx, archiveExpiredQuery, now, limit, broker.TaskExpiredMessage)
 	if err != nil {
 		return 0, fmt.Errorf("postgres: archive expired tasks: %w", err)
 	}
+	defer rows.Close()
 
-	return int(tag.RowsAffected()), nil
+	var archived []rowChange
+
+	for rows.Next() {
+		var change rowChange
+		if err = rows.Scan(&change.id, &change.queue, &change.taskType, &change.retried, &change.lastError); err != nil {
+			return 0, fmt.Errorf("postgres: scan expired task: %w", err)
+		}
+
+		archived = append(archived, change)
+	}
+
+	if err = rows.Err(); err != nil {
+		return 0, fmt.Errorf("postgres: archive expired tasks: %w", err)
+	}
+
+	// A still-waiting task that expired was scheduled, pending, retry, or blocked;
+	// the resulting transition is ARCHIVED regardless, so a scheduled prior state
+	// classifies it correctly.
+	for _, change := range archived {
+		b.emit(conveyorv1.TaskState_TASK_STATE_SCHEDULED, conveyorv1.TaskState_TASK_STATE_ARCHIVED,
+			change.id, change.queue, change.taskType, change.lastError, change.retried, now)
+	}
+
+	return len(archived), nil
 }
 
 // PendingCount counts due tasks per queue; see broker.Broker.
@@ -1244,14 +1524,20 @@ func (b *Broker) ListTasks(ctx context.Context, query broker.TaskQuery) ([]broke
 
 // CancelTask cancels a not-yet-running task; see broker.Broker.
 func (b *Broker) CancelTask(ctx context.Context, id string) error {
-	tag, err := b.pool.Exec(ctx, cancelTaskQuery, id, b.clock.Now())
+	now := b.clock.Now()
+
+	change, found, err := b.mutateScoped(ctx, cancelTaskQuery, id, now)
 	if err != nil {
 		return fmt.Errorf("postgres: cancel task: %w", err)
 	}
 
-	if tag.RowsAffected() == 0 {
+	if !found {
 		return b.explainMiss(ctx, id)
 	}
+
+	// The cancel target is one of the waiting states; the resulting transition is
+	// CANCELED regardless of which, so a pending prior state classifies it.
+	b.emitChange(id, statePending, change, now)
 
 	return nil
 }
@@ -1276,28 +1562,40 @@ func (b *Broker) DeleteTask(ctx context.Context, id string) error {
 
 // RunTaskNow makes a task due immediately; see broker.Broker.
 func (b *Broker) RunTaskNow(ctx context.Context, id string) error {
-	tag, err := b.pool.Exec(ctx, runTaskNowQuery, id, b.clock.Now())
+	now := b.clock.Now()
+
+	oldState, change, found, err := b.mutateScopedOld(ctx, runTaskNowQuery, id, now)
 	if err != nil {
 		return fmt.Errorf("postgres: run task now: %w", err)
 	}
 
-	if tag.RowsAffected() == 0 {
+	if !found {
 		return b.explainMiss(ctx, id)
 	}
+
+	// Making an already-pending task due again is a no-op state-wise; Derive
+	// suppresses the event when oldState equals the new pending state.
+	b.emitChange(id, oldState, change, now)
 
 	return nil
 }
 
 // ArchiveTask dead-letters a waiting task; see broker.Broker.
 func (b *Broker) ArchiveTask(ctx context.Context, id string) error {
-	tag, err := b.pool.Exec(ctx, archiveWaitingQuery, id, b.clock.Now())
+	now := b.clock.Now()
+
+	change, found, err := b.mutateScoped(ctx, archiveWaitingQuery, id, now)
 	if err != nil {
 		return fmt.Errorf("postgres: archive task: %w", err)
 	}
 
-	if tag.RowsAffected() == 0 {
+	if !found {
 		return b.explainMiss(ctx, id)
 	}
+
+	// The archive target is one of the waiting states; the resulting transition is
+	// ARCHIVED regardless, so a scheduled prior state classifies it.
+	b.emitChange(id, stateScheduled, change, now)
 
 	return nil
 }
@@ -1566,11 +1864,13 @@ func (b *Broker) explainMiss(ctx context.Context, taskID string) error {
 // resolves its own dependents in turn. It returns the set of queues whose tasks
 // became newly eligible. Every statement runs inside the caller's transaction so
 // a partial reconciliation never commits.
-func (b *Broker) resolveWithin(ctx context.Context, tx pgx.Tx, seed []string) (map[string]struct{}, error) {
+func (b *Broker) resolveWithin(ctx context.Context, tx pgx.Tx, seed []string) (map[string]struct{}, []*conveyorv1.TaskEvent, error) {
 	now := b.clock.Now()
 	queues := make(map[string]struct{})
 	seen := make(map[string]struct{})
 	worklist := slices.Clone(seed)
+
+	var emitted []*conveyorv1.TaskEvent
 
 	for len(worklist) > 0 {
 		finishedID := worklist[0]
@@ -1584,7 +1884,7 @@ func (b *Broker) resolveWithin(ctx context.Context, tx pgx.Tx, seed []string) (m
 
 		terminal, err := b.terminalState(ctx, tx, finishedID)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
 		succeeded := terminal == stateCompleted
@@ -1596,61 +1896,84 @@ func (b *Broker) resolveWithin(ctx context.Context, tx pgx.Tx, seed []string) (m
 
 		edges, err := b.edgesWaitingOn(ctx, tx, finishedID)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
 		for _, edge := range edges {
-			canceled, err := b.applyEdge(ctx, tx, finishedID, edge, failed, now)
+			canceled, event, err := b.applyEdge(ctx, tx, finishedID, edge, failed, now)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
+			}
+
+			if event != nil {
+				emitted = append(emitted, event)
 			}
 
 			if canceled {
 				worklist = append(worklist, edge.dependent)
+
 				continue
 			}
 
-			queue, promoted, err := b.promoteDependent(ctx, tx, edge.dependent, now)
+			queue, promoted, event, err := b.promoteDependent(ctx, tx, edge.dependent, now)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 
 			if promoted {
 				queues[queue] = struct{}{}
+
+				if event != nil {
+					emitted = append(emitted, event)
+				}
 			}
 		}
 	}
 
-	return queues, nil
+	return queues, emitted, nil
 }
 
 // applyEdge reconciles one edge against a finished dependency. On dependency
 // success, or failure under the continue policy, it drops the edge; under the
 // block policy it leaves the dependent waiting; under cascade-cancel it cancels
 // the dependent and reports that so the caller can propagate. It returns whether
-// the dependent was canceled.
-func (b *Broker) applyEdge(ctx context.Context, tx pgx.Tx, dependencyID string, edge dependencyEdge, failed bool, now time.Time) (bool, error) {
+// the dependent was canceled and, when a cancel transition happened, its
+// lifecycle event for emission after the transaction commits.
+func (b *Broker) applyEdge(ctx context.Context, tx pgx.Tx, dependencyID string, edge dependencyEdge, failed bool, now time.Time) (bool, *conveyorv1.TaskEvent, error) {
 	if failed && edge.policy == int16(conveyorv1.DependencyFailurePolicy_DEPENDENCY_FAILURE_POLICY_BLOCK) {
-		return false, nil
+		return false, nil, nil
 	}
 
 	if failed && edge.policy == int16(conveyorv1.DependencyFailurePolicy_DEPENDENCY_FAILURE_POLICY_CASCADE_CANCEL) {
-		if _, err := tx.Exec(ctx, cascadeCancelQuery, edge.dependent, now, broker.CascadeCanceledMessage); err != nil {
-			return false, fmt.Errorf("postgres: cascade-cancel dependent: %w", err)
+		var change rowChange
+
+		err := tx.QueryRow(ctx, cascadeCancelQuery, edge.dependent, now, broker.CascadeCanceledMessage).
+			Scan(&change.queue, &change.taskType, &change.state, &change.retried, &change.lastError)
+
+		var event *conveyorv1.TaskEvent
+
+		switch {
+		case err == nil:
+			if b.eventSink() != nil {
+				event = events.Derive(conveyorv1.TaskState_TASK_STATE_BLOCKED, conveyorv1.TaskState(change.state),
+					edge.dependent, change.queue, change.taskType, change.lastError, change.retried, now)
+			}
+		case !errors.Is(err, pgx.ErrNoRows):
+			return false, nil, fmt.Errorf("postgres: cascade-cancel dependent: %w", err)
 		}
 
 		if _, err := tx.Exec(ctx, dropDependentEdgesQuery, edge.dependent); err != nil {
-			return false, fmt.Errorf("postgres: drop canceled dependent edges: %w", err)
+			return false, nil, fmt.Errorf("postgres: drop canceled dependent edges: %w", err)
 		}
 
-		return true, nil
+		return true, event, nil
 	}
 
 	if _, err := tx.Exec(ctx, dropEdgeQuery, edge.dependent, dependencyID); err != nil {
-		return false, fmt.Errorf("postgres: drop satisfied edge: %w", err)
+		return false, nil, fmt.Errorf("postgres: drop satisfied edge: %w", err)
 	}
 
-	return false, nil
+	return false, nil, nil
 }
 
 // terminalState returns the task's current state, or stateBlocked's zero analog
@@ -1702,32 +2025,39 @@ func (b *Broker) edgesWaitingOn(ctx context.Context, tx pgx.Tx, dependencyID str
 // dependent row so concurrent resolvers of its sibling dependencies serialize,
 // then re-checks the remaining edges in a fresh statement that observes their
 // committed deletes — closing the lost-wakeup race on a concurrent fan-in join.
-func (b *Broker) promoteDependent(ctx context.Context, tx pgx.Tx, dependentID string, now time.Time) (string, bool, error) {
+func (b *Broker) promoteDependent(ctx context.Context, tx pgx.Tx, dependentID string, now time.Time) (string, bool, *conveyorv1.TaskEvent, error) {
 	var locked string
 
 	err := tx.QueryRow(ctx, lockBlockedDependentQuery, dependentID).Scan(&locked)
 	if errors.Is(err, pgx.ErrNoRows) {
 		// Not blocked: already promoted by a concurrent resolver, or never blocked.
-		return "", false, nil
+		return "", false, nil, nil
 	}
 
 	if err != nil {
-		return "", false, fmt.Errorf("postgres: lock dependent: %w", err)
+		return "", false, nil, fmt.Errorf("postgres: lock dependent: %w", err)
 	}
 
-	var queue string
+	var change rowChange
 
-	err = tx.QueryRow(ctx, promoteDependentQuery, dependentID, now).Scan(&queue)
+	err = tx.QueryRow(ctx, promoteDependentQuery, dependentID, now).
+		Scan(&change.queue, &change.taskType, &change.state, &change.retried, &change.lastError)
 	if errors.Is(err, pgx.ErrNoRows) {
 		// Edges still remain: another dependency has yet to resolve.
-		return "", false, nil
+		return "", false, nil, nil
 	}
 
 	if err != nil {
-		return "", false, fmt.Errorf("postgres: promote dependent: %w", err)
+		return "", false, nil, fmt.Errorf("postgres: promote dependent: %w", err)
 	}
 
-	return queue, true, nil
+	var event *conveyorv1.TaskEvent
+	if b.eventSink() != nil {
+		event = events.Derive(conveyorv1.TaskState_TASK_STATE_BLOCKED, conveyorv1.TaskState(change.state),
+			dependentID, change.queue, change.taskType, change.lastError, change.retried, now)
+	}
+
+	return change.queue, true, event, nil
 }
 
 // nullableTime maps the zero time to a NULL database value.
