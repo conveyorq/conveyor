@@ -4,7 +4,7 @@ All notable changes to Conveyor are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [v0.2.0] - 2026-06-22
 
 ### Added
 
