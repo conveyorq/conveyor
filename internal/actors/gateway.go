@@ -98,6 +98,10 @@ type GatewaySession struct {
 	SessionID string
 	// Queues are the queue names the worker serves.
 	Queues []string
+	// Weights maps each served queue to its declared dispatch weight. A queue
+	// grain distributes leased tasks across gateways in proportion to these
+	// weights, so a higher weight draws proportionally more work.
+	Weights map[string]int32
 	// Concurrency is the worker's declared total execution slots; it is
 	// the dispatch capacity granted to each declared queue.
 	Concurrency int32
@@ -286,6 +290,7 @@ func (g *Gateway) register(ctx *goakt.ReceiveContext) {
 			GatewayName: g.name,
 			Capacity:    g.session.Concurrency,
 			BatchTypes:  g.session.BatchTypes,
+			Weight:      g.session.Weights[queue],
 		})
 		if err != nil {
 			g.runtime.Logger().Warn("gateway registration failed; next tick retries", "queue", queue, "error", err)

@@ -242,6 +242,7 @@ func (s *WorkerService) Session(ctx context.Context, stream *connect.BidiStream[
 	session := actors.GatewaySession{
 		SessionID:   sessionID,
 		Queues:      queues,
+		Weights:     hello.GetQueues(),
 		Concurrency: hello.GetConcurrency(),
 		BatchTypes:  hello.GetBatchTypes(),
 	}

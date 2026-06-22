@@ -8,6 +8,17 @@ All notable changes to Conveyor are documented here. The format is based on
 
 ### Added
 
+- **Proportional weighted dispatch**: a queue now hands its tasks to the workers
+  serving it in proportion to the per-queue weight each worker declared at
+  `Hello`, instead of plain round-robin. Selection uses smooth weighted
+  round-robin over the workers that still have free capacity, so a worker with
+  twice the weight of a peer draws roughly twice the share while turns stay
+  evenly spread rather than bursty. Credit-based flow control and at-least-once
+  delivery are unchanged: weighting only reorders selection and never alters when
+  a task is leased or how capacity gates dispatch, so a saturated worker still
+  spills its overflow to peers. A worker that declares no weight counts as weight
+  one, keeping unweighted fleets on plain round-robin. No SDK change is required.
+
 - **Lifecycle events (stream + webhooks)**: a push channel for task state
   transitions, so external systems react without polling. A server-streaming
   `AdminService.WatchEvents` emits each transition (enqueued, scheduled, leased,

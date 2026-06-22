@@ -132,7 +132,12 @@ type RegisterGateway struct {
 	Capacity int32 `protobuf:"varint,3,opt,name=capacity,proto3" json:"capacity,omitempty"`
 	// batch_types are the task types this gateway's worker handles as batches,
 	// so the grain dispatches a fired group only to a capable gateway.
-	BatchTypes    []string `protobuf:"bytes,4,rep,name=batch_types,json=batchTypes,proto3" json:"batch_types,omitempty"`
+	BatchTypes []string `protobuf:"bytes,4,rep,name=batch_types,json=batchTypes,proto3" json:"batch_types,omitempty"`
+	// weight is the worker's declared dispatch weight for this queue. The grain
+	// distributes leased tasks across gateways in proportion to their weights, so
+	// a higher weight draws proportionally more work. A non-positive value (an
+	// older worker that predates weighted dispatch) is treated as weight one.
+	Weight        int32 `protobuf:"varint,5,opt,name=weight,proto3" json:"weight,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -193,6 +198,13 @@ func (x *RegisterGateway) GetBatchTypes() []string {
 		return x.BatchTypes
 	}
 	return nil
+}
+
+func (x *RegisterGateway) GetWeight() int32 {
+	if x != nil {
+		return x.Weight
+	}
+	return 0
 }
 
 // GatewayCredit grants dispatch credits from a gateway to a queue grain.
@@ -1330,13 +1342,14 @@ const file_conveyor_v1_messages_proto_rawDesc = "" +
 	"\x05queue\x18\x01 \x01(\tR\x05queue\":\n" +
 	"\x0eTasksAvailable\x12\x14\n" +
 	"\x05queue\x18\x01 \x01(\tR\x05queue\x12\x12\n" +
-	"\x04hint\x18\x02 \x01(\x03R\x04hint\"\x87\x01\n" +
+	"\x04hint\x18\x02 \x01(\x03R\x04hint\"\x9f\x01\n" +
 	"\x0fRegisterGateway\x12\x14\n" +
 	"\x05queue\x18\x01 \x01(\tR\x05queue\x12!\n" +
 	"\fgateway_name\x18\x02 \x01(\tR\vgatewayName\x12\x1a\n" +
 	"\bcapacity\x18\x03 \x01(\x05R\bcapacity\x12\x1f\n" +
 	"\vbatch_types\x18\x04 \x03(\tR\n" +
-	"batchTypes\"b\n" +
+	"batchTypes\x12\x16\n" +
+	"\x06weight\x18\x05 \x01(\x05R\x06weight\"b\n" +
 	"\rGatewayCredit\x12\x14\n" +
 	"\x05queue\x18\x01 \x01(\tR\x05queue\x12!\n" +
 	"\fgateway_name\x18\x02 \x01(\tR\vgatewayName\x12\x18\n" +

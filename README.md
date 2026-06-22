@@ -43,7 +43,10 @@ and priorities, backed by Postgres or an in-memory broker, with **no Redis and n
   with no retry penalty and no backoff; they resume immediately elsewhere, so
   rolling out a new build never burns a task's retry budget.
 - **Retries** with exponential backoff, **delayed** and **scheduled** tasks,
-  per-task **timeouts/deadlines**, per-task **priorities** and weighted queues.
+  per-task **timeouts/deadlines**, and per-task **priorities**.
+- **Weighted queues**: a worker declares a relative weight per queue, and the
+  server hands a queue's tasks to the workers serving it in proportion to those
+  weights, so a higher-weighted worker draws proportionally more of the work.
 - **Unique tasks**, **dead-letter/archive**, **retention**, per-queue
   **pause/resume**, and a per-task-type **circuit breaker**.
 - **Expiring tasks**: a pre-dispatch TTL (`ExpiresIn`/`ExpiresAt`): a task not

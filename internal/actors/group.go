@@ -275,19 +275,12 @@ func (x *QueueGrain) finishGroupLease(ctx *goakt.GrainContext, message *conveyor
 	x.runtime.Logger().Debug("group dispatched", "queue", x.queue, "group", message.GetGroup(), "members", len(tasks), "gateway", gateway.name)
 }
 
-// pickBatchGateway returns the next gateway, in round-robin order, that has a
+// pickBatchGateway returns a gateway, chosen by weighted round-robin, that has a
 // free credit and advertises taskType as batch-capable; nil when none does.
 func (x *QueueGrain) pickBatchGateway(taskType string) *gatewayCredits {
-	for range x.gateways {
-		gateway := x.gateways[x.nextGateway%len(x.gateways)]
-		x.nextGateway++
-
-		if gateway.credits > 0 && slices.Contains(gateway.batchTypes, taskType) {
-			return gateway
-		}
-	}
-
-	return nil
+	return x.selectWeightedGateway(func(gateway *gatewayCredits) bool {
+		return gateway.credits > 0 && slices.Contains(gateway.batchTypes, taskType)
+	})
 }
 
 // ---- Gateway: deliver a batch to the worker and apply its result ----
