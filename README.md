@@ -72,7 +72,9 @@ and priorities, backed by Postgres or an in-memory broker, with **no Redis and n
 - **Cron**: server-persisted schedules that survive restarts and failover,
   pausable at runtime.
 - **Built-in clustering / HA**: multi-node by default; a lost node's work
-  re-activates elsewhere with zero task loss.
+  re-activates elsewhere with zero task loss. Kubernetes discovery works out of
+  the box, with a pluggable provider (static, DNS, NATS, Consul, etcd) for
+  everywhere else.
 - **Four ways to run it**: standalone, cluster, Kubernetes, or
   [embedded](#embedded-mode) in a Go process.
 - **Secure by default**, with bearer-token auth that fails closed: outside `--dev`
@@ -94,30 +96,30 @@ Postgres-first like River, but ships as a clustered **server** with a
 language-neutral wire protocol and **push-based** dispatch, and it also runs
 embedded inside a Go process.
 
-| Capability | Conveyor | asynq | River |
-|---|:---:|:---:|:---:|
-| Primary store | Postgres or in-memory | Redis | Postgres |
-| Runs as | Server and embedded library | Library | Library |
-| Dispatch | Push (streaming) | Poll | Poll plus `LISTEN`/`NOTIFY` |
-| HA / failover | Built-in clustering; a lost node's work re-activates elsewhere | Via Redis (Sentinel/Cluster) | Postgres advisory-lock leader election |
-| Transactional enqueue | ✗ | ✗ | ✓ ¹ |
-| SDK languages | Go, TypeScript, Python | Go | Go |
-| Weighted queues | ✓ | ✓ | ✗ |
-| Per-task priority | ✓ (1 to 9) | ✗ (queue weights) | ✓ |
-| Delayed / scheduled | ✓ | ✓ | ✓ |
-| Cron / periodic | ✓ (server-persisted, survives failover) | ✓ (in code) | ✓ (in code) |
-| Unique tasks | ✓ | ✓ | ✓ |
-| Retries with backoff | ✓ | ✓ | ✓ |
-| Dead-letter / archive | ✓ | ✓ | ✓ |
-| Pause / resume queues | ✓ | ✓ | ✓ |
-| Rate limiting | ✓ (per-queue, live) | DIY ² | ✗ |
-| Per-key concurrency | ✓ | ✗ | ✗ |
-| Circuit breaker | ✓ (per task type) | ✗ | ✗ |
-| Task dependencies (workflows) | ✓ (chains, fan-out/in) | ✗ | Pro ³ |
-| Group aggregation / batching | ✓ | ✓ | ✗ |
-| End-to-end payload encryption | ✓ | ✗ | ✗ |
-| Lifecycle events / webhooks | ✓ | ✗ | ✗ |
-| Web operations UI | Embedded, read and write | asynqmon | riverui |
+| Capability                    |                                                                            Conveyor                                                                            |            asynq             |                 River                  |
+|-------------------------------|:--------------------------------------------------------------------------------------------------------------------------------------------------------------:|:----------------------------:|:--------------------------------------:|
+| Primary store                 |                                                                     Postgres or in-memory                                                                      |            Redis             |                Postgres                |
+| Runs as                       |                                                                  Server and embedded library                                                                   |           Library            |                Library                 |
+| Dispatch                      |                                                                        Push (streaming)                                                                        |             Poll             |      Poll plus `LISTEN`/`NOTIFY`       |
+| HA / failover                 | Built-in clustering; a lost node's work re-activates elsewhere. Kubernetes discovery out of the box, or a pluggable provider (static, DNS, NATS, Consul, etcd) | Via Redis (Sentinel/Cluster) | Postgres advisory-lock leader election |
+| Transactional enqueue         |                                                                               ✗                                                                                |              ✗               |                  ✓ ¹                   |
+| SDK languages                 |                                                                     Go, TypeScript, Python                                                                     |              Go              |                   Go                   |
+| Weighted queues               |                                                                               ✓                                                                                |              ✓               |                   ✗                    |
+| Per-task priority             |                                                                           ✓ (1 to 9)                                                                           |      ✗ (queue weights)       |                   ✓                    |
+| Delayed / scheduled           |                                                                               ✓                                                                                |              ✓               |                   ✓                    |
+| Cron / periodic               |                                                            ✓ (server-persisted, survives failover)                                                             |         ✓ (in code)          |              ✓ (in code)               |
+| Unique tasks                  |                                                                               ✓                                                                                |              ✓               |                   ✓                    |
+| Retries with backoff          |                                                                               ✓                                                                                |              ✓               |                   ✓                    |
+| Dead-letter / archive         |                                                                               ✓                                                                                |              ✓               |                   ✓                    |
+| Pause / resume queues         |                                                                               ✓                                                                                |              ✓               |                   ✓                    |
+| Rate limiting                 |                                                                      ✓ (per-queue, live)                                                                       |            DIY ²             |                   ✗                    |
+| Per-key concurrency           |                                                                               ✓                                                                                |              ✗               |                   ✗                    |
+| Circuit breaker               |                                                                       ✓ (per task type)                                                                        |              ✗               |                   ✗                    |
+| Task dependencies (workflows) |                                                                     ✓ (chains, fan-out/in)                                                                     |              ✗               |                 Pro ³                  |
+| Group aggregation / batching  |                                                                               ✓                                                                                |              ✓               |                   ✗                    |
+| End-to-end payload encryption |                                                                               ✓                                                                                |              ✗               |                   ✗                    |
+| Lifecycle events / webhooks   |                                                                               ✓                                                                                |              ✗               |                   ✗                    |
+| Web operations UI             |                                                                    Embedded, read and write                                                                    |           asynqmon           |                riverui                 |
 
 ¹ River commits the job inside *your* database transaction (`InsertTx`), so the
 job and your data commit atomically. Conveyor's broker is owned by the server,
