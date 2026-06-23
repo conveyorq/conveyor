@@ -28,6 +28,14 @@ const (
 	methodListDueCronEntries = "ListDueCronEntries"
 	methodGroupStats         = "GroupStats"
 	methodUpdateCronNextRun  = "UpdateCronNextRun"
+	methodQueuePaused        = "QueuePaused"
+	methodQueueRateLimit     = "QueueRateLimit"
+	methodQueueConcurrency   = "QueueConcurrencyLimit"
+	methodLease              = "Lease"
+	methodAck                = "Ack"
+	methodFail               = "Fail"
+	methodArchive            = "Archive"
+	methodLeaseGroup         = "LeaseGroup"
 )
 
 // faultBroker wraps a real broker and returns a configured error from selected
@@ -169,4 +177,76 @@ func (f *faultBroker) UpdateCronNextRun(ctx context.Context, id string, expected
 	}
 
 	return f.Broker.UpdateCronNextRun(ctx, id, expected, next)
+}
+
+// QueuePaused fails when armed, otherwise delegates.
+func (f *faultBroker) QueuePaused(ctx context.Context, queue string) (bool, error) {
+	if err := f.armed(methodQueuePaused); err != nil {
+		return false, err
+	}
+
+	return f.Broker.QueuePaused(ctx, queue)
+}
+
+// QueueRateLimit fails when armed, otherwise delegates.
+func (f *faultBroker) QueueRateLimit(ctx context.Context, queue string) (broker.RateLimit, bool, error) {
+	if err := f.armed(methodQueueRateLimit); err != nil {
+		return broker.RateLimit{}, false, err
+	}
+
+	return f.Broker.QueueRateLimit(ctx, queue)
+}
+
+// QueueConcurrencyLimit fails when armed, otherwise delegates.
+func (f *faultBroker) QueueConcurrencyLimit(ctx context.Context, queue string) (broker.ConcurrencyLimit, bool, error) {
+	if err := f.armed(methodQueueConcurrency); err != nil {
+		return broker.ConcurrencyLimit{}, false, err
+	}
+
+	return f.Broker.QueueConcurrencyLimit(ctx, queue)
+}
+
+// Lease fails when armed, otherwise delegates.
+func (f *faultBroker) Lease(ctx context.Context, queue string, limit int, ttl time.Duration, leaseID string) ([]*conveyorv1.TaskEnvelope, error) {
+	if err := f.armed(methodLease); err != nil {
+		return nil, err
+	}
+
+	return f.Broker.Lease(ctx, queue, limit, ttl, leaseID)
+}
+
+// LeaseGroup fails when armed, otherwise delegates.
+func (f *faultBroker) LeaseGroup(ctx context.Context, queue, group string, limit int, ttl time.Duration, leaseID string) ([]*conveyorv1.TaskEnvelope, error) {
+	if err := f.armed(methodLeaseGroup); err != nil {
+		return nil, err
+	}
+
+	return f.Broker.LeaseGroup(ctx, queue, group, limit, ttl, leaseID)
+}
+
+// Ack fails when armed, otherwise delegates.
+func (f *faultBroker) Ack(ctx context.Context, taskID, leaseID string, result []byte) error {
+	if err := f.armed(methodAck); err != nil {
+		return err
+	}
+
+	return f.Broker.Ack(ctx, taskID, leaseID, result)
+}
+
+// Fail fails when armed, otherwise delegates.
+func (f *faultBroker) Fail(ctx context.Context, taskID, leaseID, errMsg string, processAt time.Time) error {
+	if err := f.armed(methodFail); err != nil {
+		return err
+	}
+
+	return f.Broker.Fail(ctx, taskID, leaseID, errMsg, processAt)
+}
+
+// Archive fails when armed, otherwise delegates.
+func (f *faultBroker) Archive(ctx context.Context, taskID, leaseID, errMsg string) error {
+	if err := f.armed(methodArchive); err != nil {
+		return err
+	}
+
+	return f.Broker.Archive(ctx, taskID, leaseID, errMsg)
 }

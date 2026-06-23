@@ -5,8 +5,10 @@
 package actors
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -22,14 +24,56 @@ import (
 	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 )
 
-func TestSchedulerIgnoresUnknownMessage(t *testing.T) {
-	ctx := context.Background()
-	engine := startEngine(t, memory.New(clock.System()))
+// stubGrainSystem embeds goakt.ActorSystem and overrides only the two methods
+// wakeQueue calls, so its resolve-failure and tell-failure branches are
+// deterministically reachable without a live cluster. The embedded interface is
+// nil: any other method call would panic, which is the intended guard since
+// wakeQueue must only touch these two.
+type stubGrainSystem struct {
+	goakt.ActorSystem
 
-	pid, err := engine.System().Spawn(ctx, "extra-scheduler", NewScheduler())
-	require.NoError(t, err)
-	require.NoError(t, goakt.Tell(ctx, pid, new(conveyorv1.ReapTick)))
-	require.True(t, pid.IsRunning())
+	// identityErr, when set, fails grain-identity resolution.
+	identityErr error
+	// tellErr, when set, fails the wake-up tell after a successful resolve.
+	tellErr error
+}
+
+func (s stubGrainSystem) GrainIdentity(context.Context, string, goakt.GrainFactory, ...goakt.GrainOption) (*goakt.GrainIdentity, error) {
+	if s.identityErr != nil {
+		return nil, s.identityErr
+	}
+
+	return &goakt.GrainIdentity{}, nil
+}
+
+func (s stubGrainSystem) TellGrain(context.Context, *goakt.GrainIdentity, any) error {
+	return s.tellErr
+}
+
+// TestWakeQueueLogsResolveAndTellFailures covers wakeQueue's two best-effort
+// error branches: a failed grain-identity resolve and a failed wake-up tell are
+// each logged and swallowed rather than propagated.
+func TestWakeQueueLogsResolveAndTellFailures(t *testing.T) {
+	ctx := context.Background()
+
+	var logs bytes.Buffer
+
+	taskLog := memory.New(clock.System())
+	t.Cleanup(func() { _ = taskLog.Close() })
+
+	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	runtime := NewRuntime(taskLog, clock.System(), testSettings, logger)
+
+	wakeQueue(ctx, stubGrainSystem{identityErr: errors.New("resolve down")}, runtime, "q", 0)
+	wakeQueue(ctx, stubGrainSystem{tellErr: errors.New("tell down")}, runtime, "q", 0)
+
+	output := logs.String()
+	require.Contains(t, output, "resolving queue grain failed")
+	require.Contains(t, output, "waking queue grain failed")
+}
+
+func TestSchedulerIgnoresUnknownMessage(t *testing.T) {
+	requireUnhandled(t, spawnIsolated(t, "extra-scheduler", NewScheduler()), new(conveyorv1.ReapTick))
 }
 
 func TestSchedulerPreStartRequiresRuntimeExtension(t *testing.T) {

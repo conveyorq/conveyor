@@ -12,11 +12,55 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	goakt "github.com/tochemey/goakt/v4/actor"
+	goaktlog "github.com/tochemey/goakt/v4/log"
 
 	"github.com/conveyorq/conveyor/internal/broker/memory"
 	"github.com/conveyorq/conveyor/internal/clock"
 	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 )
+
+func TestQueueGrainActivationRequiresRuntimeExtension(t *testing.T) {
+	ctx := context.Background()
+
+	system, err := goakt.NewActorSystem("bare-grain-system", goakt.WithLogger(goaktlog.DiscardLogger))
+	require.NoError(t, err)
+	require.NoError(t, system.Start(ctx))
+
+	t.Cleanup(func() { _ = system.Stop(ctx) })
+
+	// Resolving the grain identity activates it, running OnActivate against a
+	// system with no engine runtime registered.
+	_, err = system.GrainIdentity(ctx, QueueGrainName("q"), queueGrainFactory)
+	require.ErrorContains(t, err, "is not registered")
+}
+
+func TestQueueGrainActivationPausedReadError(t *testing.T) {
+	ctx := context.Background()
+	taskLog := newFaultBroker(memory.New(clock.System()))
+	engine := startEngine(t, taskLog)
+
+	taskLog.fault(methodQueuePaused, errors.New("pause read down"))
+
+	err := engine.TellQueue(ctx, "activate-fault", &conveyorv1.TasksAvailable{Queue: "activate-fault"})
+	require.Error(t, err, "activation must fail when the pause flag cannot be read")
+}
+
+func TestQueueGrainAppliesRateLimitChange(t *testing.T) {
+	ctx := context.Background()
+	engine := startEngine(t, memory.New(clock.System()))
+
+	require.NoError(t, engine.TellQueue(ctx, "rl-change",
+		&conveyorv1.RateLimitChanged{Queue: "rl-change", RatePerSec: 10, Burst: 5}))
+}
+
+func TestQueueGrainAppliesConcurrencyLimitChange(t *testing.T) {
+	ctx := context.Background()
+	engine := startEngine(t, memory.New(clock.System()))
+
+	require.NoError(t, engine.TellQueue(ctx, "cc-change",
+		&conveyorv1.ConcurrencyLimitChanged{Queue: "cc-change", MaxActive: 4}))
+}
 
 func TestQueueGrainNameRoundTrip(t *testing.T) {
 	require.Equal(t, "queue.critical", QueueGrainName("critical"))
@@ -51,6 +95,39 @@ func rateLimitGrain(t *testing.T, enabled bool, defaultRate float64, defaultBurs
 	runtime := NewRuntime(taskLog, fake, settings, quietLogger())
 
 	return &QueueGrain{runtime: runtime, queue: "default"}, taskLog
+}
+
+// faultGrain builds a bare grain whose runtime is backed by a fault broker, so
+// the activation-time config reads can be driven to fail.
+func faultGrain(t *testing.T) (*QueueGrain, *faultBroker) {
+	t.Helper()
+
+	fake := clock.NewFake(time.Date(2026, 6, 16, 12, 0, 0, 0, time.UTC))
+	inner := memory.New(fake)
+	t.Cleanup(func() { _ = inner.Close() })
+
+	faultLog := newFaultBroker(inner)
+
+	settings := testSettings
+	settings.RateLimitEnabled = true
+
+	runtime := NewRuntime(faultLog, fake, settings, quietLogger())
+
+	return &QueueGrain{runtime: runtime, queue: "default"}, faultLog
+}
+
+func TestLoadRateLimitBrokerError(t *testing.T) {
+	grain, faultLog := faultGrain(t)
+	faultLog.fault(methodQueueRateLimit, errors.New("rate down"))
+
+	require.Error(t, grain.loadRateLimit(context.Background()))
+}
+
+func TestLoadConcurrencyLimitBrokerError(t *testing.T) {
+	grain, faultLog := faultGrain(t)
+	faultLog.fault(methodQueueConcurrency, errors.New("concurrency down"))
+
+	require.Error(t, grain.loadConcurrencyLimit(context.Background()))
 }
 
 func TestLoadRateLimitUsesGlobalDefault(t *testing.T) {

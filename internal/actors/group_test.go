@@ -5,8 +5,10 @@
 package actors
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -22,6 +24,28 @@ import (
 	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 )
 
+// TestFireGroupLogsResolveAndTellFailures covers the best-effort error branches
+// of the group-sweeper's fireGroup: a failed grain-identity resolve and a failed
+// fire tell are each logged and swallowed.
+func TestFireGroupLogsResolveAndTellFailures(t *testing.T) {
+	ctx := context.Background()
+
+	var logs bytes.Buffer
+
+	taskLog := memory.New(clock.System())
+	t.Cleanup(func() { _ = taskLog.Close() })
+
+	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	runtime := NewRuntime(taskLog, clock.System(), testSettings, logger)
+
+	fireGroup(ctx, stubGrainSystem{identityErr: errors.New("resolve down")}, runtime, "q", "g", "t")
+	fireGroup(ctx, stubGrainSystem{tellErr: errors.New("tell down")}, runtime, "q", "g", "t")
+
+	output := logs.String()
+	require.Contains(t, output, "resolving queue grain failed")
+	require.Contains(t, output, "firing group failed")
+}
+
 func TestGroupSweeperPreStartRequiresRuntimeExtension(t *testing.T) {
 	ctx := context.Background()
 
@@ -36,13 +60,7 @@ func TestGroupSweeperPreStartRequiresRuntimeExtension(t *testing.T) {
 }
 
 func TestGroupSweeperIgnoresUnknownMessage(t *testing.T) {
-	ctx := context.Background()
-	engine := startEngine(t, memory.New(clock.System()))
-
-	pid, err := engine.System().Spawn(ctx, "extra-sweeper", NewGroupSweeper())
-	require.NoError(t, err)
-	require.NoError(t, goakt.Tell(ctx, pid, new(conveyorv1.ReapTick)))
-	require.True(t, pid.IsRunning())
+	requireUnhandled(t, spawnIsolated(t, "extra-sweeper", NewGroupSweeper()), new(conveyorv1.ReapTick))
 }
 
 // groupedTask builds an aggregation-group member of the given type.

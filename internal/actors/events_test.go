@@ -35,13 +35,70 @@ func TestEventRelayPreStartRequiresRuntimeExtension(t *testing.T) {
 }
 
 func TestEventRelayIgnoresUnknownMessage(t *testing.T) {
-	ctx := context.Background()
-	engine := startEngine(t, memory.New(clock.System()))
+	requireUnhandled(t, spawnIsolated(t, "extra-relay", &eventRelay{}), new(conveyorv1.ReapTick))
+}
 
-	pid, err := engine.System().Spawn(ctx, "extra-relay", &eventRelay{})
+func TestTopicSinkEmitIgnoresNilEvent(t *testing.T) {
+	require.NotPanics(t, func() { (&topicSink{}).Emit(nil) })
+}
+
+func TestTopicSinkEmitDropsWithoutTopicActor(t *testing.T) {
+	ctx := context.Background()
+
+	system, err := goakt.NewActorSystem("sink-no-topic", goakt.WithLogger(goaktlog.DiscardLogger))
 	require.NoError(t, err)
-	require.NoError(t, goakt.Tell(ctx, pid, new(conveyorv1.ReapTick)))
+	require.NoError(t, system.Start(ctx))
+
+	t.Cleanup(func() { _ = system.Stop(ctx) })
+
+	sink := &topicSink{system: system, newID: func() string { return "id" }, logger: quietLogger()}
+
+	require.NotPanics(t, func() { sink.Emit(&conveyorv1.TaskEvent{Id: "e"}) })
+}
+
+func TestTopicSinkEmitDropsOnTellFailure(t *testing.T) {
+	ctx := context.Background()
+
+	settings := testSettings
+	settings.EventsEnabled = true
+
+	engine := newNode(memory.New(clock.System()), settings, freePorts(t, 3), nil)
+	require.NoError(t, engine.Start(ctx))
+
+	topicActor := engine.System().TopicActor()
+	require.NotNil(t, topicActor)
+
+	sink := &topicSink{system: engine.System(), newID: func() string { return "id" }, logger: quietLogger()}
+
+	// Stopping the engine stops the topic actor; the system still reports it, so
+	// the publish Tell reaches a non-running actor and fails.
+	stopCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	require.NoError(t, engine.Stop(stopCtx))
+	require.False(t, topicActor.IsRunning())
+
+	require.NotPanics(t, func() { sink.Emit(&conveyorv1.TaskEvent{Id: "e"}) })
+}
+
+func TestEventRelayPostStartWithoutTopicActor(t *testing.T) {
+	ctx := context.Background()
+
+	runtime := NewRuntime(memory.New(clock.System()), clock.System(), testSettings, quietLogger())
+
+	system, err := goakt.NewActorSystem("relay-no-topic",
+		goakt.WithLogger(goaktlog.DiscardLogger), goakt.WithExtensions(runtime))
+	require.NoError(t, err)
+	require.NoError(t, system.Start(ctx))
+
+	t.Cleanup(func() { _ = system.Stop(ctx) })
+
+	pid, err := system.Spawn(ctx, "relay", &eventRelay{})
+	require.NoError(t, err)
 	require.True(t, pid.IsRunning())
+
+	// PostStart is delivered asynchronously; give it a turn to run the
+	// no-topic-actor branch before the system is torn down.
+	time.Sleep(200 * time.Millisecond)
 }
 
 // TestEngineStreamsLifecycleEvents proves the full node-local path: a broker

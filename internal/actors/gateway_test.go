@@ -14,15 +14,86 @@ import (
 
 	"github.com/stretchr/testify/require"
 	goakt "github.com/tochemey/goakt/v4/actor"
+	"github.com/tochemey/goakt/v4/breaker"
 	goaktlog "github.com/tochemey/goakt/v4/log"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/conveyorq/conveyor/internal/backoff"
 	"github.com/conveyorq/conveyor/internal/broker"
 	"github.com/conveyorq/conveyor/internal/broker/memory"
 	"github.com/conveyorq/conveyor/internal/clock"
 	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 )
+
+// faultGateway builds a bare gateway (the fields PreStart would set) over a
+// fault broker and a fake clock, so its durable-transition and deadline logic
+// can be driven directly without a worker session.
+func faultGateway(t *testing.T) (*Gateway, *faultBroker) {
+	t.Helper()
+
+	fake := clock.NewFake(time.Date(2026, 6, 16, 12, 0, 0, 0, time.UTC))
+	inner := memory.New(fake)
+	t.Cleanup(func() { _ = inner.Close() })
+
+	faultLog := newFaultBroker(inner)
+	runtime := NewRuntime(faultLog, fake, testSettings, quietLogger())
+
+	gateway := &Gateway{
+		runtime:  runtime,
+		strategy: backoff.New(backoff.DefaultBase, backoff.DefaultCap),
+		breakers: make(map[string]*breaker.CircuitBreaker),
+	}
+
+	return gateway, faultLog
+}
+
+func TestGatewayExecutionDeadlineClampsToTightest(t *testing.T) {
+	gateway, _ := faultGateway(t)
+	now := gateway.runtime.Clock().Now()
+
+	message := &conveyorv1.ExecuteTask{
+		LeaseExpiresAt: timestamppb.New(now.Add(time.Hour)),
+		Task: &conveyorv1.TaskEnvelope{Options: &conveyorv1.TaskOptions{
+			Deadline: timestamppb.New(now.Add(30 * time.Minute)),
+			Timeout:  durationpb.New(10 * time.Minute),
+		}},
+	}
+
+	deadline := gateway.executionDeadline(message)
+
+	// The attempt timeout (now+10m) is tighter than both the task deadline
+	// (now+30m) and the lease expiry (now+1h), so it wins.
+	require.WithinDuration(t, now.Add(10*time.Minute), deadline.AsTime(), time.Second)
+}
+
+func TestGatewayApplyOutcomeBrokerErrors(t *testing.T) {
+	ctx := context.Background()
+	gateway, faultLog := faultGateway(t)
+	entry := &inflightTask{leaseID: "L", taskType: "t", queue: "q", maxRetry: 3}
+
+	// A non-lease-lost durable-transition failure is logged, never propagated.
+	faultLog.fault(methodAck, errors.New("ack down"))
+	success, terminal := gateway.applyOutcome(ctx, entry,
+		&conveyorv1.Result{TaskId: "x", Outcome: conveyorv1.TaskOutcome_TASK_OUTCOME_SUCCESS})
+	require.False(t, success)
+	require.False(t, terminal)
+
+	// A lease lost to another delivery is dropped quietly: this gateway no
+	// longer owns the transition.
+	faultLog.clear(methodAck)
+	faultLog.fault(methodAck, broker.ErrLeaseLost)
+	success, _ = gateway.applyOutcome(ctx, entry,
+		&conveyorv1.Result{TaskId: "x", Outcome: conveyorv1.TaskOutcome_TASK_OUTCOME_SUCCESS})
+	require.False(t, success)
+
+	// An unknown outcome falls through to a safe release.
+	faultLog.clear(methodAck)
+	success, terminal = gateway.applyOutcome(ctx, entry,
+		&conveyorv1.Result{TaskId: "x", Outcome: conveyorv1.TaskOutcome_TASK_OUTCOME_UNSPECIFIED})
+	require.False(t, success)
+	require.False(t, terminal)
+}
 
 // frameRecorder is a FrameSender capturing every frame; dispatches are also
 // pushed to a channel so tests can react to them as a worker would.

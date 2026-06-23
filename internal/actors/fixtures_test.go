@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 	goakt "github.com/tochemey/goakt/v4/actor"
 	"github.com/tochemey/goakt/v4/discovery/static"
+	goaktlog "github.com/tochemey/goakt/v4/log"
 	gtls "github.com/tochemey/goakt/v4/tls"
 	"google.golang.org/protobuf/types/known/durationpb"
 
@@ -82,6 +83,41 @@ func freePorts(t *testing.T, n int) []int {
 // drown test output.
 func quietLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(discardWriter{}, &slog.HandlerOptions{Level: slog.LevelError}))
+}
+
+// spawnIsolated starts a bare actor system carrying only the engine runtime
+// extension and spawns one actor into it, returning its PID. It exercises an
+// actor's own message handling without the engine's singletons, whose shared
+// schedule references a second live copy of the same actor would otherwise race.
+func spawnIsolated(t *testing.T, name string, actor goakt.Actor) *goakt.PID {
+	t.Helper()
+
+	ctx := context.Background()
+	runtime := newTestRuntime(t)
+
+	system, err := goakt.NewActorSystem(name+"-system",
+		goakt.WithLogger(goaktlog.DiscardLogger), goakt.WithExtensions(runtime))
+	require.NoError(t, err)
+	require.NoError(t, system.Start(ctx))
+
+	t.Cleanup(func() { _ = system.Stop(ctx) })
+
+	pid, err := system.Spawn(ctx, name, actor)
+	require.NoError(t, err)
+
+	return pid
+}
+
+// requireUnhandled sends a message the actor does not handle and blocks until
+// it has been processed, so the default Unhandled branch is covered
+// deterministically rather than racing teardown as a fire-and-forget Tell
+// would. An unhandled message yields no reply, so Ask returns an error.
+func requireUnhandled(t *testing.T, pid *goakt.PID, message any) {
+	t.Helper()
+
+	_, err := goakt.Ask(context.Background(), pid, message, time.Second)
+	require.Error(t, err)
+	require.True(t, pid.IsRunning())
 }
 
 // discardWriter throws log output away.

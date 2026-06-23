@@ -32,13 +32,7 @@ func TestDependencyResolverPreStartRequiresRuntimeExtension(t *testing.T) {
 }
 
 func TestDependencyResolverIgnoresUnknownMessage(t *testing.T) {
-	ctx := context.Background()
-	engine := startEngine(t, memory.New(clock.System()))
-
-	pid, err := engine.System().Spawn(ctx, "extra-resolver", NewDependencyResolver())
-	require.NoError(t, err)
-	require.NoError(t, goakt.Tell(ctx, pid, new(conveyorv1.ReapTick)))
-	require.True(t, pid.IsRunning())
+	requireUnhandled(t, spawnIsolated(t, "extra-resolver", NewDependencyResolver()), new(conveyorv1.ReapTick))
 }
 
 // TestDependencyChainDispatchesAfterDependency drives the full Phase 3 inline
