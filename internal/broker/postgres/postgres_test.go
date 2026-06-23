@@ -175,6 +175,9 @@ func TestPoolErrorPropagation(t *testing.T) {
 		{"DeleteQueueConcurrencyLimit", true, 1, func(b *Broker) error { return b.DeleteQueueConcurrencyLimit(ctx, "q") }},
 		{"QueueConcurrencyLimit", false, 1, func(b *Broker) error { _, _, err := b.QueueConcurrencyLimit(ctx, "q"); return err }},
 		{"QueueConcurrencyLimits", false, 0, func(b *Broker) error { _, err := b.QueueConcurrencyLimits(ctx); return err }},
+		{"SetGroupConfig", true, 6, func(b *Broker) error { return b.SetGroupConfig(ctx, "q", "g", 1, time.Second, time.Second) }},
+		{"DeleteGroupConfig", true, 2, func(b *Broker) error { return b.DeleteGroupConfig(ctx, "q", "g") }},
+		{"GroupConfigs", false, 0, func(b *Broker) error { _, err := b.GroupConfigs(ctx); return err }},
 	}
 
 	for _, tc := range tests {
@@ -238,6 +241,7 @@ func TestRowIterationErrors(t *testing.T) {
 		{"QueueStats", 0, func(b *Broker) error { _, err := b.QueueStats(ctx); return err }},
 		{"QueueRateLimits", 0, func(b *Broker) error { _, err := b.QueueRateLimits(ctx); return err }},
 		{"QueueConcurrencyLimits", 0, func(b *Broker) error { _, err := b.QueueConcurrencyLimits(ctx); return err }},
+		{"GroupConfigs", 0, func(b *Broker) error { _, err := b.GroupConfigs(ctx); return err }},
 	}
 
 	for _, tc := range tests {

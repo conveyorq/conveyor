@@ -241,6 +241,9 @@ func TestGroupConfigSetListDelete(t *testing.T) {
 	require.EqualValues(t, 20, list.Msg.GetConfigs()[0].GetMaxSize())
 	require.Equal(t, 2*time.Minute, list.Msg.GetConfigs()[0].GetMaxDelay().AsDuration())
 
+	_, err = admin.DeleteGroupConfig(ctx, connect.NewRequest(&conveyorv1.DeleteGroupConfigRequest{Group: "emails"}))
+	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err), "delete rejects an empty queue")
+
 	_, err = admin.DeleteGroupConfig(ctx, connect.NewRequest(&conveyorv1.DeleteGroupConfigRequest{Queue: defaultQueueName, Group: "emails"}))
 	require.NoError(t, err)
 
