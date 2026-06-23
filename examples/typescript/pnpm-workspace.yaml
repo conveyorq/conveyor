@@ -1,2 +1,5 @@
+# Approve esbuild to run its postinstall (fetches the native binary).
+# pnpm 11 gates dependency build scripts and errors on unapproved ones
+# (ERR_PNPM_IGNORED_BUILDS); pnpm manages this file via "pnpm approve-builds".
 allowBuilds:
-  esbuild: set this to true or false
+  esbuild: true
