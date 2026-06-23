@@ -17,6 +17,8 @@ import {
 } from "./gen/conveyor/v1/service_pb.js";
 import {
   DependencyFailurePolicy as ProtoDependencyFailurePolicy,
+  RetryPolicySchema,
+  RetryStrategy as ProtoRetryStrategy,
   TaskState as ProtoTaskState,
 } from "./gen/conveyor/v1/task_pb.js";
 import type {
@@ -26,6 +28,8 @@ import type {
   EnqueueFn,
   EnqueueMiddleware,
   EnqueueOptions,
+  RetryPolicy,
+  RetryStrategy,
   TaskInfo,
   TaskState,
 } from "./options.js";
@@ -135,6 +139,7 @@ export class Client {
       ...(options.expiresIn !== undefined ? { expiresIn: durationFromMs(options.expiresIn) } : {}),
       ...(options.expiresAt !== undefined ? { expiresAt: timestampFromDate(options.expiresAt) } : {}),
       ...(options.dependsOn !== undefined ? { dependsOn: options.dependsOn.map(dependencyToProto) } : {}),
+      ...(options.retryPolicy !== undefined ? { retryPolicy: retryPolicyToProto(options.retryPolicy) } : {}),
     });
 
     try {
@@ -173,6 +178,32 @@ function dependencyToProto(dependency: string | Dependency): { taskId: string; o
     taskId: normalized.taskId,
     onFailure: failurePolicyToProto(normalized.onFailure),
   };
+}
+
+/** retryPolicyToProto builds the wire retry policy; an omitted field keeps the server default. */
+function retryPolicyToProto(policy: RetryPolicy) {
+  return create(RetryPolicySchema, {
+    strategy: retryStrategyToProto(policy.strategy),
+    ...(policy.base !== undefined ? { base: durationFromMs(policy.base) } : {}),
+    ...(policy.max !== undefined ? { max: durationFromMs(policy.max) } : {}),
+  });
+}
+
+/** retryStrategyToProto maps the SDK retry strategy to the wire enum. */
+function retryStrategyToProto(strategy?: RetryStrategy): ProtoRetryStrategy {
+  switch (strategy) {
+    case "exponential":
+      return ProtoRetryStrategy.EXPONENTIAL;
+
+    case "linear":
+      return ProtoRetryStrategy.LINEAR;
+
+    case "fixed":
+      return ProtoRetryStrategy.FIXED;
+
+    default:
+      return ProtoRetryStrategy.UNSPECIFIED;
+  }
 }
 
 /** failurePolicyToProto maps a public failure policy to its wire enum value. */

@@ -46,6 +46,8 @@ from .options import (
     EnqueueFn,
     EnqueueMiddleware,
     EnqueueOptions,
+    RetryPolicy,
+    RetryStrategy,
     TaskInfo,
     TaskState,
 )
@@ -79,6 +81,8 @@ __all__ = [
     "Middleware",
     "Mux",
     "Payload",
+    "RetryPolicy",
+    "RetryStrategy",
     "SDK_VERSION",
     "SkipRetry",
     "SyncClient",

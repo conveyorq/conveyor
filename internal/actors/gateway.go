@@ -128,6 +128,9 @@ type inflightTask struct {
 	// cancelRequested records an admin cancel for this delivery: an
 	// aborted attempt archives instead of retrying.
 	cancelRequested bool
+	// strategy is the retry backoff for this task: its own policy when set,
+	// otherwise the gateway's default.
+	strategy backoff.Strategy
 }
 
 // Gateway is the per-session bridge between the actor world and one worker
@@ -183,7 +186,13 @@ func (g *Gateway) PreStart(ctx *goakt.Context) error {
 	}
 
 	g.runtime = runtime
-	g.strategy = backoff.New(backoff.DefaultBase, backoff.DefaultCap)
+
+	// Fall back to the package default when no backoff is configured, so a
+	// Settings built without one (an embedder, a test) still retries sanely.
+	g.strategy = runtime.Settings().RetryBackoff
+	if g.strategy.Base() <= 0 {
+		g.strategy = backoff.New(backoff.DefaultBase, backoff.DefaultCap)
+	}
 	g.identities = make(map[string]*goakt.GrainIdentity, len(g.session.Queues))
 	g.inflight = make(map[string]*inflightTask)
 	g.batches = make(map[string][]string)
@@ -317,6 +326,7 @@ func (g *Gateway) dispatch(message *conveyorv1.ExecuteTask) {
 		taskType:     task.GetType(),
 		retried:      task.GetRetried(),
 		maxRetry:     task.GetOptions().GetMaxRetry(),
+		strategy:     g.strategyFor(task.GetOptions().GetRetryPolicy()),
 	}
 
 	// Queue latency: how long the task waited from enqueue to dispatch.
@@ -415,6 +425,51 @@ func (g *Gateway) progress(ctx *goakt.ReceiveContext, message *conveyorv1.Progre
 	}
 }
 
+// strategyFor resolves the retry backoff for a dispatched task: its own policy
+// when set, otherwise the gateway's configured default. Each policy field falls
+// back to the default's value when left at zero, so a task may override only the
+// strategy, only the timing, or all of it.
+func (g *Gateway) strategyFor(policy *conveyorv1.RetryPolicy) backoff.Strategy {
+	if policy == nil {
+		return g.strategy
+	}
+
+	kind := g.strategy.Kind()
+	if mapped, ok := backoffKind(policy.GetStrategy()); ok {
+		kind = mapped
+	}
+
+	base := policy.GetBase().AsDuration()
+	if base <= 0 {
+		base = g.strategy.Base()
+	}
+
+	maxDelay := policy.GetMax().AsDuration()
+	if maxDelay <= 0 {
+		maxDelay = g.strategy.Cap()
+	}
+
+	return backoff.NewWithKind(kind, base, maxDelay)
+}
+
+// backoffKind maps a wire retry strategy to a backoff kind. It returns false for
+// the unspecified strategy, which means "use the server default".
+func backoffKind(strategy conveyorv1.RetryStrategy) (backoff.Kind, bool) {
+	switch strategy {
+	case conveyorv1.RetryStrategy_RETRY_STRATEGY_EXPONENTIAL:
+		return backoff.Exponential, true
+
+	case conveyorv1.RetryStrategy_RETRY_STRATEGY_LINEAR:
+		return backoff.Linear, true
+
+	case conveyorv1.RetryStrategy_RETRY_STRATEGY_FIXED:
+		return backoff.Fixed, true
+
+	default:
+		return 0, false
+	}
+}
+
 // applyOutcome performs the durable transition for one finished delivery and
 // records its process-duration and breaker sample. It returns whether the
 // delivery succeeded and whether it reached a terminal state (completed or
@@ -451,7 +506,7 @@ func (g *Gateway) applyOutcome(goCtx context.Context, entry *inflightTask, messa
 			terminated = true
 
 		default:
-			processAt := g.runtime.Clock().Now().Add(g.strategy.Delay(entry.retried))
+			processAt := g.runtime.Clock().Now().Add(entry.strategy.Delay(entry.retried))
 			err = taskLog.Fail(goCtx, taskID, entry.leaseID, message.GetErrorMsg(), processAt)
 			counters.Retried.Add(1)
 		}

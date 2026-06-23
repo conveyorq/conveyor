@@ -128,7 +128,28 @@ type enqueueOptions struct {
 	dependsOn []Dependency
 	// concurrencyKey caps how many tasks sharing it run at once on its queue.
 	concurrencyKey string
+	// retryStrategy overrides the server's default backoff growth; zero
+	// (RetryDefault) keeps it.
+	retryStrategy RetryStrategy
+	// retryBase overrides the first-retry delay ceiling; zero keeps the default.
+	retryBase time.Duration
+	// retryMax overrides the overall retry delay cap; zero keeps the default.
+	retryMax time.Duration
 }
+
+// RetryStrategy selects how a task's retry backoff delay grows with the attempt.
+type RetryStrategy int
+
+const (
+	// RetryDefault uses the server's default backoff strategy.
+	RetryDefault RetryStrategy = iota
+	// RetryExponential doubles the delay ceiling each retry.
+	RetryExponential
+	// RetryLinear grows the delay ceiling linearly with the attempt.
+	RetryLinear
+	// RetryFixed holds the delay ceiling constant across retries.
+	RetryFixed
+)
 
 // TaskID assigns a client-chosen task id, making Enqueue retries
 // idempotent: re-enqueueing an existing id is a no-op.
@@ -220,4 +241,18 @@ func UniqueKey(key string) EnqueueOption {
 // Group.
 func ConcurrencyKey(key string) EnqueueOption {
 	return func(o *enqueueOptions) { o.concurrencyKey = key }
+}
+
+// RetryPolicy overrides the server's default retry backoff for this task: the
+// growth strategy plus the first-retry delay (base) and the overall cap (max).
+// A zero base or max keeps the server default for that field, and RetryDefault
+// keeps the server's strategy, so you can override only the part you need, e.g.
+// RetryPolicy(RetryFixed, time.Minute, time.Minute) for a steady one-minute
+// retry against a rate-limited downstream.
+func RetryPolicy(strategy RetryStrategy, base, maxDelay time.Duration) EnqueueOption {
+	return func(o *enqueueOptions) {
+		o.retryStrategy = strategy
+		o.retryBase = base
+		o.retryMax = maxDelay
+	}
 }

@@ -23,6 +23,7 @@ import (
 	gtls "github.com/tochemey/goakt/v4/tls"
 
 	"github.com/conveyorq/conveyor/internal/actors"
+	"github.com/conveyorq/conveyor/internal/backoff"
 	"github.com/conveyorq/conveyor/internal/broker"
 	"github.com/conveyorq/conveyor/internal/broker/memory"
 	"github.com/conveyorq/conveyor/internal/broker/postgres"
@@ -134,6 +135,11 @@ func (s *Server) Start(ctx context.Context) error {
 		s.telemetry = metrics
 	}
 
+	// Config validation has already accepted the strategy name, so the zero
+	// value (exponential) only stands in for an impossible parse miss.
+	retryKind, _ := backoff.ParseKind(s.config.Engine.RetryBackoffStrategy)
+	retryBackoff := backoff.NewWithKind(retryKind, s.config.Engine.RetryBackoffBase, s.config.Engine.RetryBackoffCap)
+
 	engine := actors.NewEngine(taskLog, clock.System(), s.logger, actors.Config{
 		Name:          systemName,
 		BindAddr:      s.config.Cluster.BindAddr,
@@ -158,6 +164,7 @@ func (s *Server) Start(ctx context.Context) error {
 			RateLimitBurst:      s.config.Engine.RateLimitBurst,
 			EventsEnabled:       s.config.Events.Enabled,
 			EventBufferSize:     s.config.Events.BufferSize,
+			RetryBackoff:        retryBackoff,
 		},
 	})
 

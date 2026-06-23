@@ -260,6 +260,7 @@ func (s *TaskService) envelopeFromRequest(request *conveyorv1.EnqueueRequest) (*
 			ExpiresAt:      expiresAt,
 			DependsOn:      request.GetDependsOn(),
 			ConcurrencyKey: request.GetConcurrencyKey(),
+			RetryPolicy:    request.GetRetryPolicy(),
 		},
 	}, nil
 }

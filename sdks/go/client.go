@@ -218,6 +218,10 @@ func (c *Client) Enqueue(ctx context.Context, task *Task, opts ...EnqueueOption)
 			request.DependsOn = dependenciesToProto(settings.dependsOn)
 		}
 
+		if policy := retryPolicyToProto(settings.retryStrategy, settings.retryBase, settings.retryMax); policy != nil {
+			request.RetryPolicy = policy
+		}
+
 		info, err := c.wire.Enqueue(ctx, request)
 		if err != nil {
 			return nil, wireError(err)
@@ -298,6 +302,43 @@ func taskInfoFromProto(info *conveyorv1.TaskInfo) *TaskInfo {
 	}
 
 	return result
+}
+
+// retryPolicyToProto builds the wire retry policy from the SDK options, or nil
+// when the task carries no override.
+func retryPolicyToProto(strategy RetryStrategy, base, maxDelay time.Duration) *conveyorv1.RetryPolicy {
+	if strategy == RetryDefault && base <= 0 && maxDelay <= 0 {
+		return nil
+	}
+
+	policy := &conveyorv1.RetryPolicy{Strategy: retryStrategyToProto(strategy)}
+
+	if base > 0 {
+		policy.Base = durationpb.New(base)
+	}
+
+	if maxDelay > 0 {
+		policy.Max = durationpb.New(maxDelay)
+	}
+
+	return policy
+}
+
+// retryStrategyToProto maps the SDK retry strategy to the wire enum.
+func retryStrategyToProto(strategy RetryStrategy) conveyorv1.RetryStrategy {
+	switch strategy {
+	case RetryExponential:
+		return conveyorv1.RetryStrategy_RETRY_STRATEGY_EXPONENTIAL
+
+	case RetryLinear:
+		return conveyorv1.RetryStrategy_RETRY_STRATEGY_LINEAR
+
+	case RetryFixed:
+		return conveyorv1.RetryStrategy_RETRY_STRATEGY_FIXED
+
+	default:
+		return conveyorv1.RetryStrategy_RETRY_STRATEGY_UNSPECIFIED
+	}
 }
 
 // taskStateFromProto maps the wire task state to the SDK type.

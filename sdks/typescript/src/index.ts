@@ -37,4 +37,6 @@ export type {
   TaskState,
   Dependency,
   DependencyFailure,
+  RetryPolicy,
+  RetryStrategy,
 } from "./options.js";

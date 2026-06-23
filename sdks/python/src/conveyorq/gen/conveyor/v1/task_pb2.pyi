@@ -38,6 +38,13 @@ class DependencyFailurePolicy(int, metaclass=_enum_type_wrapper.EnumTypeWrapper)
     DEPENDENCY_FAILURE_POLICY_BLOCK: _ClassVar[DependencyFailurePolicy]
     DEPENDENCY_FAILURE_POLICY_CASCADE_CANCEL: _ClassVar[DependencyFailurePolicy]
     DEPENDENCY_FAILURE_POLICY_CONTINUE: _ClassVar[DependencyFailurePolicy]
+
+class RetryStrategy(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    RETRY_STRATEGY_UNSPECIFIED: _ClassVar[RetryStrategy]
+    RETRY_STRATEGY_EXPONENTIAL: _ClassVar[RetryStrategy]
+    RETRY_STRATEGY_LINEAR: _ClassVar[RetryStrategy]
+    RETRY_STRATEGY_FIXED: _ClassVar[RetryStrategy]
 TASK_STATE_UNSPECIFIED: TaskState
 TASK_STATE_SCHEDULED: TaskState
 TASK_STATE_PENDING: TaskState
@@ -61,6 +68,10 @@ DEPENDENCY_FAILURE_POLICY_UNSPECIFIED: DependencyFailurePolicy
 DEPENDENCY_FAILURE_POLICY_BLOCK: DependencyFailurePolicy
 DEPENDENCY_FAILURE_POLICY_CASCADE_CANCEL: DependencyFailurePolicy
 DEPENDENCY_FAILURE_POLICY_CONTINUE: DependencyFailurePolicy
+RETRY_STRATEGY_UNSPECIFIED: RetryStrategy
+RETRY_STRATEGY_EXPONENTIAL: RetryStrategy
+RETRY_STRATEGY_LINEAR: RetryStrategy
+RETRY_STRATEGY_FIXED: RetryStrategy
 
 class TaskEvent(_message.Message):
     __slots__ = ('id', 'queue', 'type', 'state', 'event_type', 'occurred_at', 'attempt', 'last_error')
@@ -139,7 +150,7 @@ class TaskEnvelope(_message.Message):
         ...
 
 class TaskOptions(_message.Message):
-    __slots__ = ('max_retry', 'timeout', 'deadline', 'process_at', 'unique_key', 'unique_ttl', 'retention', 'priority', 'group', 'expires_at', 'depends_on', 'concurrency_key')
+    __slots__ = ('max_retry', 'timeout', 'deadline', 'process_at', 'unique_key', 'unique_ttl', 'retention', 'priority', 'group', 'expires_at', 'depends_on', 'concurrency_key', 'retry_policy')
     MAX_RETRY_FIELD_NUMBER: _ClassVar[int]
     TIMEOUT_FIELD_NUMBER: _ClassVar[int]
     DEADLINE_FIELD_NUMBER: _ClassVar[int]
@@ -152,6 +163,7 @@ class TaskOptions(_message.Message):
     EXPIRES_AT_FIELD_NUMBER: _ClassVar[int]
     DEPENDS_ON_FIELD_NUMBER: _ClassVar[int]
     CONCURRENCY_KEY_FIELD_NUMBER: _ClassVar[int]
+    RETRY_POLICY_FIELD_NUMBER: _ClassVar[int]
     max_retry: int
     timeout: _duration_pb2.Duration
     deadline: _timestamp_pb2.Timestamp
@@ -164,6 +176,19 @@ class TaskOptions(_message.Message):
     expires_at: _timestamp_pb2.Timestamp
     depends_on: _containers.RepeatedCompositeFieldContainer[TaskDependency]
     concurrency_key: str
+    retry_policy: RetryPolicy
 
-    def __init__(self, max_retry: _Optional[int]=..., timeout: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., deadline: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., process_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., unique_key: _Optional[str]=..., unique_ttl: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., retention: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., priority: _Optional[int]=..., group: _Optional[str]=..., expires_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., depends_on: _Optional[_Iterable[_Union[TaskDependency, _Mapping]]]=..., concurrency_key: _Optional[str]=...) -> None:
+    def __init__(self, max_retry: _Optional[int]=..., timeout: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., deadline: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., process_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., unique_key: _Optional[str]=..., unique_ttl: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., retention: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., priority: _Optional[int]=..., group: _Optional[str]=..., expires_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., depends_on: _Optional[_Iterable[_Union[TaskDependency, _Mapping]]]=..., concurrency_key: _Optional[str]=..., retry_policy: _Optional[_Union[RetryPolicy, _Mapping]]=...) -> None:
+        ...
+
+class RetryPolicy(_message.Message):
+    __slots__ = ('strategy', 'base', 'max')
+    STRATEGY_FIELD_NUMBER: _ClassVar[int]
+    BASE_FIELD_NUMBER: _ClassVar[int]
+    MAX_FIELD_NUMBER: _ClassVar[int]
+    strategy: RetryStrategy
+    base: _duration_pb2.Duration
+    max: _duration_pb2.Duration
+
+    def __init__(self, strategy: _Optional[_Union[RetryStrategy, str]]=..., base: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., max: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=...) -> None:
         ...

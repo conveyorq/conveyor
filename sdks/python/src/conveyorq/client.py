@@ -22,6 +22,7 @@ from .options import (
     EnqueueFn,
     EnqueueMiddleware,
     EnqueueOptions,
+    RetryStrategy,
     TaskInfo,
     TaskState,
 )
@@ -44,6 +45,13 @@ _FAILURE_POLICIES = {
     DependencyFailure.BLOCK: task_pb2.DEPENDENCY_FAILURE_POLICY_BLOCK,
     DependencyFailure.CASCADE_CANCEL: task_pb2.DEPENDENCY_FAILURE_POLICY_CASCADE_CANCEL,
     DependencyFailure.CONTINUE: task_pb2.DEPENDENCY_FAILURE_POLICY_CONTINUE,
+}
+
+_RETRY_STRATEGIES = {
+    RetryStrategy.DEFAULT: task_pb2.RETRY_STRATEGY_UNSPECIFIED,
+    RetryStrategy.EXPONENTIAL: task_pb2.RETRY_STRATEGY_EXPONENTIAL,
+    RetryStrategy.LINEAR: task_pb2.RETRY_STRATEGY_LINEAR,
+    RetryStrategy.FIXED: task_pb2.RETRY_STRATEGY_FIXED,
 }
 
 
@@ -198,6 +206,14 @@ class Client:
                 task_id=edge.task_id,
                 on_failure=_FAILURE_POLICIES[edge.on_failure],
             )
+
+        if options.retry_policy is not None:
+            policy = options.retry_policy
+            request.retry_policy.strategy = _RETRY_STRATEGIES[policy.strategy]
+            if policy.base is not None:
+                request.retry_policy.base.CopyFrom(_time.duration_proto(policy.base))
+            if policy.max is not None:
+                request.retry_policy.max.CopyFrom(_time.duration_proto(policy.max))
 
         try:
             response = await stub.Enqueue(request, metadata=self._metadata)

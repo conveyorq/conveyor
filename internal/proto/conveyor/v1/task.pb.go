@@ -253,6 +253,63 @@ func (DependencyFailurePolicy) EnumDescriptor() ([]byte, []int) {
 	return file_conveyor_v1_task_proto_rawDescGZIP(), []int{2}
 }
 
+// RetryStrategy selects how a task's retry backoff delay grows with the attempt.
+type RetryStrategy int32
+
+const (
+	// RETRY_STRATEGY_UNSPECIFIED uses the server's default strategy.
+	RetryStrategy_RETRY_STRATEGY_UNSPECIFIED RetryStrategy = 0
+	// RETRY_STRATEGY_EXPONENTIAL doubles the delay ceiling each retry.
+	RetryStrategy_RETRY_STRATEGY_EXPONENTIAL RetryStrategy = 1
+	// RETRY_STRATEGY_LINEAR grows the delay ceiling linearly with the attempt.
+	RetryStrategy_RETRY_STRATEGY_LINEAR RetryStrategy = 2
+	// RETRY_STRATEGY_FIXED holds the delay ceiling constant across retries.
+	RetryStrategy_RETRY_STRATEGY_FIXED RetryStrategy = 3
+)
+
+// Enum value maps for RetryStrategy.
+var (
+	RetryStrategy_name = map[int32]string{
+		0: "RETRY_STRATEGY_UNSPECIFIED",
+		1: "RETRY_STRATEGY_EXPONENTIAL",
+		2: "RETRY_STRATEGY_LINEAR",
+		3: "RETRY_STRATEGY_FIXED",
+	}
+	RetryStrategy_value = map[string]int32{
+		"RETRY_STRATEGY_UNSPECIFIED": 0,
+		"RETRY_STRATEGY_EXPONENTIAL": 1,
+		"RETRY_STRATEGY_LINEAR":      2,
+		"RETRY_STRATEGY_FIXED":       3,
+	}
+)
+
+func (x RetryStrategy) Enum() *RetryStrategy {
+	p := new(RetryStrategy)
+	*p = x
+	return p
+}
+
+func (x RetryStrategy) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (RetryStrategy) Descriptor() protoreflect.EnumDescriptor {
+	return file_conveyor_v1_task_proto_enumTypes[3].Descriptor()
+}
+
+func (RetryStrategy) Type() protoreflect.EnumType {
+	return &file_conveyor_v1_task_proto_enumTypes[3]
+}
+
+func (x RetryStrategy) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use RetryStrategy.Descriptor instead.
+func (RetryStrategy) EnumDescriptor() ([]byte, []int) {
+	return file_conveyor_v1_task_proto_rawDescGZIP(), []int{3}
+}
+
 // TaskEvent is one task lifecycle transition delivered on the AdminService
 // WatchEvents stream and the optional webhook sink. It is a lightweight
 // notification: it carries the task's identity and new state, not its payload.
@@ -641,8 +698,12 @@ type TaskOptions struct {
 	// which forbids a duplicate outright. Mutually exclusive with group, which is
 	// dispatched as a batch on a separate path.
 	ConcurrencyKey string `protobuf:"bytes,12,opt,name=concurrency_key,json=concurrencyKey,proto3" json:"concurrency_key,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// retry_policy overrides the server's default retry backoff for this task,
+	// e.g. a fast linear retry for a flaky internal call or a long fixed delay
+	// for a rate-limited downstream. Unset uses the server default.
+	RetryPolicy   *RetryPolicy `protobuf:"bytes,13,opt,name=retry_policy,json=retryPolicy,proto3" json:"retry_policy,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *TaskOptions) Reset() {
@@ -759,6 +820,79 @@ func (x *TaskOptions) GetConcurrencyKey() string {
 	return ""
 }
 
+func (x *TaskOptions) GetRetryPolicy() *RetryPolicy {
+	if x != nil {
+		return x.RetryPolicy
+	}
+	return nil
+}
+
+// RetryPolicy overrides the server's default retry backoff for one task. Each
+// field falls back to the server default when left at its zero value, so a task
+// can override only the strategy, only the timing, or all of it.
+type RetryPolicy struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// strategy selects how the backoff delay grows.
+	Strategy RetryStrategy `protobuf:"varint,1,opt,name=strategy,proto3,enum=conveyor.v1.RetryStrategy" json:"strategy,omitempty"`
+	// base is the first-retry delay ceiling.
+	Base *durationpb.Duration `protobuf:"bytes,2,opt,name=base,proto3" json:"base,omitempty"`
+	// max bounds the delay regardless of how many retries have elapsed.
+	Max           *durationpb.Duration `protobuf:"bytes,3,opt,name=max,proto3" json:"max,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RetryPolicy) Reset() {
+	*x = RetryPolicy{}
+	mi := &file_conveyor_v1_task_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RetryPolicy) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RetryPolicy) ProtoMessage() {}
+
+func (x *RetryPolicy) ProtoReflect() protoreflect.Message {
+	mi := &file_conveyor_v1_task_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RetryPolicy.ProtoReflect.Descriptor instead.
+func (*RetryPolicy) Descriptor() ([]byte, []int) {
+	return file_conveyor_v1_task_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *RetryPolicy) GetStrategy() RetryStrategy {
+	if x != nil {
+		return x.Strategy
+	}
+	return RetryStrategy_RETRY_STRATEGY_UNSPECIFIED
+}
+
+func (x *RetryPolicy) GetBase() *durationpb.Duration {
+	if x != nil {
+		return x.Base
+	}
+	return nil
+}
+
+func (x *RetryPolicy) GetMax() *durationpb.Duration {
+	if x != nil {
+		return x.Max
+	}
+	return nil
+}
+
 var File_conveyor_v1_task_proto protoreflect.FileDescriptor
 
 const file_conveyor_v1_task_proto_rawDesc = "" +
@@ -801,7 +935,7 @@ const file_conveyor_v1_task_proto_rawDesc = "" +
 	"\x10progress_message\x18\x0e \x01(\tR\x0fprogressMessage\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xbc\x04\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xf9\x04\n" +
 	"\vTaskOptions\x12\x1b\n" +
 	"\tmax_retry\x18\x01 \x01(\x05R\bmaxRetry\x123\n" +
 	"\atimeout\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\atimeout\x126\n" +
@@ -820,7 +954,12 @@ const file_conveyor_v1_task_proto_rawDesc = "" +
 	" \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\x12:\n" +
 	"\n" +
 	"depends_on\x18\v \x03(\v2\x1b.conveyor.v1.TaskDependencyR\tdependsOn\x12'\n" +
-	"\x0fconcurrency_key\x18\f \x01(\tR\x0econcurrencyKeyJ\x04\b\r\x10\x10*\x86\x02\n" +
+	"\x0fconcurrency_key\x18\f \x01(\tR\x0econcurrencyKey\x12;\n" +
+	"\fretry_policy\x18\r \x01(\v2\x18.conveyor.v1.RetryPolicyR\vretryPolicyJ\x04\b\x0e\x10\x10\"\xa1\x01\n" +
+	"\vRetryPolicy\x126\n" +
+	"\bstrategy\x18\x01 \x01(\x0e2\x1a.conveyor.v1.RetryStrategyR\bstrategy\x12-\n" +
+	"\x04base\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\x04base\x12+\n" +
+	"\x03max\x18\x03 \x01(\v2\x19.google.protobuf.DurationR\x03max*\x86\x02\n" +
 	"\tTaskState\x12\x1a\n" +
 	"\x16TASK_STATE_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14TASK_STATE_SCHEDULED\x10\x01\x12\x16\n" +
@@ -846,7 +985,12 @@ const file_conveyor_v1_task_proto_rawDesc = "" +
 	"%DEPENDENCY_FAILURE_POLICY_UNSPECIFIED\x10\x00\x12#\n" +
 	"\x1fDEPENDENCY_FAILURE_POLICY_BLOCK\x10\x01\x12,\n" +
 	"(DEPENDENCY_FAILURE_POLICY_CASCADE_CANCEL\x10\x02\x12&\n" +
-	"\"DEPENDENCY_FAILURE_POLICY_CONTINUE\x10\x03B\xae\x01\n" +
+	"\"DEPENDENCY_FAILURE_POLICY_CONTINUE\x10\x03*\x84\x01\n" +
+	"\rRetryStrategy\x12\x1e\n" +
+	"\x1aRETRY_STRATEGY_UNSPECIFIED\x10\x00\x12\x1e\n" +
+	"\x1aRETRY_STRATEGY_EXPONENTIAL\x10\x01\x12\x19\n" +
+	"\x15RETRY_STRATEGY_LINEAR\x10\x02\x12\x18\n" +
+	"\x14RETRY_STRATEGY_FIXED\x10\x03B\xae\x01\n" +
 	"\x0fcom.conveyor.v1B\tTaskProtoP\x01ZCgithub.com/conveyorq/conveyor/internal/proto/conveyor/v1;conveyorv1\xa2\x02\x03CXX\xaa\x02\vConveyor.V1\xca\x02\vConveyor\\V1\xe2\x02\x17Conveyor\\V1\\GPBMetadata\xea\x02\fConveyor::V1b\x06proto3"
 
 var (
@@ -861,42 +1005,48 @@ func file_conveyor_v1_task_proto_rawDescGZIP() []byte {
 	return file_conveyor_v1_task_proto_rawDescData
 }
 
-var file_conveyor_v1_task_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_conveyor_v1_task_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
+var file_conveyor_v1_task_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
+var file_conveyor_v1_task_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
 var file_conveyor_v1_task_proto_goTypes = []any{
 	(TaskState)(0),                // 0: conveyor.v1.TaskState
 	(TaskEventType)(0),            // 1: conveyor.v1.TaskEventType
 	(DependencyFailurePolicy)(0),  // 2: conveyor.v1.DependencyFailurePolicy
-	(*TaskEvent)(nil),             // 3: conveyor.v1.TaskEvent
-	(*TaskDependency)(nil),        // 4: conveyor.v1.TaskDependency
-	(*TaskEnvelope)(nil),          // 5: conveyor.v1.TaskEnvelope
-	(*TaskOptions)(nil),           // 6: conveyor.v1.TaskOptions
-	nil,                           // 7: conveyor.v1.TaskEnvelope.MetadataEntry
-	(*timestamppb.Timestamp)(nil), // 8: google.protobuf.Timestamp
-	(*durationpb.Duration)(nil),   // 9: google.protobuf.Duration
+	(RetryStrategy)(0),            // 3: conveyor.v1.RetryStrategy
+	(*TaskEvent)(nil),             // 4: conveyor.v1.TaskEvent
+	(*TaskDependency)(nil),        // 5: conveyor.v1.TaskDependency
+	(*TaskEnvelope)(nil),          // 6: conveyor.v1.TaskEnvelope
+	(*TaskOptions)(nil),           // 7: conveyor.v1.TaskOptions
+	(*RetryPolicy)(nil),           // 8: conveyor.v1.RetryPolicy
+	nil,                           // 9: conveyor.v1.TaskEnvelope.MetadataEntry
+	(*timestamppb.Timestamp)(nil), // 10: google.protobuf.Timestamp
+	(*durationpb.Duration)(nil),   // 11: google.protobuf.Duration
 }
 var file_conveyor_v1_task_proto_depIdxs = []int32{
 	0,  // 0: conveyor.v1.TaskEvent.state:type_name -> conveyor.v1.TaskState
 	1,  // 1: conveyor.v1.TaskEvent.event_type:type_name -> conveyor.v1.TaskEventType
-	8,  // 2: conveyor.v1.TaskEvent.occurred_at:type_name -> google.protobuf.Timestamp
+	10, // 2: conveyor.v1.TaskEvent.occurred_at:type_name -> google.protobuf.Timestamp
 	2,  // 3: conveyor.v1.TaskDependency.on_failure:type_name -> conveyor.v1.DependencyFailurePolicy
-	7,  // 4: conveyor.v1.TaskEnvelope.metadata:type_name -> conveyor.v1.TaskEnvelope.MetadataEntry
-	6,  // 5: conveyor.v1.TaskEnvelope.options:type_name -> conveyor.v1.TaskOptions
-	8,  // 6: conveyor.v1.TaskEnvelope.enqueued_at:type_name -> google.protobuf.Timestamp
-	8,  // 7: conveyor.v1.TaskEnvelope.started_at:type_name -> google.protobuf.Timestamp
-	8,  // 8: conveyor.v1.TaskEnvelope.completed_at:type_name -> google.protobuf.Timestamp
-	9,  // 9: conveyor.v1.TaskOptions.timeout:type_name -> google.protobuf.Duration
-	8,  // 10: conveyor.v1.TaskOptions.deadline:type_name -> google.protobuf.Timestamp
-	8,  // 11: conveyor.v1.TaskOptions.process_at:type_name -> google.protobuf.Timestamp
-	9,  // 12: conveyor.v1.TaskOptions.unique_ttl:type_name -> google.protobuf.Duration
-	9,  // 13: conveyor.v1.TaskOptions.retention:type_name -> google.protobuf.Duration
-	8,  // 14: conveyor.v1.TaskOptions.expires_at:type_name -> google.protobuf.Timestamp
-	4,  // 15: conveyor.v1.TaskOptions.depends_on:type_name -> conveyor.v1.TaskDependency
-	16, // [16:16] is the sub-list for method output_type
-	16, // [16:16] is the sub-list for method input_type
-	16, // [16:16] is the sub-list for extension type_name
-	16, // [16:16] is the sub-list for extension extendee
-	0,  // [0:16] is the sub-list for field type_name
+	9,  // 4: conveyor.v1.TaskEnvelope.metadata:type_name -> conveyor.v1.TaskEnvelope.MetadataEntry
+	7,  // 5: conveyor.v1.TaskEnvelope.options:type_name -> conveyor.v1.TaskOptions
+	10, // 6: conveyor.v1.TaskEnvelope.enqueued_at:type_name -> google.protobuf.Timestamp
+	10, // 7: conveyor.v1.TaskEnvelope.started_at:type_name -> google.protobuf.Timestamp
+	10, // 8: conveyor.v1.TaskEnvelope.completed_at:type_name -> google.protobuf.Timestamp
+	11, // 9: conveyor.v1.TaskOptions.timeout:type_name -> google.protobuf.Duration
+	10, // 10: conveyor.v1.TaskOptions.deadline:type_name -> google.protobuf.Timestamp
+	10, // 11: conveyor.v1.TaskOptions.process_at:type_name -> google.protobuf.Timestamp
+	11, // 12: conveyor.v1.TaskOptions.unique_ttl:type_name -> google.protobuf.Duration
+	11, // 13: conveyor.v1.TaskOptions.retention:type_name -> google.protobuf.Duration
+	10, // 14: conveyor.v1.TaskOptions.expires_at:type_name -> google.protobuf.Timestamp
+	5,  // 15: conveyor.v1.TaskOptions.depends_on:type_name -> conveyor.v1.TaskDependency
+	8,  // 16: conveyor.v1.TaskOptions.retry_policy:type_name -> conveyor.v1.RetryPolicy
+	3,  // 17: conveyor.v1.RetryPolicy.strategy:type_name -> conveyor.v1.RetryStrategy
+	11, // 18: conveyor.v1.RetryPolicy.base:type_name -> google.protobuf.Duration
+	11, // 19: conveyor.v1.RetryPolicy.max:type_name -> google.protobuf.Duration
+	20, // [20:20] is the sub-list for method output_type
+	20, // [20:20] is the sub-list for method input_type
+	20, // [20:20] is the sub-list for extension type_name
+	20, // [20:20] is the sub-list for extension extendee
+	0,  // [0:20] is the sub-list for field type_name
 }
 
 func init() { file_conveyor_v1_task_proto_init() }
@@ -909,8 +1059,8 @@ func file_conveyor_v1_task_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_conveyor_v1_task_proto_rawDesc), len(file_conveyor_v1_task_proto_rawDesc)),
-			NumEnums:      3,
-			NumMessages:   5,
+			NumEnums:      4,
+			NumMessages:   6,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

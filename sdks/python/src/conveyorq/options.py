@@ -53,6 +53,33 @@ class Dependency:
     on_failure: DependencyFailure = DependencyFailure.BLOCK
 
 
+class RetryStrategy(str, Enum):
+    """Selects how a task's retry backoff delay grows with the attempt."""
+
+    #: Use the server's default strategy.
+    DEFAULT = "default"
+    #: Double the delay ceiling each retry.
+    EXPONENTIAL = "exponential"
+    #: Grow the delay ceiling linearly with the attempt.
+    LINEAR = "linear"
+    #: Hold the delay ceiling constant across retries.
+    FIXED = "fixed"
+
+
+@dataclass(frozen=True)
+class RetryPolicy:
+    """Overrides the server's default retry backoff for one task. Each field
+    falls back to the server default when left unset, so a task can override only
+    the strategy, only the timing, or all of it."""
+
+    #: How the backoff delay grows.
+    strategy: RetryStrategy = RetryStrategy.DEFAULT
+    #: First-retry delay ceiling; ``None`` keeps the server default.
+    base: Optional[timedelta] = None
+    #: Overall delay cap regardless of attempt; ``None`` keeps the server default.
+    max: Optional[timedelta] = None
+
+
 @dataclass(frozen=True)
 class TaskInfo:
     """The external view of a task returned by the producer API."""
@@ -118,6 +145,8 @@ class EnqueueOptions:
     #: block-on-failure policy; a :class:`Dependency` sets an explicit policy.
     #: Dependencies must be acyclic.
     depends_on: list[str | Dependency] = field(default_factory=list)
+    #: Override the server's default retry backoff for this task; ``None`` keeps it.
+    retry_policy: Optional[RetryPolicy] = None
     #: Extra metadata merged onto the task before commit.
     metadata: dict[str, str] = field(default_factory=dict)
 

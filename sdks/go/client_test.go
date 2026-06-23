@@ -49,6 +49,25 @@ func TestClientEnqueueValidation(t *testing.T) {
 	require.ErrorContains(t, err, "task id is required")
 }
 
+func TestRetryPolicyToProto(t *testing.T) {
+	// No override yields no policy.
+	require.Nil(t, retryPolicyToProto(RetryDefault, 0, 0))
+
+	// A full override maps every field.
+	policy := retryPolicyToProto(RetryFixed, time.Minute, 10*time.Minute)
+	require.NotNil(t, policy)
+	require.Equal(t, conveyorv1.RetryStrategy_RETRY_STRATEGY_FIXED, policy.GetStrategy())
+	require.Equal(t, time.Minute, policy.GetBase().AsDuration())
+	require.Equal(t, 10*time.Minute, policy.GetMax().AsDuration())
+
+	// A timing-only override leaves the strategy unspecified (server default).
+	policy = retryPolicyToProto(RetryDefault, 30*time.Second, 0)
+	require.NotNil(t, policy)
+	require.Equal(t, conveyorv1.RetryStrategy_RETRY_STRATEGY_UNSPECIFIED, policy.GetStrategy())
+	require.Equal(t, 30*time.Second, policy.GetBase().AsDuration())
+	require.Nil(t, policy.GetMax())
+}
+
 func TestWithEnqueueMiddlewareWrapsInOrder(t *testing.T) {
 	var calls []string
 

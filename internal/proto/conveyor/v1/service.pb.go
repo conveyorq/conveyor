@@ -129,8 +129,11 @@ type EnqueueRequest struct {
 	// concurrency_key caps how many tasks sharing it the queue runs at once, up to
 	// the queue's configured concurrency limit. Mutually exclusive with group.
 	ConcurrencyKey string `protobuf:"bytes,20,opt,name=concurrency_key,json=concurrencyKey,proto3" json:"concurrency_key,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// retry_policy overrides the server's default retry backoff for this task;
+	// unset uses the server default.
+	RetryPolicy   *RetryPolicy `protobuf:"bytes,21,opt,name=retry_policy,json=retryPolicy,proto3" json:"retry_policy,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *EnqueueRequest) Reset() {
@@ -301,6 +304,13 @@ func (x *EnqueueRequest) GetConcurrencyKey() string {
 		return x.ConcurrencyKey
 	}
 	return ""
+}
+
+func (x *EnqueueRequest) GetRetryPolicy() *RetryPolicy {
+	if x != nil {
+		return x.RetryPolicy
+	}
+	return nil
 }
 
 type EnqueueResponse struct {
@@ -4321,7 +4331,7 @@ var File_conveyor_v1_service_proto protoreflect.FileDescriptor
 
 const file_conveyor_v1_service_proto_rawDesc = "" +
 	"\n" +
-	"\x19conveyor/v1/service.proto\x12\vconveyor.v1\x1a\x16conveyor/v1/task.proto\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xb1\a\n" +
+	"\x19conveyor/v1/service.proto\x12\vconveyor.v1\x1a\x16conveyor/v1/task.proto\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xee\a\n" +
 	"\x0eEnqueueRequest\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x14\n" +
 	"\x05queue\x18\x02 \x01(\tR\x05queue\x12\x12\n" +
@@ -4350,7 +4360,8 @@ const file_conveyor_v1_service_proto_rawDesc = "" +
 	"expires_at\x18\x12 \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\x12:\n" +
 	"\n" +
 	"depends_on\x18\x13 \x03(\v2\x1b.conveyor.v1.TaskDependencyR\tdependsOn\x12'\n" +
-	"\x0fconcurrency_key\x18\x14 \x01(\tR\x0econcurrencyKey\x1a;\n" +
+	"\x0fconcurrency_key\x18\x14 \x01(\tR\x0econcurrencyKey\x12;\n" +
+	"\fretry_policy\x18\x15 \x01(\v2\x18.conveyor.v1.RetryPolicyR\vretryPolicy\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"<\n" +
@@ -4743,11 +4754,12 @@ var file_conveyor_v1_service_proto_goTypes = []any{
 	(*durationpb.Duration)(nil),                 // 82: google.protobuf.Duration
 	(*timestamppb.Timestamp)(nil),               // 83: google.protobuf.Timestamp
 	(*TaskDependency)(nil),                      // 84: conveyor.v1.TaskDependency
-	(TaskState)(0),                              // 85: conveyor.v1.TaskState
-	(*TaskEnvelope)(nil),                        // 86: conveyor.v1.TaskEnvelope
-	(*TaskOptions)(nil),                         // 87: conveyor.v1.TaskOptions
-	(TaskEventType)(0),                          // 88: conveyor.v1.TaskEventType
-	(*TaskEvent)(nil),                           // 89: conveyor.v1.TaskEvent
+	(*RetryPolicy)(nil),                         // 85: conveyor.v1.RetryPolicy
+	(TaskState)(0),                              // 86: conveyor.v1.TaskState
+	(*TaskEnvelope)(nil),                        // 87: conveyor.v1.TaskEnvelope
+	(*TaskOptions)(nil),                         // 88: conveyor.v1.TaskOptions
+	(TaskEventType)(0),                          // 89: conveyor.v1.TaskEventType
+	(*TaskEvent)(nil),                           // 90: conveyor.v1.TaskEvent
 }
 var file_conveyor_v1_service_proto_depIdxs = []int32{
 	78, // 0: conveyor.v1.EnqueueRequest.metadata:type_name -> conveyor.v1.EnqueueRequest.MetadataEntry
@@ -4760,124 +4772,125 @@ var file_conveyor_v1_service_proto_depIdxs = []int32{
 	82, // 7: conveyor.v1.EnqueueRequest.expires_in:type_name -> google.protobuf.Duration
 	83, // 8: conveyor.v1.EnqueueRequest.expires_at:type_name -> google.protobuf.Timestamp
 	84, // 9: conveyor.v1.EnqueueRequest.depends_on:type_name -> conveyor.v1.TaskDependency
-	8,  // 10: conveyor.v1.EnqueueResponse.task:type_name -> conveyor.v1.TaskInfo
-	1,  // 11: conveyor.v1.EnqueueBatchRequest.tasks:type_name -> conveyor.v1.EnqueueRequest
-	5,  // 12: conveyor.v1.EnqueueBatchResponse.results:type_name -> conveyor.v1.EnqueueResult
-	8,  // 13: conveyor.v1.EnqueueResult.task:type_name -> conveyor.v1.TaskInfo
-	8,  // 14: conveyor.v1.GetTaskResponse.task:type_name -> conveyor.v1.TaskInfo
-	85, // 15: conveyor.v1.TaskInfo.state:type_name -> conveyor.v1.TaskState
-	83, // 16: conveyor.v1.TaskInfo.enqueued_at:type_name -> google.protobuf.Timestamp
-	83, // 17: conveyor.v1.TaskInfo.process_at:type_name -> google.protobuf.Timestamp
-	83, // 18: conveyor.v1.TaskInfo.completed_at:type_name -> google.protobuf.Timestamp
-	83, // 19: conveyor.v1.TaskInfo.started_at:type_name -> google.protobuf.Timestamp
-	11, // 20: conveyor.v1.WorkerMessage.hello:type_name -> conveyor.v1.Hello
-	12, // 21: conveyor.v1.WorkerMessage.credit:type_name -> conveyor.v1.Credit
-	13, // 22: conveyor.v1.WorkerMessage.result:type_name -> conveyor.v1.Result
-	14, // 23: conveyor.v1.WorkerMessage.heartbeat:type_name -> conveyor.v1.Heartbeat
-	19, // 24: conveyor.v1.WorkerMessage.batch_result:type_name -> conveyor.v1.BatchResult
-	15, // 25: conveyor.v1.WorkerMessage.progress:type_name -> conveyor.v1.Progress
-	16, // 26: conveyor.v1.ServerMessage.welcome:type_name -> conveyor.v1.Welcome
-	17, // 27: conveyor.v1.ServerMessage.dispatch:type_name -> conveyor.v1.Dispatch
-	20, // 28: conveyor.v1.ServerMessage.cancel:type_name -> conveyor.v1.Cancel
-	21, // 29: conveyor.v1.ServerMessage.ping:type_name -> conveyor.v1.Ping
-	18, // 30: conveyor.v1.ServerMessage.batch_dispatch:type_name -> conveyor.v1.BatchDispatch
-	79, // 31: conveyor.v1.Hello.queues:type_name -> conveyor.v1.Hello.QueuesEntry
-	80, // 32: conveyor.v1.Hello.labels:type_name -> conveyor.v1.Hello.LabelsEntry
-	0,  // 33: conveyor.v1.Result.outcome:type_name -> conveyor.v1.TaskOutcome
-	82, // 34: conveyor.v1.Welcome.lease_ttl:type_name -> google.protobuf.Duration
-	82, // 35: conveyor.v1.Welcome.heartbeat_interval:type_name -> google.protobuf.Duration
-	86, // 36: conveyor.v1.Dispatch.task:type_name -> conveyor.v1.TaskEnvelope
-	83, // 37: conveyor.v1.Dispatch.deadline:type_name -> google.protobuf.Timestamp
-	86, // 38: conveyor.v1.BatchDispatch.tasks:type_name -> conveyor.v1.TaskEnvelope
-	83, // 39: conveyor.v1.BatchDispatch.deadline:type_name -> google.protobuf.Timestamp
-	13, // 40: conveyor.v1.BatchResult.results:type_name -> conveyor.v1.Result
-	24, // 41: conveyor.v1.ListQueuesResponse.queues:type_name -> conveyor.v1.QueueInfo
-	29, // 42: conveyor.v1.ListRateLimitsResponse.limits:type_name -> conveyor.v1.RateLimitInfo
-	36, // 43: conveyor.v1.ListConcurrencyLimitsResponse.limits:type_name -> conveyor.v1.ConcurrencyLimitInfo
-	85, // 44: conveyor.v1.ListTasksRequest.state:type_name -> conveyor.v1.TaskState
-	8,  // 45: conveyor.v1.ListTasksResponse.tasks:type_name -> conveyor.v1.TaskInfo
-	83, // 46: conveyor.v1.RescheduleTaskRequest.process_at:type_name -> google.protobuf.Timestamp
-	82, // 47: conveyor.v1.RescheduleTaskRequest.process_in:type_name -> google.protobuf.Duration
-	57, // 48: conveyor.v1.BatchTasksResponse.results:type_name -> conveyor.v1.TaskActionResult
-	60, // 49: conveyor.v1.ListCronResponse.entries:type_name -> conveyor.v1.CronEntry
-	87, // 50: conveyor.v1.CronEntry.options:type_name -> conveyor.v1.TaskOptions
-	83, // 51: conveyor.v1.CronEntry.next_run_at:type_name -> google.protobuf.Timestamp
-	60, // 52: conveyor.v1.UpsertCronRequest.entry:type_name -> conveyor.v1.CronEntry
-	71, // 53: conveyor.v1.ClusterInfoResponse.nodes:type_name -> conveyor.v1.NodeInfo
-	83, // 54: conveyor.v1.NodeInfo.started_at:type_name -> google.protobuf.Timestamp
-	74, // 55: conveyor.v1.ListWorkerSessionsResponse.sessions:type_name -> conveyor.v1.WorkerSession
-	83, // 56: conveyor.v1.WorkerSession.connected_at:type_name -> google.protobuf.Timestamp
-	81, // 57: conveyor.v1.BrokerInfoResponse.metrics:type_name -> conveyor.v1.BrokerInfoResponse.MetricsEntry
-	88, // 58: conveyor.v1.WatchEventsRequest.event_types:type_name -> conveyor.v1.TaskEventType
-	1,  // 59: conveyor.v1.TaskService.Enqueue:input_type -> conveyor.v1.EnqueueRequest
-	3,  // 60: conveyor.v1.TaskService.EnqueueBatch:input_type -> conveyor.v1.EnqueueBatchRequest
-	6,  // 61: conveyor.v1.TaskService.GetTask:input_type -> conveyor.v1.GetTaskRequest
-	9,  // 62: conveyor.v1.WorkerService.Session:input_type -> conveyor.v1.WorkerMessage
-	22, // 63: conveyor.v1.AdminService.ListQueues:input_type -> conveyor.v1.ListQueuesRequest
-	25, // 64: conveyor.v1.AdminService.PauseQueue:input_type -> conveyor.v1.PauseQueueRequest
-	27, // 65: conveyor.v1.AdminService.ResumeQueue:input_type -> conveyor.v1.ResumeQueueRequest
-	30, // 66: conveyor.v1.AdminService.ListRateLimits:input_type -> conveyor.v1.ListRateLimitsRequest
-	32, // 67: conveyor.v1.AdminService.SetQueueRateLimit:input_type -> conveyor.v1.SetQueueRateLimitRequest
-	34, // 68: conveyor.v1.AdminService.DeleteQueueRateLimit:input_type -> conveyor.v1.DeleteQueueRateLimitRequest
-	37, // 69: conveyor.v1.AdminService.ListConcurrencyLimits:input_type -> conveyor.v1.ListConcurrencyLimitsRequest
-	39, // 70: conveyor.v1.AdminService.SetQueueConcurrencyLimit:input_type -> conveyor.v1.SetQueueConcurrencyLimitRequest
-	41, // 71: conveyor.v1.AdminService.DeleteQueueConcurrencyLimit:input_type -> conveyor.v1.DeleteQueueConcurrencyLimitRequest
-	43, // 72: conveyor.v1.AdminService.ListTasks:input_type -> conveyor.v1.ListTasksRequest
-	45, // 73: conveyor.v1.AdminService.CancelTask:input_type -> conveyor.v1.CancelTaskRequest
-	47, // 74: conveyor.v1.AdminService.DeleteTask:input_type -> conveyor.v1.DeleteTaskRequest
-	49, // 75: conveyor.v1.AdminService.RunTask:input_type -> conveyor.v1.RunTaskRequest
-	51, // 76: conveyor.v1.AdminService.RescheduleTask:input_type -> conveyor.v1.RescheduleTaskRequest
-	53, // 77: conveyor.v1.AdminService.ArchiveTask:input_type -> conveyor.v1.ArchiveTaskRequest
-	55, // 78: conveyor.v1.AdminService.BatchDeleteTasks:input_type -> conveyor.v1.BatchTasksRequest
-	55, // 79: conveyor.v1.AdminService.BatchRunTasks:input_type -> conveyor.v1.BatchTasksRequest
-	55, // 80: conveyor.v1.AdminService.BatchCancelTasks:input_type -> conveyor.v1.BatchTasksRequest
-	55, // 81: conveyor.v1.AdminService.BatchArchiveTasks:input_type -> conveyor.v1.BatchTasksRequest
-	58, // 82: conveyor.v1.AdminService.ListCron:input_type -> conveyor.v1.ListCronRequest
-	61, // 83: conveyor.v1.AdminService.UpsertCron:input_type -> conveyor.v1.UpsertCronRequest
-	63, // 84: conveyor.v1.AdminService.PauseCron:input_type -> conveyor.v1.PauseCronRequest
-	65, // 85: conveyor.v1.AdminService.ResumeCron:input_type -> conveyor.v1.ResumeCronRequest
-	67, // 86: conveyor.v1.AdminService.DeleteCron:input_type -> conveyor.v1.DeleteCronRequest
-	69, // 87: conveyor.v1.AdminService.ClusterInfo:input_type -> conveyor.v1.ClusterInfoRequest
-	72, // 88: conveyor.v1.AdminService.ListWorkerSessions:input_type -> conveyor.v1.ListWorkerSessionsRequest
-	75, // 89: conveyor.v1.AdminService.BrokerInfo:input_type -> conveyor.v1.BrokerInfoRequest
-	77, // 90: conveyor.v1.AdminService.WatchEvents:input_type -> conveyor.v1.WatchEventsRequest
-	2,  // 91: conveyor.v1.TaskService.Enqueue:output_type -> conveyor.v1.EnqueueResponse
-	4,  // 92: conveyor.v1.TaskService.EnqueueBatch:output_type -> conveyor.v1.EnqueueBatchResponse
-	7,  // 93: conveyor.v1.TaskService.GetTask:output_type -> conveyor.v1.GetTaskResponse
-	10, // 94: conveyor.v1.WorkerService.Session:output_type -> conveyor.v1.ServerMessage
-	23, // 95: conveyor.v1.AdminService.ListQueues:output_type -> conveyor.v1.ListQueuesResponse
-	26, // 96: conveyor.v1.AdminService.PauseQueue:output_type -> conveyor.v1.PauseQueueResponse
-	28, // 97: conveyor.v1.AdminService.ResumeQueue:output_type -> conveyor.v1.ResumeQueueResponse
-	31, // 98: conveyor.v1.AdminService.ListRateLimits:output_type -> conveyor.v1.ListRateLimitsResponse
-	33, // 99: conveyor.v1.AdminService.SetQueueRateLimit:output_type -> conveyor.v1.SetQueueRateLimitResponse
-	35, // 100: conveyor.v1.AdminService.DeleteQueueRateLimit:output_type -> conveyor.v1.DeleteQueueRateLimitResponse
-	38, // 101: conveyor.v1.AdminService.ListConcurrencyLimits:output_type -> conveyor.v1.ListConcurrencyLimitsResponse
-	40, // 102: conveyor.v1.AdminService.SetQueueConcurrencyLimit:output_type -> conveyor.v1.SetQueueConcurrencyLimitResponse
-	42, // 103: conveyor.v1.AdminService.DeleteQueueConcurrencyLimit:output_type -> conveyor.v1.DeleteQueueConcurrencyLimitResponse
-	44, // 104: conveyor.v1.AdminService.ListTasks:output_type -> conveyor.v1.ListTasksResponse
-	46, // 105: conveyor.v1.AdminService.CancelTask:output_type -> conveyor.v1.CancelTaskResponse
-	48, // 106: conveyor.v1.AdminService.DeleteTask:output_type -> conveyor.v1.DeleteTaskResponse
-	50, // 107: conveyor.v1.AdminService.RunTask:output_type -> conveyor.v1.RunTaskResponse
-	52, // 108: conveyor.v1.AdminService.RescheduleTask:output_type -> conveyor.v1.RescheduleTaskResponse
-	54, // 109: conveyor.v1.AdminService.ArchiveTask:output_type -> conveyor.v1.ArchiveTaskResponse
-	56, // 110: conveyor.v1.AdminService.BatchDeleteTasks:output_type -> conveyor.v1.BatchTasksResponse
-	56, // 111: conveyor.v1.AdminService.BatchRunTasks:output_type -> conveyor.v1.BatchTasksResponse
-	56, // 112: conveyor.v1.AdminService.BatchCancelTasks:output_type -> conveyor.v1.BatchTasksResponse
-	56, // 113: conveyor.v1.AdminService.BatchArchiveTasks:output_type -> conveyor.v1.BatchTasksResponse
-	59, // 114: conveyor.v1.AdminService.ListCron:output_type -> conveyor.v1.ListCronResponse
-	62, // 115: conveyor.v1.AdminService.UpsertCron:output_type -> conveyor.v1.UpsertCronResponse
-	64, // 116: conveyor.v1.AdminService.PauseCron:output_type -> conveyor.v1.PauseCronResponse
-	66, // 117: conveyor.v1.AdminService.ResumeCron:output_type -> conveyor.v1.ResumeCronResponse
-	68, // 118: conveyor.v1.AdminService.DeleteCron:output_type -> conveyor.v1.DeleteCronResponse
-	70, // 119: conveyor.v1.AdminService.ClusterInfo:output_type -> conveyor.v1.ClusterInfoResponse
-	73, // 120: conveyor.v1.AdminService.ListWorkerSessions:output_type -> conveyor.v1.ListWorkerSessionsResponse
-	76, // 121: conveyor.v1.AdminService.BrokerInfo:output_type -> conveyor.v1.BrokerInfoResponse
-	89, // 122: conveyor.v1.AdminService.WatchEvents:output_type -> conveyor.v1.TaskEvent
-	91, // [91:123] is the sub-list for method output_type
-	59, // [59:91] is the sub-list for method input_type
-	59, // [59:59] is the sub-list for extension type_name
-	59, // [59:59] is the sub-list for extension extendee
-	0,  // [0:59] is the sub-list for field type_name
+	85, // 10: conveyor.v1.EnqueueRequest.retry_policy:type_name -> conveyor.v1.RetryPolicy
+	8,  // 11: conveyor.v1.EnqueueResponse.task:type_name -> conveyor.v1.TaskInfo
+	1,  // 12: conveyor.v1.EnqueueBatchRequest.tasks:type_name -> conveyor.v1.EnqueueRequest
+	5,  // 13: conveyor.v1.EnqueueBatchResponse.results:type_name -> conveyor.v1.EnqueueResult
+	8,  // 14: conveyor.v1.EnqueueResult.task:type_name -> conveyor.v1.TaskInfo
+	8,  // 15: conveyor.v1.GetTaskResponse.task:type_name -> conveyor.v1.TaskInfo
+	86, // 16: conveyor.v1.TaskInfo.state:type_name -> conveyor.v1.TaskState
+	83, // 17: conveyor.v1.TaskInfo.enqueued_at:type_name -> google.protobuf.Timestamp
+	83, // 18: conveyor.v1.TaskInfo.process_at:type_name -> google.protobuf.Timestamp
+	83, // 19: conveyor.v1.TaskInfo.completed_at:type_name -> google.protobuf.Timestamp
+	83, // 20: conveyor.v1.TaskInfo.started_at:type_name -> google.protobuf.Timestamp
+	11, // 21: conveyor.v1.WorkerMessage.hello:type_name -> conveyor.v1.Hello
+	12, // 22: conveyor.v1.WorkerMessage.credit:type_name -> conveyor.v1.Credit
+	13, // 23: conveyor.v1.WorkerMessage.result:type_name -> conveyor.v1.Result
+	14, // 24: conveyor.v1.WorkerMessage.heartbeat:type_name -> conveyor.v1.Heartbeat
+	19, // 25: conveyor.v1.WorkerMessage.batch_result:type_name -> conveyor.v1.BatchResult
+	15, // 26: conveyor.v1.WorkerMessage.progress:type_name -> conveyor.v1.Progress
+	16, // 27: conveyor.v1.ServerMessage.welcome:type_name -> conveyor.v1.Welcome
+	17, // 28: conveyor.v1.ServerMessage.dispatch:type_name -> conveyor.v1.Dispatch
+	20, // 29: conveyor.v1.ServerMessage.cancel:type_name -> conveyor.v1.Cancel
+	21, // 30: conveyor.v1.ServerMessage.ping:type_name -> conveyor.v1.Ping
+	18, // 31: conveyor.v1.ServerMessage.batch_dispatch:type_name -> conveyor.v1.BatchDispatch
+	79, // 32: conveyor.v1.Hello.queues:type_name -> conveyor.v1.Hello.QueuesEntry
+	80, // 33: conveyor.v1.Hello.labels:type_name -> conveyor.v1.Hello.LabelsEntry
+	0,  // 34: conveyor.v1.Result.outcome:type_name -> conveyor.v1.TaskOutcome
+	82, // 35: conveyor.v1.Welcome.lease_ttl:type_name -> google.protobuf.Duration
+	82, // 36: conveyor.v1.Welcome.heartbeat_interval:type_name -> google.protobuf.Duration
+	87, // 37: conveyor.v1.Dispatch.task:type_name -> conveyor.v1.TaskEnvelope
+	83, // 38: conveyor.v1.Dispatch.deadline:type_name -> google.protobuf.Timestamp
+	87, // 39: conveyor.v1.BatchDispatch.tasks:type_name -> conveyor.v1.TaskEnvelope
+	83, // 40: conveyor.v1.BatchDispatch.deadline:type_name -> google.protobuf.Timestamp
+	13, // 41: conveyor.v1.BatchResult.results:type_name -> conveyor.v1.Result
+	24, // 42: conveyor.v1.ListQueuesResponse.queues:type_name -> conveyor.v1.QueueInfo
+	29, // 43: conveyor.v1.ListRateLimitsResponse.limits:type_name -> conveyor.v1.RateLimitInfo
+	36, // 44: conveyor.v1.ListConcurrencyLimitsResponse.limits:type_name -> conveyor.v1.ConcurrencyLimitInfo
+	86, // 45: conveyor.v1.ListTasksRequest.state:type_name -> conveyor.v1.TaskState
+	8,  // 46: conveyor.v1.ListTasksResponse.tasks:type_name -> conveyor.v1.TaskInfo
+	83, // 47: conveyor.v1.RescheduleTaskRequest.process_at:type_name -> google.protobuf.Timestamp
+	82, // 48: conveyor.v1.RescheduleTaskRequest.process_in:type_name -> google.protobuf.Duration
+	57, // 49: conveyor.v1.BatchTasksResponse.results:type_name -> conveyor.v1.TaskActionResult
+	60, // 50: conveyor.v1.ListCronResponse.entries:type_name -> conveyor.v1.CronEntry
+	88, // 51: conveyor.v1.CronEntry.options:type_name -> conveyor.v1.TaskOptions
+	83, // 52: conveyor.v1.CronEntry.next_run_at:type_name -> google.protobuf.Timestamp
+	60, // 53: conveyor.v1.UpsertCronRequest.entry:type_name -> conveyor.v1.CronEntry
+	71, // 54: conveyor.v1.ClusterInfoResponse.nodes:type_name -> conveyor.v1.NodeInfo
+	83, // 55: conveyor.v1.NodeInfo.started_at:type_name -> google.protobuf.Timestamp
+	74, // 56: conveyor.v1.ListWorkerSessionsResponse.sessions:type_name -> conveyor.v1.WorkerSession
+	83, // 57: conveyor.v1.WorkerSession.connected_at:type_name -> google.protobuf.Timestamp
+	81, // 58: conveyor.v1.BrokerInfoResponse.metrics:type_name -> conveyor.v1.BrokerInfoResponse.MetricsEntry
+	89, // 59: conveyor.v1.WatchEventsRequest.event_types:type_name -> conveyor.v1.TaskEventType
+	1,  // 60: conveyor.v1.TaskService.Enqueue:input_type -> conveyor.v1.EnqueueRequest
+	3,  // 61: conveyor.v1.TaskService.EnqueueBatch:input_type -> conveyor.v1.EnqueueBatchRequest
+	6,  // 62: conveyor.v1.TaskService.GetTask:input_type -> conveyor.v1.GetTaskRequest
+	9,  // 63: conveyor.v1.WorkerService.Session:input_type -> conveyor.v1.WorkerMessage
+	22, // 64: conveyor.v1.AdminService.ListQueues:input_type -> conveyor.v1.ListQueuesRequest
+	25, // 65: conveyor.v1.AdminService.PauseQueue:input_type -> conveyor.v1.PauseQueueRequest
+	27, // 66: conveyor.v1.AdminService.ResumeQueue:input_type -> conveyor.v1.ResumeQueueRequest
+	30, // 67: conveyor.v1.AdminService.ListRateLimits:input_type -> conveyor.v1.ListRateLimitsRequest
+	32, // 68: conveyor.v1.AdminService.SetQueueRateLimit:input_type -> conveyor.v1.SetQueueRateLimitRequest
+	34, // 69: conveyor.v1.AdminService.DeleteQueueRateLimit:input_type -> conveyor.v1.DeleteQueueRateLimitRequest
+	37, // 70: conveyor.v1.AdminService.ListConcurrencyLimits:input_type -> conveyor.v1.ListConcurrencyLimitsRequest
+	39, // 71: conveyor.v1.AdminService.SetQueueConcurrencyLimit:input_type -> conveyor.v1.SetQueueConcurrencyLimitRequest
+	41, // 72: conveyor.v1.AdminService.DeleteQueueConcurrencyLimit:input_type -> conveyor.v1.DeleteQueueConcurrencyLimitRequest
+	43, // 73: conveyor.v1.AdminService.ListTasks:input_type -> conveyor.v1.ListTasksRequest
+	45, // 74: conveyor.v1.AdminService.CancelTask:input_type -> conveyor.v1.CancelTaskRequest
+	47, // 75: conveyor.v1.AdminService.DeleteTask:input_type -> conveyor.v1.DeleteTaskRequest
+	49, // 76: conveyor.v1.AdminService.RunTask:input_type -> conveyor.v1.RunTaskRequest
+	51, // 77: conveyor.v1.AdminService.RescheduleTask:input_type -> conveyor.v1.RescheduleTaskRequest
+	53, // 78: conveyor.v1.AdminService.ArchiveTask:input_type -> conveyor.v1.ArchiveTaskRequest
+	55, // 79: conveyor.v1.AdminService.BatchDeleteTasks:input_type -> conveyor.v1.BatchTasksRequest
+	55, // 80: conveyor.v1.AdminService.BatchRunTasks:input_type -> conveyor.v1.BatchTasksRequest
+	55, // 81: conveyor.v1.AdminService.BatchCancelTasks:input_type -> conveyor.v1.BatchTasksRequest
+	55, // 82: conveyor.v1.AdminService.BatchArchiveTasks:input_type -> conveyor.v1.BatchTasksRequest
+	58, // 83: conveyor.v1.AdminService.ListCron:input_type -> conveyor.v1.ListCronRequest
+	61, // 84: conveyor.v1.AdminService.UpsertCron:input_type -> conveyor.v1.UpsertCronRequest
+	63, // 85: conveyor.v1.AdminService.PauseCron:input_type -> conveyor.v1.PauseCronRequest
+	65, // 86: conveyor.v1.AdminService.ResumeCron:input_type -> conveyor.v1.ResumeCronRequest
+	67, // 87: conveyor.v1.AdminService.DeleteCron:input_type -> conveyor.v1.DeleteCronRequest
+	69, // 88: conveyor.v1.AdminService.ClusterInfo:input_type -> conveyor.v1.ClusterInfoRequest
+	72, // 89: conveyor.v1.AdminService.ListWorkerSessions:input_type -> conveyor.v1.ListWorkerSessionsRequest
+	75, // 90: conveyor.v1.AdminService.BrokerInfo:input_type -> conveyor.v1.BrokerInfoRequest
+	77, // 91: conveyor.v1.AdminService.WatchEvents:input_type -> conveyor.v1.WatchEventsRequest
+	2,  // 92: conveyor.v1.TaskService.Enqueue:output_type -> conveyor.v1.EnqueueResponse
+	4,  // 93: conveyor.v1.TaskService.EnqueueBatch:output_type -> conveyor.v1.EnqueueBatchResponse
+	7,  // 94: conveyor.v1.TaskService.GetTask:output_type -> conveyor.v1.GetTaskResponse
+	10, // 95: conveyor.v1.WorkerService.Session:output_type -> conveyor.v1.ServerMessage
+	23, // 96: conveyor.v1.AdminService.ListQueues:output_type -> conveyor.v1.ListQueuesResponse
+	26, // 97: conveyor.v1.AdminService.PauseQueue:output_type -> conveyor.v1.PauseQueueResponse
+	28, // 98: conveyor.v1.AdminService.ResumeQueue:output_type -> conveyor.v1.ResumeQueueResponse
+	31, // 99: conveyor.v1.AdminService.ListRateLimits:output_type -> conveyor.v1.ListRateLimitsResponse
+	33, // 100: conveyor.v1.AdminService.SetQueueRateLimit:output_type -> conveyor.v1.SetQueueRateLimitResponse
+	35, // 101: conveyor.v1.AdminService.DeleteQueueRateLimit:output_type -> conveyor.v1.DeleteQueueRateLimitResponse
+	38, // 102: conveyor.v1.AdminService.ListConcurrencyLimits:output_type -> conveyor.v1.ListConcurrencyLimitsResponse
+	40, // 103: conveyor.v1.AdminService.SetQueueConcurrencyLimit:output_type -> conveyor.v1.SetQueueConcurrencyLimitResponse
+	42, // 104: conveyor.v1.AdminService.DeleteQueueConcurrencyLimit:output_type -> conveyor.v1.DeleteQueueConcurrencyLimitResponse
+	44, // 105: conveyor.v1.AdminService.ListTasks:output_type -> conveyor.v1.ListTasksResponse
+	46, // 106: conveyor.v1.AdminService.CancelTask:output_type -> conveyor.v1.CancelTaskResponse
+	48, // 107: conveyor.v1.AdminService.DeleteTask:output_type -> conveyor.v1.DeleteTaskResponse
+	50, // 108: conveyor.v1.AdminService.RunTask:output_type -> conveyor.v1.RunTaskResponse
+	52, // 109: conveyor.v1.AdminService.RescheduleTask:output_type -> conveyor.v1.RescheduleTaskResponse
+	54, // 110: conveyor.v1.AdminService.ArchiveTask:output_type -> conveyor.v1.ArchiveTaskResponse
+	56, // 111: conveyor.v1.AdminService.BatchDeleteTasks:output_type -> conveyor.v1.BatchTasksResponse
+	56, // 112: conveyor.v1.AdminService.BatchRunTasks:output_type -> conveyor.v1.BatchTasksResponse
+	56, // 113: conveyor.v1.AdminService.BatchCancelTasks:output_type -> conveyor.v1.BatchTasksResponse
+	56, // 114: conveyor.v1.AdminService.BatchArchiveTasks:output_type -> conveyor.v1.BatchTasksResponse
+	59, // 115: conveyor.v1.AdminService.ListCron:output_type -> conveyor.v1.ListCronResponse
+	62, // 116: conveyor.v1.AdminService.UpsertCron:output_type -> conveyor.v1.UpsertCronResponse
+	64, // 117: conveyor.v1.AdminService.PauseCron:output_type -> conveyor.v1.PauseCronResponse
+	66, // 118: conveyor.v1.AdminService.ResumeCron:output_type -> conveyor.v1.ResumeCronResponse
+	68, // 119: conveyor.v1.AdminService.DeleteCron:output_type -> conveyor.v1.DeleteCronResponse
+	70, // 120: conveyor.v1.AdminService.ClusterInfo:output_type -> conveyor.v1.ClusterInfoResponse
+	73, // 121: conveyor.v1.AdminService.ListWorkerSessions:output_type -> conveyor.v1.ListWorkerSessionsResponse
+	76, // 122: conveyor.v1.AdminService.BrokerInfo:output_type -> conveyor.v1.BrokerInfoResponse
+	90, // 123: conveyor.v1.AdminService.WatchEvents:output_type -> conveyor.v1.TaskEvent
+	92, // [92:124] is the sub-list for method output_type
+	60, // [60:92] is the sub-list for method input_type
+	60, // [60:60] is the sub-list for extension type_name
+	60, // [60:60] is the sub-list for extension extendee
+	0,  // [0:60] is the sub-list for field type_name
 }
 
 func init() { file_conveyor_v1_service_proto_init() }
