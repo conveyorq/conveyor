@@ -1426,6 +1426,65 @@ func (b *Broker) QueueConcurrencyLimits(ctx context.Context) ([]broker.Concurren
 	return limits, nil
 }
 
+// SetGroupConfig persists a per-group aggregation override; see broker.Broker.
+func (b *Broker) SetGroupConfig(ctx context.Context, queue, group string, maxSize int, maxDelay, gracePeriod time.Duration) error {
+	const upsert = `INSERT INTO conveyor_group_configs (queue, group_key, max_size, max_delay_ms, grace_period_ms, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (queue, group_key) DO UPDATE SET
+			max_size = EXCLUDED.max_size, max_delay_ms = EXCLUDED.max_delay_ms,
+			grace_period_ms = EXCLUDED.grace_period_ms, updated_at = EXCLUDED.updated_at`
+
+	if _, err := b.pool.Exec(ctx, upsert, queue, group, maxSize, maxDelay.Milliseconds(), gracePeriod.Milliseconds(), b.clock.Now()); err != nil {
+		return fmt.Errorf("postgres: set group config: %w", err)
+	}
+
+	return nil
+}
+
+// DeleteGroupConfig removes a group's override; see broker.Broker.
+func (b *Broker) DeleteGroupConfig(ctx context.Context, queue, group string) error {
+	if _, err := b.pool.Exec(ctx, "DELETE FROM conveyor_group_configs WHERE queue = $1 AND group_key = $2", queue, group); err != nil {
+		return fmt.Errorf("postgres: delete group config: %w", err)
+	}
+
+	return nil
+}
+
+// GroupConfigs returns every override ordered by queue then group; see broker.Broker.
+func (b *Broker) GroupConfigs(ctx context.Context) ([]broker.GroupConfig, error) {
+	rows, err := b.pool.Query(ctx,
+		"SELECT queue, group_key, max_size, max_delay_ms, grace_period_ms, updated_at FROM conveyor_group_configs ORDER BY queue, group_key")
+	if err != nil {
+		return nil, fmt.Errorf("postgres: group configs: %w", err)
+	}
+
+	defer rows.Close()
+
+	var configs []broker.GroupConfig
+
+	for rows.Next() {
+		var (
+			config        broker.GroupConfig
+			maxDelayMS    int64
+			gracePeriodMS int64
+		)
+
+		if err := rows.Scan(&config.Queue, &config.Group, &config.MaxSize, &maxDelayMS, &gracePeriodMS, &config.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("postgres: scan group config: %w", err)
+		}
+
+		config.MaxDelay = time.Duration(maxDelayMS) * time.Millisecond
+		config.GracePeriod = time.Duration(gracePeriodMS) * time.Millisecond
+		configs = append(configs, config)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres: group configs: %w", err)
+	}
+
+	return configs, nil
+}
+
 // Info reports the Postgres engine's driver, connection-pool counters, and
 // table row counts; see broker.Broker.
 func (b *Broker) Info(ctx context.Context) (broker.Info, error) {

@@ -43,6 +43,12 @@ service AdminService {
   rpc SetQueueConcurrencyLimit(SetQueueConcurrencyLimitRequest) returns (SetQueueConcurrencyLimitResponse) {}
   // DeleteQueueConcurrencyLimit clears a queue's concurrency limit, leaving its keys unbounded.
   rpc DeleteQueueConcurrencyLimit(DeleteQueueConcurrencyLimitRequest) returns (DeleteQueueConcurrencyLimitResponse) {}
+  // ListGroupConfigs returns every per-group aggregation override.
+  rpc ListGroupConfigs(ListGroupConfigsRequest) returns (ListGroupConfigsResponse) {}
+  // SetGroupConfig sets a group's aggregation override (max size, max delay, grace period).
+  rpc SetGroupConfig(SetGroupConfigRequest) returns (SetGroupConfigResponse) {}
+  // DeleteGroupConfig clears a group's override, reverting it to the queue-wide or global default.
+  rpc DeleteGroupConfig(DeleteGroupConfigRequest) returns (DeleteGroupConfigResponse) {}
   rpc ListTasks(ListTasksRequest) returns (ListTasksResponse) {}
   rpc CancelTask(CancelTaskRequest) returns (CancelTaskResponse) {}
   rpc DeleteTask(DeleteTaskRequest) returns (DeleteTaskResponse) {}
@@ -433,6 +439,58 @@ message DeleteQueueConcurrencyLimitRequest {
 }
 
 message DeleteQueueConcurrencyLimitResponse {}
+
+// GroupConfigInfo reports one group's aggregation override. An empty group is
+// the queue-wide default that applies to every group on the queue without its
+// own override.
+message GroupConfigInfo {
+  // queue is the queue the override applies to.
+  string queue = 1;
+  // group is the aggregation group key the override applies to; empty is the
+  // queue-wide default.
+  string group = 2;
+  // max_size fires the group once this many members accumulate.
+  int32 max_size = 3;
+  // max_delay fires the group this long after its first member.
+  google.protobuf.Duration max_delay = 4;
+  // grace_period fires the group this long after its most recent member.
+  google.protobuf.Duration grace_period = 5;
+}
+
+message ListGroupConfigsRequest {}
+
+message ListGroupConfigsResponse {
+  repeated GroupConfigInfo configs = 1;
+}
+
+message SetGroupConfigRequest {
+  // queue is the queue to configure.
+  string queue = 1;
+  // group is the aggregation group key to configure; empty sets the queue-wide
+  // default applied to every group on the queue without its own override.
+  string group = 2;
+  // max_size fires the group once this many members accumulate; must be at
+  // least one.
+  int32 max_size = 3;
+  // max_delay fires the group this long after its first member; must be
+  // positive.
+  google.protobuf.Duration max_delay = 4;
+  // grace_period fires the group this long after its most recent member; must
+  // be positive.
+  google.protobuf.Duration grace_period = 5;
+}
+
+message SetGroupConfigResponse {}
+
+message DeleteGroupConfigRequest {
+  // queue is the queue whose override to clear.
+  string queue = 1;
+  // group is the aggregation group key whose override to clear; clearing an
+  // absent override succeeds.
+  string group = 2;
+}
+
+message DeleteGroupConfigResponse {}
 
 message ListTasksRequest {
   string queue = 1;

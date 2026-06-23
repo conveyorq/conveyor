@@ -49,6 +49,13 @@ func TestReadOnlyInterceptorBlocksMutations(t *testing.T) {
 	_, err = wrapped(context.Background(), stubRequest{procedure: conveyorv1connect.AdminServiceDeleteQueueRateLimitProcedure})
 	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
 
+	// The group-config mutations are blocked too.
+	_, err = wrapped(context.Background(), stubRequest{procedure: conveyorv1connect.AdminServiceSetGroupConfigProcedure})
+	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
+
+	_, err = wrapped(context.Background(), stubRequest{procedure: conveyorv1connect.AdminServiceDeleteGroupConfigProcedure})
+	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
+
 	// A read procedure passes through to the handler.
 	_, err = wrapped(context.Background(), stubRequest{procedure: conveyorv1connect.AdminServiceListTasksProcedure})
 	require.NoError(t, err)

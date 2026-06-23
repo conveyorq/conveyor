@@ -75,6 +75,12 @@ message FireGroup {
   // type is the group's task type (members are single-type), used to pick a
   // batch-capable gateway before leasing.
   string type = 3;
+  // limit is the effective max batch size the sweeper resolved for this group
+  // (its per-group/queue override or the global default). The grain caps the
+  // batch lease at it instead of the global default, so a larger per-group size
+  // is honored from the firing decision through to dispatch. A non-positive
+  // value means "use the global default".
+  int32 limit = 4;
 }
 
 // GroupLeaseCompleted delivers the outcome of an asynchronous group lease back

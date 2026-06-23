@@ -38,8 +38,8 @@ func TestFireGroupLogsResolveAndTellFailures(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	runtime := NewRuntime(taskLog, clock.System(), testSettings, logger)
 
-	fireGroup(ctx, stubGrainSystem{identityErr: errors.New("resolve down")}, runtime, "q", "g", "t")
-	fireGroup(ctx, stubGrainSystem{tellErr: errors.New("tell down")}, runtime, "q", "g", "t")
+	fireGroup(ctx, stubGrainSystem{identityErr: errors.New("resolve down")}, runtime, "q", "g", "t", 0)
+	fireGroup(ctx, stubGrainSystem{tellErr: errors.New("tell down")}, runtime, "q", "g", "t", 0)
 
 	output := logs.String()
 	require.Contains(t, output, "resolving queue grain failed")
@@ -90,16 +90,49 @@ func batchDispatchFor(r *frameRecorder, group string) *conveyorv1.BatchDispatch 
 // since its first member, or on grace since its last, and not otherwise.
 func TestGroupDue(t *testing.T) {
 	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	const (
+		maxSize     = 100
+		maxDelay    = time.Minute
+		gracePeriod = 10 * time.Second
+	)
+
+	require.True(t, groupDue(broker.GroupStat{Count: 100, Oldest: now, Newest: now}, maxSize, maxDelay, gracePeriod, now),
+		"size threshold")
+	require.True(t, groupDue(broker.GroupStat{Count: 2, Oldest: now.Add(-time.Minute), Newest: now}, maxSize, maxDelay, gracePeriod, now),
+		"max-delay since first member")
+	require.True(t, groupDue(broker.GroupStat{Count: 2, Oldest: now.Add(-30 * time.Second), Newest: now.Add(-10 * time.Second)}, maxSize, maxDelay, gracePeriod, now),
+		"grace since last member")
+	require.False(t, groupDue(broker.GroupStat{Count: 2, Oldest: now.Add(-time.Second), Newest: now.Add(-time.Second)}, maxSize, maxDelay, gracePeriod, now),
+		"small and recent: not due")
+}
+
+// TestEffectiveGroupConfig covers threshold resolution: a group's own override
+// wins, then the queue-wide default (empty group), then the global settings.
+func TestEffectiveGroupConfig(t *testing.T) {
 	settings := Settings{GroupMaxSize: 100, GroupMaxDelay: time.Minute, GroupGracePeriod: 10 * time.Second}
 
-	require.True(t, groupDue(broker.GroupStat{Count: 100, Oldest: now, Newest: now}, settings, now),
-		"size threshold")
-	require.True(t, groupDue(broker.GroupStat{Count: 2, Oldest: now.Add(-time.Minute), Newest: now}, settings, now),
-		"max-delay since first member")
-	require.True(t, groupDue(broker.GroupStat{Count: 2, Oldest: now.Add(-30 * time.Second), Newest: now.Add(-10 * time.Second)}, settings, now),
-		"grace since last member")
-	require.False(t, groupDue(broker.GroupStat{Count: 2, Oldest: now.Add(-time.Second), Newest: now.Add(-time.Second)}, settings, now),
-		"small and recent: not due")
+	index := indexGroupConfigs([]broker.GroupConfig{
+		{Queue: "q", Group: "emails", MaxSize: 20, MaxDelay: 2 * time.Minute, GracePeriod: 5 * time.Second},
+		{Queue: "q", Group: "", MaxSize: 50, MaxDelay: 30 * time.Second, GracePeriod: 3 * time.Second},
+	})
+
+	// An exact (queue, group) override wins.
+	size, delay, grace := effectiveGroupConfig(broker.GroupStat{Queue: "q", Group: "emails"}, index, settings)
+	require.Equal(t, 20, size)
+	require.Equal(t, 2*time.Minute, delay)
+	require.Equal(t, 5*time.Second, grace)
+
+	// A group with no override of its own falls back to the queue-wide default.
+	size, delay, grace = effectiveGroupConfig(broker.GroupStat{Queue: "q", Group: "reports"}, index, settings)
+	require.Equal(t, 50, size)
+	require.Equal(t, 30*time.Second, delay)
+	require.Equal(t, 3*time.Second, grace)
+
+	// A queue with no configs at all falls back to the global settings.
+	size, delay, grace = effectiveGroupConfig(broker.GroupStat{Queue: "other", Group: "g"}, index, settings)
+	require.Equal(t, 100, size)
+	require.Equal(t, time.Minute, delay)
+	require.Equal(t, 10*time.Second, grace)
 }
 
 // TestTightenDeadline covers the batch deadline computation: a member's own
@@ -169,8 +202,8 @@ func TestQueueGrainBatchDispatchAndCapabilityGating(t *testing.T) {
 	// Gateway registration is asynchronous, so fire both groups until the
 	// capable one is delivered; the incapable one must never be.
 	require.Eventually(t, func() bool {
-		fireGroup(ctx, engine.system, engine.runtime, queue, "G-cap", capableType)
-		fireGroup(ctx, engine.system, engine.runtime, queue, "G-nocap", otherType)
+		fireGroup(ctx, engine.system, engine.runtime, queue, "G-cap", capableType, 0)
+		fireGroup(ctx, engine.system, engine.runtime, queue, "G-nocap", otherType, 0)
 
 		return batchDispatchFor(recorder, "G-cap") != nil
 	}, 5*time.Second, 50*time.Millisecond)

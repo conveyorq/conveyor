@@ -13,6 +13,7 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/reugn/go-quartz/quartz"
+	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/conveyorq/conveyor/internal/actors"
@@ -262,6 +263,77 @@ func (s *AdminService) DeleteQueueConcurrencyLimit(ctx context.Context, request 
 	}
 
 	return connect.NewResponse(&conveyorv1.DeleteQueueConcurrencyLimitResponse{}), nil
+}
+
+// ListGroupConfigs returns every per-group aggregation override, ordered by
+// queue then group.
+func (s *AdminService) ListGroupConfigs(ctx context.Context, _ *connect.Request[conveyorv1.ListGroupConfigsRequest]) (*connect.Response[conveyorv1.ListGroupConfigsResponse], error) {
+	configs, err := s.taskLog.GroupConfigs(ctx)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+
+	infos := make([]*conveyorv1.GroupConfigInfo, 0, len(configs))
+
+	for _, config := range configs {
+		infos = append(infos, &conveyorv1.GroupConfigInfo{
+			Queue:       config.Queue,
+			Group:       config.Group,
+			MaxSize:     int32(config.MaxSize),
+			MaxDelay:    durationpb.New(config.MaxDelay),
+			GracePeriod: durationpb.New(config.GracePeriod),
+		})
+	}
+
+	return connect.NewResponse(&conveyorv1.ListGroupConfigsResponse{Configs: infos}), nil
+}
+
+// SetGroupConfig persists a group's aggregation override. The group sweeper
+// reads the new value on its next tick (firing is poll-based), so no live actor
+// wake is needed, unlike the queue-grain rate-limit path. An empty group sets
+// the queue-wide default applied to every group on the queue without its own
+// override.
+func (s *AdminService) SetGroupConfig(ctx context.Context, request *connect.Request[conveyorv1.SetGroupConfigRequest]) (*connect.Response[conveyorv1.SetGroupConfigResponse], error) {
+	queue, err := validQueueName(request.Msg.GetQueue())
+	if err != nil {
+		return nil, err
+	}
+
+	maxSize := request.Msg.GetMaxSize()
+	if maxSize < 1 {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("max_size must be at least 1, got %d", maxSize))
+	}
+
+	maxDelay := request.Msg.GetMaxDelay().AsDuration()
+	if maxDelay <= 0 {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("max_delay must be positive, got %v", maxDelay))
+	}
+
+	gracePeriod := request.Msg.GetGracePeriod().AsDuration()
+	if gracePeriod <= 0 {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("grace_period must be positive, got %v", gracePeriod))
+	}
+
+	if err := s.taskLog.SetGroupConfig(ctx, queue, request.Msg.GetGroup(), int(maxSize), maxDelay, gracePeriod); err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+
+	return connect.NewResponse(&conveyorv1.SetGroupConfigResponse{}), nil
+}
+
+// DeleteGroupConfig clears a group's override, reverting it to the queue-wide
+// or global default. The sweeper picks up the change on its next tick.
+func (s *AdminService) DeleteGroupConfig(ctx context.Context, request *connect.Request[conveyorv1.DeleteGroupConfigRequest]) (*connect.Response[conveyorv1.DeleteGroupConfigResponse], error) {
+	queue, err := validQueueName(request.Msg.GetQueue())
+	if err != nil {
+		return nil, err
+	}
+
+	if err := s.taskLog.DeleteGroupConfig(ctx, queue, request.Msg.GetGroup()); err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+
+	return connect.NewResponse(&conveyorv1.DeleteGroupConfigResponse{}), nil
 }
 
 // ListTasks pages through tasks newest first, optionally filtered by queue

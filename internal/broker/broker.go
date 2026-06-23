@@ -187,6 +187,27 @@ type ConcurrencyLimit struct {
 	UpdatedAt time.Time
 }
 
+// GroupConfig is a per-group aggregation override: the size, max-delay, and
+// grace thresholds a group fires on instead of the server's global defaults. An
+// empty Group is the queue-wide default, applied to every group on the queue
+// without its own override. It is config only — the firing decision lives in
+// the group sweeper, which reads these each sweep, not on the dispatch hot path.
+type GroupConfig struct {
+	// Queue is the queue the override applies to.
+	Queue string
+	// Group is the aggregation group key the override applies to; empty is the
+	// queue-wide default.
+	Group string
+	// MaxSize fires the group once this many members accumulate (>= 1).
+	MaxSize int
+	// MaxDelay fires the group this long after its first member (> 0).
+	MaxDelay time.Duration
+	// GracePeriod fires the group this long after its most recent member (> 0).
+	GracePeriod time.Duration
+	// UpdatedAt is when the override was last written.
+	UpdatedAt time.Time
+}
+
 // TaskRecord pairs a task envelope with its current lifecycle state in
 // ListTasks results.
 type TaskRecord struct {
@@ -376,6 +397,19 @@ type Broker interface {
 	// QueueConcurrencyLimits returns every persisted limit, ordered by queue
 	// name, for the management API and dashboard.
 	QueueConcurrencyLimits(ctx context.Context) ([]ConcurrencyLimit, error)
+
+	// SetGroupConfig persists a per-group aggregation override, replacing the
+	// global defaults for that (queue, group). An empty group sets the
+	// queue-wide default. maxSize must be >= 1 and both durations > 0.
+	SetGroupConfig(ctx context.Context, queue, group string, maxSize int, maxDelay, gracePeriod time.Duration) error
+
+	// DeleteGroupConfig removes a group's override, reverting it to the
+	// queue-wide or global default. Removing a missing override is not an error.
+	DeleteGroupConfig(ctx context.Context, queue, group string) error
+
+	// GroupConfigs returns every persisted override, ordered by queue then
+	// group, for the group sweep, management API, and dashboard.
+	GroupConfigs(ctx context.Context) ([]GroupConfig, error)
 
 	// Info reports the storage engine's driver and runtime statistics for
 	// the dashboard's broker-info view.

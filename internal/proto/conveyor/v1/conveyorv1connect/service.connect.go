@@ -71,6 +71,15 @@ const (
 	// AdminServiceDeleteQueueConcurrencyLimitProcedure is the fully-qualified name of the
 	// AdminService's DeleteQueueConcurrencyLimit RPC.
 	AdminServiceDeleteQueueConcurrencyLimitProcedure = "/conveyor.v1.AdminService/DeleteQueueConcurrencyLimit"
+	// AdminServiceListGroupConfigsProcedure is the fully-qualified name of the AdminService's
+	// ListGroupConfigs RPC.
+	AdminServiceListGroupConfigsProcedure = "/conveyor.v1.AdminService/ListGroupConfigs"
+	// AdminServiceSetGroupConfigProcedure is the fully-qualified name of the AdminService's
+	// SetGroupConfig RPC.
+	AdminServiceSetGroupConfigProcedure = "/conveyor.v1.AdminService/SetGroupConfig"
+	// AdminServiceDeleteGroupConfigProcedure is the fully-qualified name of the AdminService's
+	// DeleteGroupConfig RPC.
+	AdminServiceDeleteGroupConfigProcedure = "/conveyor.v1.AdminService/DeleteGroupConfig"
 	// AdminServiceListTasksProcedure is the fully-qualified name of the AdminService's ListTasks RPC.
 	AdminServiceListTasksProcedure = "/conveyor.v1.AdminService/ListTasks"
 	// AdminServiceCancelTaskProcedure is the fully-qualified name of the AdminService's CancelTask RPC.
@@ -337,6 +346,12 @@ type AdminServiceClient interface {
 	SetQueueConcurrencyLimit(context.Context, *connect.Request[v1.SetQueueConcurrencyLimitRequest]) (*connect.Response[v1.SetQueueConcurrencyLimitResponse], error)
 	// DeleteQueueConcurrencyLimit clears a queue's concurrency limit, leaving its keys unbounded.
 	DeleteQueueConcurrencyLimit(context.Context, *connect.Request[v1.DeleteQueueConcurrencyLimitRequest]) (*connect.Response[v1.DeleteQueueConcurrencyLimitResponse], error)
+	// ListGroupConfigs returns every per-group aggregation override.
+	ListGroupConfigs(context.Context, *connect.Request[v1.ListGroupConfigsRequest]) (*connect.Response[v1.ListGroupConfigsResponse], error)
+	// SetGroupConfig sets a group's aggregation override (max size, max delay, grace period).
+	SetGroupConfig(context.Context, *connect.Request[v1.SetGroupConfigRequest]) (*connect.Response[v1.SetGroupConfigResponse], error)
+	// DeleteGroupConfig clears a group's override, reverting it to the queue-wide or global default.
+	DeleteGroupConfig(context.Context, *connect.Request[v1.DeleteGroupConfigRequest]) (*connect.Response[v1.DeleteGroupConfigResponse], error)
 	ListTasks(context.Context, *connect.Request[v1.ListTasksRequest]) (*connect.Response[v1.ListTasksResponse], error)
 	CancelTask(context.Context, *connect.Request[v1.CancelTaskRequest]) (*connect.Response[v1.CancelTaskResponse], error)
 	DeleteTask(context.Context, *connect.Request[v1.DeleteTaskRequest]) (*connect.Response[v1.DeleteTaskResponse], error)
@@ -438,6 +453,24 @@ func NewAdminServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			httpClient,
 			baseURL+AdminServiceDeleteQueueConcurrencyLimitProcedure,
 			connect.WithSchema(adminServiceMethods.ByName("DeleteQueueConcurrencyLimit")),
+			connect.WithClientOptions(opts...),
+		),
+		listGroupConfigs: connect.NewClient[v1.ListGroupConfigsRequest, v1.ListGroupConfigsResponse](
+			httpClient,
+			baseURL+AdminServiceListGroupConfigsProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("ListGroupConfigs")),
+			connect.WithClientOptions(opts...),
+		),
+		setGroupConfig: connect.NewClient[v1.SetGroupConfigRequest, v1.SetGroupConfigResponse](
+			httpClient,
+			baseURL+AdminServiceSetGroupConfigProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("SetGroupConfig")),
+			connect.WithClientOptions(opts...),
+		),
+		deleteGroupConfig: connect.NewClient[v1.DeleteGroupConfigRequest, v1.DeleteGroupConfigResponse](
+			httpClient,
+			baseURL+AdminServiceDeleteGroupConfigProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("DeleteGroupConfig")),
 			connect.WithClientOptions(opts...),
 		),
 		listTasks: connect.NewClient[v1.ListTasksRequest, v1.ListTasksResponse](
@@ -568,6 +601,9 @@ type adminServiceClient struct {
 	listConcurrencyLimits       *connect.Client[v1.ListConcurrencyLimitsRequest, v1.ListConcurrencyLimitsResponse]
 	setQueueConcurrencyLimit    *connect.Client[v1.SetQueueConcurrencyLimitRequest, v1.SetQueueConcurrencyLimitResponse]
 	deleteQueueConcurrencyLimit *connect.Client[v1.DeleteQueueConcurrencyLimitRequest, v1.DeleteQueueConcurrencyLimitResponse]
+	listGroupConfigs            *connect.Client[v1.ListGroupConfigsRequest, v1.ListGroupConfigsResponse]
+	setGroupConfig              *connect.Client[v1.SetGroupConfigRequest, v1.SetGroupConfigResponse]
+	deleteGroupConfig           *connect.Client[v1.DeleteGroupConfigRequest, v1.DeleteGroupConfigResponse]
 	listTasks                   *connect.Client[v1.ListTasksRequest, v1.ListTasksResponse]
 	cancelTask                  *connect.Client[v1.CancelTaskRequest, v1.CancelTaskResponse]
 	deleteTask                  *connect.Client[v1.DeleteTaskRequest, v1.DeleteTaskResponse]
@@ -632,6 +668,21 @@ func (c *adminServiceClient) SetQueueConcurrencyLimit(ctx context.Context, req *
 // DeleteQueueConcurrencyLimit calls conveyor.v1.AdminService.DeleteQueueConcurrencyLimit.
 func (c *adminServiceClient) DeleteQueueConcurrencyLimit(ctx context.Context, req *connect.Request[v1.DeleteQueueConcurrencyLimitRequest]) (*connect.Response[v1.DeleteQueueConcurrencyLimitResponse], error) {
 	return c.deleteQueueConcurrencyLimit.CallUnary(ctx, req)
+}
+
+// ListGroupConfigs calls conveyor.v1.AdminService.ListGroupConfigs.
+func (c *adminServiceClient) ListGroupConfigs(ctx context.Context, req *connect.Request[v1.ListGroupConfigsRequest]) (*connect.Response[v1.ListGroupConfigsResponse], error) {
+	return c.listGroupConfigs.CallUnary(ctx, req)
+}
+
+// SetGroupConfig calls conveyor.v1.AdminService.SetGroupConfig.
+func (c *adminServiceClient) SetGroupConfig(ctx context.Context, req *connect.Request[v1.SetGroupConfigRequest]) (*connect.Response[v1.SetGroupConfigResponse], error) {
+	return c.setGroupConfig.CallUnary(ctx, req)
+}
+
+// DeleteGroupConfig calls conveyor.v1.AdminService.DeleteGroupConfig.
+func (c *adminServiceClient) DeleteGroupConfig(ctx context.Context, req *connect.Request[v1.DeleteGroupConfigRequest]) (*connect.Response[v1.DeleteGroupConfigResponse], error) {
+	return c.deleteGroupConfig.CallUnary(ctx, req)
 }
 
 // ListTasks calls conveyor.v1.AdminService.ListTasks.
@@ -746,6 +797,12 @@ type AdminServiceHandler interface {
 	SetQueueConcurrencyLimit(context.Context, *connect.Request[v1.SetQueueConcurrencyLimitRequest]) (*connect.Response[v1.SetQueueConcurrencyLimitResponse], error)
 	// DeleteQueueConcurrencyLimit clears a queue's concurrency limit, leaving its keys unbounded.
 	DeleteQueueConcurrencyLimit(context.Context, *connect.Request[v1.DeleteQueueConcurrencyLimitRequest]) (*connect.Response[v1.DeleteQueueConcurrencyLimitResponse], error)
+	// ListGroupConfigs returns every per-group aggregation override.
+	ListGroupConfigs(context.Context, *connect.Request[v1.ListGroupConfigsRequest]) (*connect.Response[v1.ListGroupConfigsResponse], error)
+	// SetGroupConfig sets a group's aggregation override (max size, max delay, grace period).
+	SetGroupConfig(context.Context, *connect.Request[v1.SetGroupConfigRequest]) (*connect.Response[v1.SetGroupConfigResponse], error)
+	// DeleteGroupConfig clears a group's override, reverting it to the queue-wide or global default.
+	DeleteGroupConfig(context.Context, *connect.Request[v1.DeleteGroupConfigRequest]) (*connect.Response[v1.DeleteGroupConfigResponse], error)
 	ListTasks(context.Context, *connect.Request[v1.ListTasksRequest]) (*connect.Response[v1.ListTasksResponse], error)
 	CancelTask(context.Context, *connect.Request[v1.CancelTaskRequest]) (*connect.Response[v1.CancelTaskResponse], error)
 	DeleteTask(context.Context, *connect.Request[v1.DeleteTaskRequest]) (*connect.Response[v1.DeleteTaskResponse], error)
@@ -843,6 +900,24 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 		AdminServiceDeleteQueueConcurrencyLimitProcedure,
 		svc.DeleteQueueConcurrencyLimit,
 		connect.WithSchema(adminServiceMethods.ByName("DeleteQueueConcurrencyLimit")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceListGroupConfigsHandler := connect.NewUnaryHandler(
+		AdminServiceListGroupConfigsProcedure,
+		svc.ListGroupConfigs,
+		connect.WithSchema(adminServiceMethods.ByName("ListGroupConfigs")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceSetGroupConfigHandler := connect.NewUnaryHandler(
+		AdminServiceSetGroupConfigProcedure,
+		svc.SetGroupConfig,
+		connect.WithSchema(adminServiceMethods.ByName("SetGroupConfig")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceDeleteGroupConfigHandler := connect.NewUnaryHandler(
+		AdminServiceDeleteGroupConfigProcedure,
+		svc.DeleteGroupConfig,
+		connect.WithSchema(adminServiceMethods.ByName("DeleteGroupConfig")),
 		connect.WithHandlerOptions(opts...),
 	)
 	adminServiceListTasksHandler := connect.NewUnaryHandler(
@@ -979,6 +1054,12 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 			adminServiceSetQueueConcurrencyLimitHandler.ServeHTTP(w, r)
 		case AdminServiceDeleteQueueConcurrencyLimitProcedure:
 			adminServiceDeleteQueueConcurrencyLimitHandler.ServeHTTP(w, r)
+		case AdminServiceListGroupConfigsProcedure:
+			adminServiceListGroupConfigsHandler.ServeHTTP(w, r)
+		case AdminServiceSetGroupConfigProcedure:
+			adminServiceSetGroupConfigHandler.ServeHTTP(w, r)
+		case AdminServiceDeleteGroupConfigProcedure:
+			adminServiceDeleteGroupConfigHandler.ServeHTTP(w, r)
 		case AdminServiceListTasksProcedure:
 			adminServiceListTasksHandler.ServeHTTP(w, r)
 		case AdminServiceCancelTaskProcedure:
@@ -1060,6 +1141,18 @@ func (UnimplementedAdminServiceHandler) SetQueueConcurrencyLimit(context.Context
 
 func (UnimplementedAdminServiceHandler) DeleteQueueConcurrencyLimit(context.Context, *connect.Request[v1.DeleteQueueConcurrencyLimitRequest]) (*connect.Response[v1.DeleteQueueConcurrencyLimitResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("conveyor.v1.AdminService.DeleteQueueConcurrencyLimit is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) ListGroupConfigs(context.Context, *connect.Request[v1.ListGroupConfigsRequest]) (*connect.Response[v1.ListGroupConfigsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("conveyor.v1.AdminService.ListGroupConfigs is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) SetGroupConfig(context.Context, *connect.Request[v1.SetGroupConfigRequest]) (*connect.Response[v1.SetGroupConfigResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("conveyor.v1.AdminService.SetGroupConfig is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) DeleteGroupConfig(context.Context, *connect.Request[v1.DeleteGroupConfigRequest]) (*connect.Response[v1.DeleteGroupConfigResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("conveyor.v1.AdminService.DeleteGroupConfig is not implemented"))
 }
 
 func (UnimplementedAdminServiceHandler) ListTasks(context.Context, *connect.Request[v1.ListTasksRequest]) (*connect.Response[v1.ListTasksResponse], error) {

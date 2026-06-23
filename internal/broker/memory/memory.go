@@ -96,6 +96,8 @@ type Broker struct {
 	rateLimits map[string]broker.RateLimit
 	// concurrencyLimits holds per-queue per-key concurrency caps by queue name.
 	concurrencyLimits map[string]broker.ConcurrencyLimit
+	// groupConfigs holds per-group aggregation overrides keyed by (queue, group).
+	groupConfigs map[groupConfigKey]broker.GroupConfig
 	// cronEntries maps entry id to the stored entry.
 	cronEntries map[string]*broker.CronEntry
 	// dependents is the reverse dependency index: each dependency task id maps
@@ -142,6 +144,7 @@ func New(timeSource clock.Clock) *Broker {
 		pausedQueues:      make(map[string]bool),
 		rateLimits:        make(map[string]broker.RateLimit),
 		concurrencyLimits: make(map[string]broker.ConcurrencyLimit),
+		groupConfigs:      make(map[groupConfigKey]broker.GroupConfig),
 		cronEntries:       make(map[string]*broker.CronEntry),
 		dependents:        make(map[string]map[string]struct{}),
 	}
@@ -1230,6 +1233,61 @@ func (b *Broker) QueueConcurrencyLimits(_ context.Context) ([]broker.Concurrency
 	})
 
 	return limits, nil
+}
+
+// groupConfigKey identifies a per-group aggregation override by its (queue,
+// group) pair; an empty group is the queue-wide default.
+type groupConfigKey struct {
+	queue string
+	group string
+}
+
+// SetGroupConfig persists a per-group aggregation override; see broker.Broker.
+func (b *Broker) SetGroupConfig(_ context.Context, queue, group string, maxSize int, maxDelay, gracePeriod time.Duration) error {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	b.groupConfigs[groupConfigKey{queue, group}] = broker.GroupConfig{
+		Queue:       queue,
+		Group:       group,
+		MaxSize:     maxSize,
+		MaxDelay:    maxDelay,
+		GracePeriod: gracePeriod,
+		UpdatedAt:   b.clock.Now(),
+	}
+
+	return nil
+}
+
+// DeleteGroupConfig removes a group's override; see broker.Broker.
+func (b *Broker) DeleteGroupConfig(_ context.Context, queue, group string) error {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	delete(b.groupConfigs, groupConfigKey{queue, group})
+
+	return nil
+}
+
+// GroupConfigs returns every override ordered by queue then group; see broker.Broker.
+func (b *Broker) GroupConfigs(_ context.Context) ([]broker.GroupConfig, error) {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	configs := make([]broker.GroupConfig, 0, len(b.groupConfigs))
+	for _, config := range b.groupConfigs {
+		configs = append(configs, config)
+	}
+
+	slices.SortFunc(configs, func(a, b broker.GroupConfig) int {
+		if queue := strings.Compare(a.Queue, b.Queue); queue != 0 {
+			return queue
+		}
+
+		return strings.Compare(a.Group, b.Group)
+	})
+
+	return configs, nil
 }
 
 // Info reports the in-memory engine's driver and row counts; see broker.Broker.

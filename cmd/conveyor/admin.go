@@ -318,6 +318,128 @@ func newConcurrencyLimitListCommand(conn *connection) *cobra.Command {
 	}
 }
 
+// newGroupConfigCommand groups the per-group aggregation-config subcommands.
+func newGroupConfigCommand(conn *connection) *cobra.Command {
+	command := &cobra.Command{
+		Use:   "group",
+		Short: "Set, clear, and list per-group aggregation overrides",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			_ = cmd.Usage()
+
+			if len(args) > 0 {
+				return fmt.Errorf("group: unknown subcommand %q", args[0])
+			}
+
+			return errors.New("group: usage: conveyor group set|rm|ls")
+		},
+	}
+
+	command.AddCommand(newGroupConfigSetCommand(conn), newGroupConfigRemoveCommand(conn), newGroupConfigListCommand(conn))
+
+	return command
+}
+
+// newGroupConfigSetCommand builds the group set subcommand. An empty --group
+// sets the queue-wide default applied to every group on the queue without its
+// own override.
+func newGroupConfigSetCommand(conn *connection) *cobra.Command {
+	var (
+		group       string
+		maxSize     int
+		maxDelay    time.Duration
+		gracePeriod time.Duration
+	)
+
+	command := &cobra.Command{
+		Use:     "set <queue>",
+		Short:   "Override a group's aggregation thresholds (max size, max delay, grace period)",
+		Example: `  conveyor group set email --group welcome --max-size 20 --max-delay 2m --grace 5s`,
+		Args:    exactQueueName("group set"),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			_, err := conn.admin().SetGroupConfig(context.Background(), connect.NewRequest(&conveyorv1.SetGroupConfigRequest{
+				Queue:       args[0],
+				Group:       group,
+				MaxSize:     int32(maxSize),
+				MaxDelay:    durationpb.New(maxDelay),
+				GracePeriod: durationpb.New(gracePeriod),
+			}))
+			if err != nil {
+				return err
+			}
+
+			fmt.Fprintf(cmd.OutOrStdout(), "queue %s group %q set to max-size %d, max-delay %s, grace %s\n",
+				args[0], group, maxSize, maxDelay, gracePeriod)
+
+			return nil
+		},
+	}
+
+	flags := command.Flags()
+	flags.StringVar(&group, "group", "", "aggregation group key to configure; empty sets the queue-wide default")
+	flags.IntVar(&maxSize, "max-size", 0, "fire the group once this many members accumulate (required, >= 1)")
+	flags.DurationVar(&maxDelay, "max-delay", 0, "fire the group this long after its first member (required, > 0)")
+	flags.DurationVar(&gracePeriod, "grace", 0, "fire the group this long after its most recent member (required, > 0)")
+	_ = command.MarkFlagRequired("max-size")
+	_ = command.MarkFlagRequired("max-delay")
+	_ = command.MarkFlagRequired("grace")
+
+	return command
+}
+
+// newGroupConfigRemoveCommand builds the group rm subcommand.
+func newGroupConfigRemoveCommand(conn *connection) *cobra.Command {
+	var group string
+
+	command := &cobra.Command{
+		Use:   "rm <queue>",
+		Short: "Clear a group's override, reverting it to the queue-wide or global default",
+		Args:  exactQueueName("group rm"),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			_, err := conn.admin().DeleteGroupConfig(context.Background(), connect.NewRequest(&conveyorv1.DeleteGroupConfigRequest{
+				Queue: args[0],
+				Group: group,
+			}))
+			if err != nil {
+				return err
+			}
+
+			fmt.Fprintf(cmd.OutOrStdout(), "queue %s group %q override cleared\n", args[0], group)
+
+			return nil
+		},
+	}
+
+	command.Flags().StringVar(&group, "group", "", "aggregation group key whose override to clear; empty clears the queue-wide default")
+
+	return command
+}
+
+// newGroupConfigListCommand builds the group ls subcommand.
+func newGroupConfigListCommand(conn *connection) *cobra.Command {
+	return &cobra.Command{
+		Use:   "ls",
+		Short: "List per-group aggregation overrides",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			response, err := conn.admin().ListGroupConfigs(context.Background(), connect.NewRequest(&conveyorv1.ListGroupConfigsRequest{}))
+			if err != nil {
+				return err
+			}
+
+			stdout := cmd.OutOrStdout()
+			table := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+			fmt.Fprintln(table, "QUEUE\tGROUP\tMAX-SIZE\tMAX-DELAY\tGRACE")
+
+			for _, config := range response.Msg.GetConfigs() {
+				fmt.Fprintf(table, "%s\t%s\t%d\t%s\t%s\n", config.GetQueue(), config.GetGroup(),
+					config.GetMaxSize(), config.GetMaxDelay().AsDuration(), config.GetGracePeriod().AsDuration())
+			}
+
+			return table.Flush()
+		},
+	}
+}
+
 // newTasksListCommand builds the tasks list subcommand.
 func newTasksListCommand(conn *connection) *cobra.Command {
 	var (

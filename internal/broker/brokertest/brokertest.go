@@ -77,6 +77,7 @@ func Run(t *testing.T, factory Factory) {
 		{"QueuePauseFlag", testQueuePauseFlag},
 		{"QueueRateLimit", testQueueRateLimit},
 		{"QueueConcurrencyLimit", testQueueConcurrencyLimit},
+		{"GroupConfig", testGroupConfig},
 		{"QueueStats", testQueueStats},
 		{"CronEntries", testCronEntries},
 		{"ListTasks", testListTasks},
@@ -1726,5 +1727,73 @@ func testQueueConcurrencyLimit(t *testing.T, b broker.Broker, _ *clock.Fake) {
 
 	if _, ok, _ := b.QueueConcurrencyLimit(ctx, queueName); ok {
 		t.Fatal("delete did not remove the limit")
+	}
+}
+
+func testGroupConfig(t *testing.T, b broker.Broker, _ *clock.Fake) {
+	ctx := context.Background()
+
+	if all, err := b.GroupConfigs(ctx); err != nil || len(all) != 0 {
+		t.Fatalf("unset group configs = %+v, err %v; want empty, nil", all, err)
+	}
+
+	if err := b.SetGroupConfig(ctx, queueName, "emails", 20, 2*time.Minute, 5*time.Second); err != nil {
+		t.Fatal(err)
+	}
+
+	all, err := b.GroupConfigs(ctx)
+	if err != nil || len(all) != 1 {
+		t.Fatalf("group config not persisted: %+v, err %v", all, err)
+	}
+
+	if config := all[0]; config.Queue != queueName || config.Group != "emails" ||
+		config.MaxSize != 20 || config.MaxDelay != 2*time.Minute || config.GracePeriod != 5*time.Second {
+		t.Fatalf("group config = %+v; want {%s emails 20 2m 5s}", config, queueName)
+	}
+
+	// Overwrite replaces in place.
+	if err := b.SetGroupConfig(ctx, queueName, "emails", 50, time.Minute, 10*time.Second); err != nil {
+		t.Fatal(err)
+	}
+
+	if all, _ = b.GroupConfigs(ctx); len(all) != 1 || all[0].MaxSize != 50 || all[0].MaxDelay != time.Minute {
+		t.Fatalf("overwrite not applied: %+v", all)
+	}
+
+	// A queue-wide default (empty group) and a second queue's group; list is
+	// ordered by queue then group, so the empty group sorts first.
+	if err := b.SetGroupConfig(ctx, queueName, "", 100, time.Minute, time.Second); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := b.SetGroupConfig(ctx, "alpha", "reports", 5, time.Minute, time.Second); err != nil {
+		t.Fatal(err)
+	}
+
+	all, err = b.GroupConfigs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(all) != 3 ||
+		all[0].Queue != "alpha" || all[0].Group != "reports" ||
+		all[1].Queue != queueName || all[1].Group != "" ||
+		all[2].Queue != queueName || all[2].Group != "emails" {
+		t.Fatalf("list = %+v; want [alpha/reports %s/'' %s/emails] ordered", all, queueName, queueName)
+	}
+
+	// Delete reverts to the queue-wide or global default; a (queue, group) pair
+	// is the delete key, so the queue-wide default for the same queue survives.
+	if err := b.DeleteGroupConfig(ctx, queueName, "emails"); err != nil {
+		t.Fatal(err)
+	}
+
+	if all, _ = b.GroupConfigs(ctx); len(all) != 2 {
+		t.Fatalf("delete removed the wrong rows: %+v", all)
+	}
+
+	// Deleting a missing override is not an error.
+	if err := b.DeleteGroupConfig(ctx, queueName, "nonexistent"); err != nil {
+		t.Fatalf("delete of missing override: %v", err)
 	}
 }

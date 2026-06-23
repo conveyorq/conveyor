@@ -60,7 +60,9 @@ and priorities, backed by Postgres or an in-memory broker, with **no Redis and n
   and fan-out/fan-in, with a per-dependency policy for when a dependency fails.
 - **Group aggregation**: coalesce many tasks into one batch and process them in
   a single handler call (debounce/digest, or bulk processing); fires on size,
-  delay, or grace period.
+  delay, or grace period. A global default plus per-group overrides (size, delay,
+  grace), tunable live from the CLI, dashboard, or API, let each group batch on
+  its own terms.
 - **Rate limiting**: cap a queue's dispatch rate (token bucket: rate + burst) to
   protect a downstream; a global default plus per-queue overrides, tunable live
   from the CLI, dashboard, or API.
@@ -125,7 +127,7 @@ process.
 | Per-key concurrency           |                                                                               ✓                                                                                |              ✗               |                   ✗                    |
 | Circuit breaker               |                                                                       ✓ (per task type)                                                                        |              ✗               |                   ✗                    |
 | Task dependencies (workflows) |                                                                     ✓ (chains, fan-out/in)                                                                     |              ✗               |                 Pro ³                  |
-| Group aggregation / batching  |                                                                               ✓                                                                                |              ✓               |                   ✗                    |
+| Group aggregation / batching  |                                                                      ✓ (per-group, live)                                                                       |              ✓               |                   ✗                    |
 | End-to-end payload encryption |                                                                               ✓                                                                                |              ✗               |                   ✗                    |
 | Lifecycle events / webhooks   |                                                                               ✓                                                                                |              ✗               |                   ✗                    |
 | Task progress reporting       |                                                                               ✓                                                                                |              ✗               |                   ✗                    |

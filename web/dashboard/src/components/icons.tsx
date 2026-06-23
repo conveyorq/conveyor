@@ -129,6 +129,17 @@ export function IconConcurrency(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+// IconGroups is items coalescing into a batch (per-group aggregation config).
+export function IconGroups(props: SVGProps<SVGSVGElement>) {
+  return (
+    <Svg {...props}>
+      <rect x="3" y="3" width="7" height="7" rx="1" />
+      <rect x="14" y="3" width="7" height="7" rx="1" />
+      <rect x="8" y="14" width="8" height="7" rx="1" />
+    </Svg>
+  );
+}
+
 // IconExternal is an external-link arrow.
 export function IconExternal(props: SVGProps<SVGSVGElement>) {
   return (

@@ -27,6 +27,8 @@ var mutatingProcedures = map[string]struct{}{
 	conveyorv1connect.AdminServiceDeleteQueueRateLimitProcedure:        {},
 	conveyorv1connect.AdminServiceSetQueueConcurrencyLimitProcedure:    {},
 	conveyorv1connect.AdminServiceDeleteQueueConcurrencyLimitProcedure: {},
+	conveyorv1connect.AdminServiceSetGroupConfigProcedure:              {},
+	conveyorv1connect.AdminServiceDeleteGroupConfigProcedure:           {},
 	conveyorv1connect.AdminServiceCancelTaskProcedure:                  {},
 	conveyorv1connect.AdminServiceDeleteTaskProcedure:                  {},
 	conveyorv1connect.AdminServiceRunTaskProcedure:                     {},
