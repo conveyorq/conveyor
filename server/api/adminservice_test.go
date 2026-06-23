@@ -187,6 +187,71 @@ func TestConcurrencyLimitSetListDelete(t *testing.T) {
 	require.False(t, ok, "delete clears the limit")
 }
 
+func TestSetGroupConfigValidation(t *testing.T) {
+	admin, _, _ := newTestAdminService(t)
+	ctx := context.Background()
+
+	_, err := admin.SetGroupConfig(ctx, connect.NewRequest(&conveyorv1.SetGroupConfigRequest{
+		Group: "emails", MaxSize: 20, MaxDelay: durationpb.New(time.Minute), GracePeriod: durationpb.New(5 * time.Second),
+	}))
+	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err), "empty queue is rejected")
+
+	_, err = admin.SetGroupConfig(ctx, connect.NewRequest(&conveyorv1.SetGroupConfigRequest{
+		Queue: defaultQueueName, Group: "emails", MaxSize: 0, MaxDelay: durationpb.New(time.Minute), GracePeriod: durationpb.New(5 * time.Second),
+	}))
+	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err), "a max-size below one is rejected")
+
+	_, err = admin.SetGroupConfig(ctx, connect.NewRequest(&conveyorv1.SetGroupConfigRequest{
+		Queue: defaultQueueName, Group: "emails", MaxSize: 20, MaxDelay: durationpb.New(0), GracePeriod: durationpb.New(5 * time.Second),
+	}))
+	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err), "a non-positive max-delay is rejected")
+
+	_, err = admin.SetGroupConfig(ctx, connect.NewRequest(&conveyorv1.SetGroupConfigRequest{
+		Queue: defaultQueueName, Group: "emails", MaxSize: 20, MaxDelay: durationpb.New(time.Minute), GracePeriod: durationpb.New(0),
+	}))
+	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err), "a non-positive grace period is rejected")
+}
+
+func TestGroupConfigSetListDelete(t *testing.T) {
+	admin, _, taskLog := newTestAdminService(t)
+	ctx := context.Background()
+
+	_, err := admin.SetGroupConfig(ctx, connect.NewRequest(&conveyorv1.SetGroupConfigRequest{
+		Queue:       defaultQueueName,
+		Group:       "emails",
+		MaxSize:     20,
+		MaxDelay:    durationpb.New(2 * time.Minute),
+		GracePeriod: durationpb.New(5 * time.Second),
+	}))
+	require.NoError(t, err)
+
+	configs, err := taskLog.GroupConfigs(ctx)
+	require.NoError(t, err)
+	require.Len(t, configs, 1)
+	require.Equal(t, defaultQueueName, configs[0].Queue)
+	require.Equal(t, "emails", configs[0].Group)
+	require.Equal(t, 20, configs[0].MaxSize)
+	require.Equal(t, 2*time.Minute, configs[0].MaxDelay)
+	require.Equal(t, 5*time.Second, configs[0].GracePeriod)
+
+	list, err := admin.ListGroupConfigs(ctx, connect.NewRequest(&conveyorv1.ListGroupConfigsRequest{}))
+	require.NoError(t, err)
+	require.Len(t, list.Msg.GetConfigs(), 1)
+	require.Equal(t, "emails", list.Msg.GetConfigs()[0].GetGroup())
+	require.EqualValues(t, 20, list.Msg.GetConfigs()[0].GetMaxSize())
+	require.Equal(t, 2*time.Minute, list.Msg.GetConfigs()[0].GetMaxDelay().AsDuration())
+
+	_, err = admin.DeleteGroupConfig(ctx, connect.NewRequest(&conveyorv1.DeleteGroupConfigRequest{Group: "emails"}))
+	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err), "delete rejects an empty queue")
+
+	_, err = admin.DeleteGroupConfig(ctx, connect.NewRequest(&conveyorv1.DeleteGroupConfigRequest{Queue: defaultQueueName, Group: "emails"}))
+	require.NoError(t, err)
+
+	configs, err = taskLog.GroupConfigs(ctx)
+	require.NoError(t, err)
+	require.Empty(t, configs, "delete clears the override")
+}
+
 func TestListTasksPaginationAndFilters(t *testing.T) {
 	admin, tasks, _ := newTestAdminService(t)
 	ctx := context.Background()

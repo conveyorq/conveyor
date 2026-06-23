@@ -29,6 +29,13 @@ import (
 // replaced rather than duplicated across failover.
 const groupSweepRef = "conveyor-group-sweeper-sweep"
 
+// groupConfigKey identifies a per-group override by its (queue, group) pair; an
+// empty group is the queue-wide default.
+type groupConfigKey struct {
+	queue string
+	group string
+}
+
 // GroupSweeper is the aggregation firing loop: on every GroupSweepTick it reads
 // the accumulating groups of every queue that holds members and fires those
 // whose size, max-delay, or grace threshold has elapsed by telling the queue
@@ -111,28 +118,73 @@ func (s *GroupSweeper) sweep(ctx *goakt.ReceiveContext) {
 		return
 	}
 
+	// Nothing is aggregating: skip the override read entirely, so an idle server
+	// does no per-tick config query.
+	if len(groups) == 0 {
+		return
+	}
+
 	now := s.runtime.Clock().Now()
 	settings := s.runtime.Settings()
 
+	// Load the per-group overrides once per tick (a small, cacheable read) and
+	// resolve each group's effective thresholds before the due check. A read
+	// failure falls back to the global defaults rather than skipping the pass,
+	// so aggregation keeps firing even if the config table is briefly unreadable.
+	overrides, err := s.runtime.Broker().GroupConfigs(goCtx)
+	if err != nil {
+		s.runtime.Logger().Warn("group sweep: group configs failed; using global defaults", "error", err)
+	}
+
+	index := indexGroupConfigs(overrides)
+
 	for _, group := range groups {
-		if groupDue(group, settings, now) {
-			fireGroup(goCtx, ctx.ActorSystem(), s.runtime, group.Queue, group.Group, group.Type)
+		maxSize, maxDelay, gracePeriod := effectiveGroupConfig(group, index, settings)
+		if groupDue(group, maxSize, maxDelay, gracePeriod, now) {
+			fireGroup(goCtx, ctx.ActorSystem(), s.runtime, group.Queue, group.Group, group.Type, maxSize)
 		}
 	}
 }
 
+// indexGroupConfigs keys the overrides by (queue, group) for O(1) lookup during
+// a sweep.
+func indexGroupConfigs(configs []broker.GroupConfig) map[groupConfigKey]broker.GroupConfig {
+	index := make(map[groupConfigKey]broker.GroupConfig, len(configs))
+	for _, config := range configs {
+		index[groupConfigKey{config.Queue, config.Group}] = config
+	}
+
+	return index
+}
+
+// effectiveGroupConfig resolves a group's firing thresholds: its own (queue,
+// group) override wins, then the queue-wide default (empty group), then the
+// server's global settings.
+func effectiveGroupConfig(stat broker.GroupStat, index map[groupConfigKey]broker.GroupConfig, settings Settings) (maxSize int, maxDelay, gracePeriod time.Duration) {
+	if config, ok := index[groupConfigKey{stat.Queue, stat.Group}]; ok {
+		return config.MaxSize, config.MaxDelay, config.GracePeriod
+	}
+
+	if config, ok := index[groupConfigKey{stat.Queue, ""}]; ok {
+		return config.MaxSize, config.MaxDelay, config.GracePeriod
+	}
+
+	return settings.GroupMaxSize, settings.GroupMaxDelay, settings.GroupGracePeriod
+}
+
 // groupDue reports whether an accumulating group has met a firing threshold:
 // enough members, too long since the first member, or quiet long enough since
-// the last.
-func groupDue(stat broker.GroupStat, settings Settings, now time.Time) bool {
+// the last. The thresholds are the group's effective (overridden or global)
+// values, resolved by the caller.
+func groupDue(stat broker.GroupStat, maxSize int, maxDelay, gracePeriod time.Duration, now time.Time) bool {
 	switch {
-	case int(stat.Count) >= settings.GroupMaxSize:
+	case int(stat.Count) >= maxSize:
 		return true
 
-	case now.Sub(stat.Oldest) >= settings.GroupMaxDelay:
+	case now.Sub(stat.Oldest) >= maxDelay:
 		return true
 
-	case now.Sub(stat.Newest) >= settings.GroupGracePeriod:
+	case now.Sub(stat.Newest) >= gracePeriod:
 		return true
 
 	default:
@@ -141,9 +193,11 @@ func groupDue(stat broker.GroupStat, settings Settings, now time.Time) bool {
 }
 
 // fireGroup tells a queue grain to lease and batch-dispatch one due aggregation
-// group. Resolving the identity activates the grain if it is not live. Firing
-// is best-effort like wakeQueue: the next sweep retries a missed group.
-func fireGroup(ctx context.Context, system goakt.ActorSystem, runtime *Runtime, queue, group, taskType string) {
+// group, carrying the effective max batch size so the lease honors a per-group
+// override rather than the global default. Resolving the identity activates the
+// grain if it is not live. Firing is best-effort like wakeQueue: the next sweep
+// retries a missed group.
+func fireGroup(ctx context.Context, system goakt.ActorSystem, runtime *Runtime, queue, group, taskType string, limit int) {
 	identity, err := system.GrainIdentity(ctx, QueueGrainName(queue), queueGrainFactory,
 		goakt.WithGrainDeactivateAfter(runtime.Settings().PassivateAfter))
 	if err != nil {
@@ -152,13 +206,11 @@ func fireGroup(ctx context.Context, system goakt.ActorSystem, runtime *Runtime, 
 		return
 	}
 
-	message := &conveyorv1.FireGroup{Queue: queue, Group: group, Type: taskType}
+	message := &conveyorv1.FireGroup{Queue: queue, Group: group, Type: taskType, Limit: int32(limit)}
 	if err := system.TellGrain(ctx, identity, message); err != nil {
 		runtime.Logger().Warn("firing group failed", "queue", queue, "group", group, "error", err)
 	}
 }
-
-// ---- QueueGrain: lease and dispatch a fired group ----
 
 // recordBatchCompletion applies one finished batch: its members leave the
 // active count, the success/failure counters move, and the gateway regains the
@@ -205,6 +257,14 @@ func (x *QueueGrain) fireGroup(ctx *goakt.GrainContext, message *conveyorv1.Fire
 	leaseID := x.runtime.NewID()
 	expiresAt := timestamppb.New(x.runtime.Clock().Now().Add(settings.LeaseTTL))
 
+	// The sweeper resolved the group's effective max batch size and carries it
+	// on the message; fall back to the global default when it is unset (a
+	// non-positive limit), so the lease honors a larger per-group size.
+	limit := int(message.GetLimit())
+	if limit <= 0 {
+		limit = settings.GroupMaxSize
+	}
+
 	err := ctx.PipeToSelf(func() (any, error) {
 		result := &conveyorv1.GroupLeaseCompleted{
 			LeaseId:        leaseID,
@@ -213,7 +273,7 @@ func (x *QueueGrain) fireGroup(ctx *goakt.GrainContext, message *conveyorv1.Fire
 			Type:           taskType,
 		}
 
-		tasks, leaseErr := taskLog.LeaseGroup(context.Background(), queue, group, settings.GroupMaxSize, settings.LeaseTTL, leaseID)
+		tasks, leaseErr := taskLog.LeaseGroup(context.Background(), queue, group, limit, settings.LeaseTTL, leaseID)
 		if leaseErr != nil {
 			result.Error = leaseErr.Error()
 		} else {
@@ -282,8 +342,6 @@ func (x *QueueGrain) pickBatchGateway(taskType string) *gatewayCredits {
 		return gateway.credits > 0 && slices.Contains(gateway.batchTypes, taskType)
 	})
 }
-
-// ---- Gateway: deliver a batch to the worker and apply its result ----
 
 // dispatchBatch forwards one fired aggregation group down the worker stream as
 // a single BatchDispatch and tracks its members until the batch result arrives.

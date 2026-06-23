@@ -116,7 +116,7 @@ jobs:
             rm -f "$shas_file"
 
             if [[ -s "$prs_file" ]]; then
-              printf '\n### 🔀 Pull Requests\n\n' >> release-notes.md
+              printf '\n### Pull Requests\n\n' >> release-notes.md
               awk -F'\t' '!seen[$1]++ { printf "- #%s %s by @%s\n", $1, $2, $3 }' \
                 "$prs_file" >> release-notes.md
             fi

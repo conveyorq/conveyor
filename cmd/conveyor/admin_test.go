@@ -95,6 +95,42 @@ func TestRateLimitAgainstEmbeddedServer(t *testing.T) {
 	require.NotContains(t, lsAfter.String(), "email")
 }
 
+func TestGroupConfigUsageErrors(t *testing.T) {
+	err := run([]string{"group"}, &bytes.Buffer{})
+	require.ErrorContains(t, err, "usage: conveyor group")
+
+	err = run([]string{"group", "explode"}, &bytes.Buffer{})
+	require.ErrorContains(t, err, `unknown subcommand "explode"`)
+
+	err = run([]string{"group", "set"}, &bytes.Buffer{})
+	require.ErrorContains(t, err, "exactly one queue name is required")
+}
+
+func TestGroupConfigAgainstEmbeddedServer(t *testing.T) {
+	addr := startEmbeddedNode(t)
+
+	var setOut bytes.Buffer
+
+	require.NoError(t, run([]string{"--addr", addr, "group", "set", "email", "--group", "welcome", "--max-size", "20", "--max-delay", "2m", "--grace", "5s"}, &setOut))
+	require.Contains(t, setOut.String(), "queue email group \"welcome\" set to max-size 20")
+
+	var lsOut bytes.Buffer
+
+	require.NoError(t, run([]string{"--addr", addr, "group", "ls"}, &lsOut))
+	require.Contains(t, lsOut.String(), "email")
+	require.Contains(t, lsOut.String(), "welcome")
+
+	var rmOut bytes.Buffer
+
+	require.NoError(t, run([]string{"--addr", addr, "group", "rm", "email", "--group", "welcome"}, &rmOut))
+	require.Contains(t, rmOut.String(), "override cleared")
+
+	var lsAfter bytes.Buffer
+
+	require.NoError(t, run([]string{"--addr", addr, "group", "ls"}, &lsAfter))
+	require.NotContains(t, lsAfter.String(), "welcome")
+}
+
 func TestCronUsageErrors(t *testing.T) {
 	err := run([]string{"cron"}, &bytes.Buffer{})
 	require.ErrorContains(t, err, "usage: conveyor cron")

@@ -70,6 +70,33 @@ config / `conveyor.yaml`):
 The grace period gives coalescing (it resets on each new member); the max-delay
 bounds worst-case latency; the max-size bounds batch size.
 
+## Per-group overrides
+
+The settings above are the server-wide defaults. When one group needs to batch
+differently from the rest, override its thresholds per `(queue, group)` without
+touching the global config. An override sets all three thresholds (max size, max
+delay, grace period); the sweeper resolves each group's effective values on every
+sweep, preferring its own override, then a queue-wide default, then the global
+config.
+
+```console
+# Flush the "welcome" group on the email queue at 20 members or after 2 minutes.
+$ conveyor group set email --group welcome --max-size 20 --max-delay 2m --grace 5s
+
+# A queue-wide default for every group on "email" without its own override.
+$ conveyor group set email --max-size 100 --max-delay 30s --grace 10s
+
+$ conveyor group ls
+$ conveyor group rm email --group welcome
+```
+
+The same operations are available on `AdminService` as `SetGroupConfig`,
+`ListGroupConfigs`, and `DeleteGroupConfig`, and in the dashboard's **Groups**
+tab. Overrides persist in the broker and apply on the next sweep, so a change
+takes effect with no restart. An empty `--group` is the queue-wide default. The
+resolved max size also caps the batch lease, so a larger per-group size is
+honored end to end.
+
 ## Semantics & guarantees
 
 - **At-least-once, like everything else.** A batch shares one lease; heartbeats

@@ -302,6 +302,21 @@ func (e *encryptedBroker) QueueConcurrencyLimits(ctx context.Context) ([]broker.
 	return e.inner.QueueConcurrencyLimits(ctx)
 }
 
+// SetGroupConfig delegates to the wrapped broker.
+func (e *encryptedBroker) SetGroupConfig(ctx context.Context, queue, group string, maxSize int, maxDelay, gracePeriod time.Duration) error {
+	return e.inner.SetGroupConfig(ctx, queue, group, maxSize, maxDelay, gracePeriod)
+}
+
+// DeleteGroupConfig delegates to the wrapped broker.
+func (e *encryptedBroker) DeleteGroupConfig(ctx context.Context, queue, group string) error {
+	return e.inner.DeleteGroupConfig(ctx, queue, group)
+}
+
+// GroupConfigs delegates to the wrapped broker.
+func (e *encryptedBroker) GroupConfigs(ctx context.Context) ([]broker.GroupConfig, error) {
+	return e.inner.GroupConfigs(ctx)
+}
+
 // Info delegates to the wrapped broker.
 func (e *encryptedBroker) Info(ctx context.Context) (broker.Info, error) {
 	return e.inner.Info(ctx)
