@@ -22,6 +22,16 @@ import (
 	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 )
 
+func TestSchedulerIgnoresUnknownMessage(t *testing.T) {
+	ctx := context.Background()
+	engine := startEngine(t, memory.New(clock.System()))
+
+	pid, err := engine.System().Spawn(ctx, "extra-scheduler", NewScheduler())
+	require.NoError(t, err)
+	require.NoError(t, goakt.Tell(ctx, pid, new(conveyorv1.ReapTick)))
+	require.True(t, pid.IsRunning())
+}
+
 func TestSchedulerPreStartRequiresRuntimeExtension(t *testing.T) {
 	ctx := context.Background()
 

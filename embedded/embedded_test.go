@@ -95,6 +95,48 @@ func TestEmbeddedRoundTrip(t *testing.T) {
 	require.NoError(t, <-workerDone)
 }
 
+func TestEmbeddedAddrReportsListener(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), startTimeout)
+	defer cancel()
+
+	system, err := Start(ctx, Config{})
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		stopCtx, stopCancel := context.WithTimeout(context.Background(), startTimeout)
+		defer stopCancel()
+
+		require.NoError(t, system.Stop(stopCtx))
+	})
+
+	require.NotEmpty(t, system.Addr())
+	require.Equal(t, "http://"+system.Addr(), system.baseURL)
+}
+
+func TestEmbeddedStartRejectsInvalidConfig(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), startTimeout)
+	defer cancel()
+
+	// A Postgres broker with an empty DSN fails server.New's config
+	// validation before the node ever starts.
+	system, err := Start(ctx, Config{Broker: Postgres("")})
+	require.Error(t, err)
+	require.Nil(t, system)
+	require.ErrorContains(t, err, "embedded:")
+}
+
+func TestEmbeddedStartFailsWhenBrokerUnreachable(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), startTimeout)
+	defer cancel()
+
+	// A syntactically valid DSN pointing at a closed port: config validation
+	// passes, so the failure surfaces when the node pings the broker on Start.
+	system, err := Start(ctx, Config{Broker: Postgres("postgres://postgres:postgres@127.0.0.1:1/postgres")})
+	require.Error(t, err)
+	require.Nil(t, system)
+	require.ErrorContains(t, err, "embedded: starting node")
+}
+
 func TestEmbeddedZeroConfigDefaultsToMemory(t *testing.T) {
 	serverConfig, err := buildServerConfig(Config{})
 	require.NoError(t, err)

@@ -370,10 +370,28 @@ type dependencyEdge struct {
 	policy    int16
 }
 
+// pgxPool is the subset of *pgxpool.Pool the broker uses to run statements.
+// Both *pgxpool.Pool and a pgxmock pool satisfy it, so tests can drive every
+// query and error path without a live database.
+type pgxPool interface {
+	// Begin starts a transaction.
+	Begin(ctx context.Context) (pgx.Tx, error)
+	// Exec runs a statement that returns no rows.
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+	// Query runs a statement that returns rows.
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	// QueryRow runs a statement expected to return at most one row.
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	// Stat reports connection-pool counters.
+	Stat() *pgxpool.Stat
+	// Close releases the pool's connections.
+	Close()
+}
+
 // Broker is the Postgres broker.Broker implementation.
 type Broker struct {
 	// pool is the pgx connection pool.
-	pool *pgxpool.Pool
+	pool pgxPool
 	// clock supplies the current time for every statement.
 	clock clock.Clock
 	// sink receives lifecycle events on each state transition; nil until wired

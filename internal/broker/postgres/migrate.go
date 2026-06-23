@@ -9,8 +9,6 @@ import (
 	"embed"
 	"fmt"
 	"slices"
-
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // migrationFiles embeds the schema migrations applied at startup.
@@ -25,7 +23,7 @@ const migrationLockID = 7423886242271425537
 // migrate applies every embedded migration that is not yet recorded in
 // conveyor_schema_migrations, in lexical filename order, inside a single
 // transaction guarded by an advisory lock.
-func migrate(ctx context.Context, pool *pgxpool.Pool) (err error) {
+func migrate(ctx context.Context, pool pgxPool) (err error) {
 	transaction, err := pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("postgres: begin migration: %w", err)

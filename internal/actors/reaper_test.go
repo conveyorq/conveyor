@@ -33,6 +33,16 @@ func TestReaperPreStartRequiresRuntimeExtension(t *testing.T) {
 	require.ErrorContains(t, err, "is not registered")
 }
 
+func TestReaperIgnoresUnknownMessage(t *testing.T) {
+	ctx := context.Background()
+	engine := startEngine(t, memory.New(clock.System()))
+
+	pid, err := engine.System().Spawn(ctx, "extra-reaper", NewReaper())
+	require.NoError(t, err)
+	require.NoError(t, goakt.Tell(ctx, pid, new(conveyorv1.PromoteTick)))
+	require.True(t, pid.IsRunning())
+}
+
 // TestReaperReclaimsExpiredLeases verifies lease reaping: an active task
 // whose lease lapsed returns to retry with an incremented counter. The
 // queue is paused so no grain re-leases it away from the assertion.

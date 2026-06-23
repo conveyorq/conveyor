@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	goakt "github.com/tochemey/goakt/v4/actor"
+	goaktlog "github.com/tochemey/goakt/v4/log"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -19,6 +21,29 @@ import (
 	"github.com/conveyorq/conveyor/internal/clock"
 	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 )
+
+func TestGroupSweeperPreStartRequiresRuntimeExtension(t *testing.T) {
+	ctx := context.Background()
+
+	system, err := goakt.NewActorSystem("bare-sweeper-system", goakt.WithLogger(goaktlog.DiscardLogger))
+	require.NoError(t, err)
+	require.NoError(t, system.Start(ctx))
+
+	t.Cleanup(func() { _ = system.Stop(ctx) })
+
+	_, err = system.Spawn(ctx, "sweeper-no-runtime", NewGroupSweeper())
+	require.ErrorContains(t, err, "is not registered")
+}
+
+func TestGroupSweeperIgnoresUnknownMessage(t *testing.T) {
+	ctx := context.Background()
+	engine := startEngine(t, memory.New(clock.System()))
+
+	pid, err := engine.System().Spawn(ctx, "extra-sweeper", NewGroupSweeper())
+	require.NoError(t, err)
+	require.NoError(t, goakt.Tell(ctx, pid, new(conveyorv1.ReapTick)))
+	require.True(t, pid.IsRunning())
+}
 
 // groupedTask builds an aggregation-group member of the given type.
 func groupedTask(id, queue, taskType, group string) *conveyorv1.TaskEnvelope {

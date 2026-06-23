@@ -12,12 +12,37 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	goakt "github.com/tochemey/goakt/v4/actor"
+	goaktlog "github.com/tochemey/goakt/v4/log"
 
 	"github.com/conveyorq/conveyor/internal/broker/memory"
 	"github.com/conveyorq/conveyor/internal/clock"
 	"github.com/conveyorq/conveyor/internal/events"
 	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 )
+
+func TestEventRelayPreStartRequiresRuntimeExtension(t *testing.T) {
+	ctx := context.Background()
+
+	system, err := goakt.NewActorSystem("bare-relay-system", goakt.WithLogger(goaktlog.DiscardLogger))
+	require.NoError(t, err)
+	require.NoError(t, system.Start(ctx))
+
+	t.Cleanup(func() { _ = system.Stop(ctx) })
+
+	_, err = system.Spawn(ctx, "relay-no-runtime", &eventRelay{})
+	require.ErrorContains(t, err, "is not registered")
+}
+
+func TestEventRelayIgnoresUnknownMessage(t *testing.T) {
+	ctx := context.Background()
+	engine := startEngine(t, memory.New(clock.System()))
+
+	pid, err := engine.System().Spawn(ctx, "extra-relay", &eventRelay{})
+	require.NoError(t, err)
+	require.NoError(t, goakt.Tell(ctx, pid, new(conveyorv1.ReapTick)))
+	require.True(t, pid.IsRunning())
+}
 
 // TestEngineStreamsLifecycleEvents proves the full node-local path: a broker
 // transition is published to the cluster topic, the relay republishes it into

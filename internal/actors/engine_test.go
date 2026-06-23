@@ -478,6 +478,25 @@ func TestMaintenanceLoopsSurviveBrokerFaults(t *testing.T) {
 		time.Minute, 20*time.Millisecond, "dispatch resumes after the broker recovers")
 }
 
+// TestEngineEventsEnabledReportsSetting confirms the engine surfaces the
+// configured lifecycle-event toggle.
+func TestEngineEventsEnabledReportsSetting(t *testing.T) {
+	engine := startEngine(t, memory.New(clock.System()))
+
+	require.Equal(t, engine.Settings().EventsEnabled, engine.EventsEnabled())
+}
+
+// TestEngineEnqueuePropagatesBrokerFault asserts a broker write failure
+// surfaces from Enqueue rather than being swallowed.
+func TestEngineEnqueuePropagatesBrokerFault(t *testing.T) {
+	taskLog := newFaultBroker(memory.New(clock.System()))
+	engine := startEngine(t, taskLog)
+
+	taskLog.fault(methodEnqueue, errors.New("broker down"))
+
+	require.Error(t, engine.Enqueue(context.Background(), newTask("t", "q", "demo", 0)))
+}
+
 // TestThreeNodeChaosLosesNothing is the Phase 5 chaos acceptance test: three
 // in-process nodes share one durable store; the queue grain is pinned to one
 // node and a worker gateway lives on another, while a third survivor also
