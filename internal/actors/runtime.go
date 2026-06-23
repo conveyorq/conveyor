@@ -21,6 +21,7 @@ import (
 	goakt "github.com/tochemey/goakt/v4/actor"
 	"github.com/tochemey/goakt/v4/extension"
 
+	"github.com/conveyorq/conveyor/internal/backoff"
 	"github.com/conveyorq/conveyor/internal/broker"
 	"github.com/conveyorq/conveyor/internal/clock"
 	"github.com/conveyorq/conveyor/internal/events"
@@ -77,6 +78,9 @@ type Settings struct {
 	// EventBufferSize is the per-watcher event-stream buffer depth; zero selects
 	// the events package default.
 	EventBufferSize int
+	// RetryBackoff is the default retry backoff a gateway applies to a failed
+	// task that carries no per-task retry policy.
+	RetryBackoff backoff.Strategy
 }
 
 // Counters are the core engine counters, safe for concurrent use. OTel

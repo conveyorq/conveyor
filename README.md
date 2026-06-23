@@ -7,7 +7,7 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/conveyorq/conveyor.svg)](https://pkg.go.dev/github.com/conveyorq/conveyor)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-**A distributed, push-based task queue for Go.**
+**A distributed, push-based task queue with Go, TypeScript, and Python SDKs.**
 
 Persistent tasks with at-least-once execution, retries with backoff, scheduling,
 and priorities, backed by Postgres or an in-memory broker, with **no Redis and no polling**.
@@ -44,8 +44,9 @@ and priorities, backed by Postgres or an in-memory broker, with **no Redis and n
 - **Deploys are free**: a worker shutting down hands its in-flight tasks back
   with no retry penalty and no backoff; they resume immediately elsewhere, so
   rolling out a new build never burns a task's retry budget.
-- **Retries** with exponential backoff, **delayed** and **scheduled** tasks,
-  per-task **timeouts/deadlines**, and per-task **priorities**.
+- **Retries** with configurable backoff (exponential, linear, or fixed; set
+  server-wide or per task), **delayed** and **scheduled** tasks, per-task
+  **timeouts/deadlines**, and per-task **priorities**.
 - **Reschedule tasks**: move a waiting task's due time to a new instant in place,
   keeping its id and dependencies, from the CLI, dashboard, or API.
 - **Weighted queues**: a worker declares a relative weight per queue, and the
@@ -95,12 +96,13 @@ and priorities, backed by Postgres or an in-memory broker, with **no Redis and n
 
 ## How it compares
 
-Conveyor is one of Go's durable task queues. Its closest peers are
+**Conveyor** is a durable task queue. Its closest peers are
 [asynq](https://github.com/hibiken/asynq) (Redis-backed) and
-[River](https://github.com/riverqueue/river) (Postgres-backed). Conveyor is
-Postgres-first like River, but ships as a clustered **server** with a
-language-neutral wire protocol and **push-based** dispatch, and it also runs
-embedded inside a Go process.
+[River](https://github.com/riverqueue/river) (Postgres-backed), both Go
+libraries. **Conveyor** is Postgres-first like River, but ships as a clustered
+**server** with a language-neutral wire protocol and **push-based** dispatch,
+serves Go, TypeScript, and Python SDKs, and also runs embedded inside a Go
+process.
 
 | Capability                    |                                                                            Conveyor                                                                            |            asynq             |                 River                  |
 |-------------------------------|:--------------------------------------------------------------------------------------------------------------------------------------------------------------:|:----------------------------:|:--------------------------------------:|
@@ -116,7 +118,7 @@ embedded inside a Go process.
 | Reschedule a task's run time  |                                                                               ✓                                                                                |              ✗               |                   ✗                    |
 | Cron / periodic               |                                                            ✓ (server-persisted, survives failover)                                                             |         ✓ (in code)          |              ✓ (in code)               |
 | Unique tasks                  |                                                                               ✓                                                                                |              ✓               |                   ✓                    |
-| Retries with backoff          |                                                                               ✓                                                                                |              ✓               |                   ✓                    |
+| Retries with backoff          |                                                     ✓ (exponential/linear/fixed, server-wide or per task)                                                      |              ✓               |                   ✓                    |
 | Dead-letter / archive         |                                                                               ✓                                                                                |              ✓               |                   ✓                    |
 | Pause / resume queues         |                                                                               ✓                                                                                |              ✓               |                   ✓                    |
 | Rate limiting                 |                                                                      ✓ (per-queue, live)                                                                       |            DIY ²             |                   ✗                    |
@@ -218,7 +220,7 @@ idempotent**. Return `conveyor.SkipRetry(err)` to dead-letter immediately;
 panics are recovered and treated as retryable failures.
 
 **What the server gives you:** named queues with weights, bounded worker
-concurrency, retries with exponential backoff, per-task priorities, delayed
+concurrency, retries with configurable backoff, per-task priorities, delayed
 and scheduled tasks, cron, unique tasks, retention/archival, and a read-only
 admin/inspection API, all enforced server-side. Your code only writes
 handlers and enqueues tasks.

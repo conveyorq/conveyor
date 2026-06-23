@@ -111,6 +111,25 @@ export interface EnqueueOptions {
    * {@link Dependency} sets an explicit policy. Dependencies must be acyclic.
    */
   dependsOn?: (string | Dependency)[];
+  /**
+   * Override the server's default retry backoff for this task: the growth
+   * strategy plus the first-retry delay and the overall cap. Omit a field to
+   * keep the server default for it.
+   */
+  retryPolicy?: RetryPolicy;
+}
+
+/** RetryStrategy selects how a task's retry backoff delay grows per attempt. */
+export type RetryStrategy = "exponential" | "linear" | "fixed";
+
+/** RetryPolicy overrides the server's default retry backoff for one task. */
+export interface RetryPolicy {
+  /** How the delay grows; omit to keep the server's default strategy. */
+  strategy?: RetryStrategy;
+  /** First-retry delay ceiling in milliseconds; omit for the server default. */
+  base?: number;
+  /** Overall retry delay cap in milliseconds; omit for the server default. */
+  max?: number;
 }
 
 /** EnqueueFn commits a task and returns its info; the unit enqueue middleware wraps. */

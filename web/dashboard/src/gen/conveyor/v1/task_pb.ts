@@ -12,7 +12,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file conveyor/v1/task.proto.
  */
 export const file_conveyor_v1_task: GenFile = /*@__PURE__*/
-  fileDesc("ChZjb252ZXlvci92MS90YXNrLnByb3RvEgtjb252ZXlvci52MSLhAQoJVGFza0V2ZW50EgoKAmlkGAEgASgJEg0KBXF1ZXVlGAIgASgJEgwKBHR5cGUYAyABKAkSJQoFc3RhdGUYBCABKA4yFi5jb252ZXlvci52MS5UYXNrU3RhdGUSLgoKZXZlbnRfdHlwZRgFIAEoDjIaLmNvbnZleW9yLnYxLlRhc2tFdmVudFR5cGUSLwoLb2NjdXJyZWRfYXQYBiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEg8KB2F0dGVtcHQYByABKAUSEgoKbGFzdF9lcnJvchgIIAEoCSJbCg5UYXNrRGVwZW5kZW5jeRIPCgd0YXNrX2lkGAEgASgJEjgKCm9uX2ZhaWx1cmUYAiABKA4yJC5jb252ZXlvci52MS5EZXBlbmRlbmN5RmFpbHVyZVBvbGljeSLZAwoMVGFza0VudmVsb3BlEgoKAmlkGAEgASgJEg0KBXF1ZXVlGAIgASgJEgwKBHR5cGUYAyABKAkSDwoHcGF5bG9hZBgEIAEoDBIUCgxjb250ZW50X3R5cGUYBSABKAkSOQoIbWV0YWRhdGEYBiADKAsyJy5jb252ZXlvci52MS5UYXNrRW52ZWxvcGUuTWV0YWRhdGFFbnRyeRIpCgdvcHRpb25zGAcgASgLMhguY29udmV5b3IudjEuVGFza09wdGlvbnMSDwoHcmV0cmllZBgIIAEoBRISCgpsYXN0X2Vycm9yGAkgASgJEi8KC2VucXVldWVkX2F0GAogASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIuCgpzdGFydGVkX2F0GAsgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIwCgxjb21wbGV0ZWRfYXQYDCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhAKCHByb2dyZXNzGA0gASgNEhgKEHByb2dyZXNzX21lc3NhZ2UYDiABKAkaLwoNTWV0YWRhdGFFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBIrwDCgtUYXNrT3B0aW9ucxIRCgltYXhfcmV0cnkYASABKAUSKgoHdGltZW91dBgCIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbhIsCghkZWFkbGluZRgDIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLgoKcHJvY2Vzc19hdBgEIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASEgoKdW5pcXVlX2tleRgFIAEoCRItCgp1bmlxdWVfdHRsGAYgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uEiwKCXJldGVudGlvbhgHIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbhIQCghwcmlvcml0eRgIIAEoBRINCgVncm91cBgJIAEoCRIuCgpleHBpcmVzX2F0GAogASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIvCgpkZXBlbmRzX29uGAsgAygLMhsuY29udmV5b3IudjEuVGFza0RlcGVuZGVuY3kSFwoPY29uY3VycmVuY3lfa2V5GAwgASgJSgQIDRAQKoYCCglUYXNrU3RhdGUSGgoWVEFTS19TVEFURV9VTlNQRUNJRklFRBAAEhgKFFRBU0tfU1RBVEVfU0NIRURVTEVEEAESFgoSVEFTS19TVEFURV9QRU5ESU5HEAISFQoRVEFTS19TVEFURV9BQ1RJVkUQAxIUChBUQVNLX1NUQVRFX1JFVFJZEAQSGAoUVEFTS19TVEFURV9DT01QTEVURUQQBRIXChNUQVNLX1NUQVRFX0FSQ0hJVkVEEAYSFwoTVEFTS19TVEFURV9DQU5DRUxFRBAHEhoKFlRBU0tfU1RBVEVfQUdHUkVHQVRJTkcQCBIWChJUQVNLX1NUQVRFX0JMT0NLRUQQCSqfAgoNVGFza0V2ZW50VHlwZRIfChtUQVNLX0VWRU5UX1RZUEVfVU5TUEVDSUZJRUQQABIcChhUQVNLX0VWRU5UX1RZUEVfRU5RVUVVRUQQARIdChlUQVNLX0VWRU5UX1RZUEVfU0NIRURVTEVEEAISGgoWVEFTS19FVkVOVF9UWVBFX0xFQVNFRBADEh0KGVRBU0tfRVZFTlRfVFlQRV9DT01QTEVURUQQBBIbChdUQVNLX0VWRU5UX1RZUEVfUkVUUklFRBAFEhwKGFRBU0tfRVZFTlRfVFlQRV9BUkNISVZFRBAGEhwKGFRBU0tfRVZFTlRfVFlQRV9DQU5DRUxFRBAHEhwKGFRBU0tfRVZFTlRfVFlQRV9SRUxFQVNFRBAIKr8BChdEZXBlbmRlbmN5RmFpbHVyZVBvbGljeRIpCiVERVBFTkRFTkNZX0ZBSUxVUkVfUE9MSUNZX1VOU1BFQ0lGSUVEEAASIwofREVQRU5ERU5DWV9GQUlMVVJFX1BPTElDWV9CTE9DSxABEiwKKERFUEVOREVOQ1lfRkFJTFVSRV9QT0xJQ1lfQ0FTQ0FERV9DQU5DRUwQAhImCiJERVBFTkRFTkNZX0ZBSUxVUkVfUE9MSUNZX0NPTlRJTlVFEANiBnByb3RvMw", [file_google_protobuf_duration, file_google_protobuf_timestamp]);
+  fileDesc("ChZjb252ZXlvci92MS90YXNrLnByb3RvEgtjb252ZXlvci52MSLhAQoJVGFza0V2ZW50EgoKAmlkGAEgASgJEg0KBXF1ZXVlGAIgASgJEgwKBHR5cGUYAyABKAkSJQoFc3RhdGUYBCABKA4yFi5jb252ZXlvci52MS5UYXNrU3RhdGUSLgoKZXZlbnRfdHlwZRgFIAEoDjIaLmNvbnZleW9yLnYxLlRhc2tFdmVudFR5cGUSLwoLb2NjdXJyZWRfYXQYBiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEg8KB2F0dGVtcHQYByABKAUSEgoKbGFzdF9lcnJvchgIIAEoCSJbCg5UYXNrRGVwZW5kZW5jeRIPCgd0YXNrX2lkGAEgASgJEjgKCm9uX2ZhaWx1cmUYAiABKA4yJC5jb252ZXlvci52MS5EZXBlbmRlbmN5RmFpbHVyZVBvbGljeSLZAwoMVGFza0VudmVsb3BlEgoKAmlkGAEgASgJEg0KBXF1ZXVlGAIgASgJEgwKBHR5cGUYAyABKAkSDwoHcGF5bG9hZBgEIAEoDBIUCgxjb250ZW50X3R5cGUYBSABKAkSOQoIbWV0YWRhdGEYBiADKAsyJy5jb252ZXlvci52MS5UYXNrRW52ZWxvcGUuTWV0YWRhdGFFbnRyeRIpCgdvcHRpb25zGAcgASgLMhguY29udmV5b3IudjEuVGFza09wdGlvbnMSDwoHcmV0cmllZBgIIAEoBRISCgpsYXN0X2Vycm9yGAkgASgJEi8KC2VucXVldWVkX2F0GAogASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIuCgpzdGFydGVkX2F0GAsgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIwCgxjb21wbGV0ZWRfYXQYDCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhAKCHByb2dyZXNzGA0gASgNEhgKEHByb2dyZXNzX21lc3NhZ2UYDiABKAkaLwoNTWV0YWRhdGFFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBIuwDCgtUYXNrT3B0aW9ucxIRCgltYXhfcmV0cnkYASABKAUSKgoHdGltZW91dBgCIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbhIsCghkZWFkbGluZRgDIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLgoKcHJvY2Vzc19hdBgEIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASEgoKdW5pcXVlX2tleRgFIAEoCRItCgp1bmlxdWVfdHRsGAYgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uEiwKCXJldGVudGlvbhgHIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbhIQCghwcmlvcml0eRgIIAEoBRINCgVncm91cBgJIAEoCRIuCgpleHBpcmVzX2F0GAogASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIvCgpkZXBlbmRzX29uGAsgAygLMhsuY29udmV5b3IudjEuVGFza0RlcGVuZGVuY3kSFwoPY29uY3VycmVuY3lfa2V5GAwgASgJEi4KDHJldHJ5X3BvbGljeRgNIAEoCzIYLmNvbnZleW9yLnYxLlJldHJ5UG9saWN5SgQIDhAQIowBCgtSZXRyeVBvbGljeRIsCghzdHJhdGVneRgBIAEoDjIaLmNvbnZleW9yLnYxLlJldHJ5U3RyYXRlZ3kSJwoEYmFzZRgCIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbhImCgNtYXgYAyABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24qhgIKCVRhc2tTdGF0ZRIaChZUQVNLX1NUQVRFX1VOU1BFQ0lGSUVEEAASGAoUVEFTS19TVEFURV9TQ0hFRFVMRUQQARIWChJUQVNLX1NUQVRFX1BFTkRJTkcQAhIVChFUQVNLX1NUQVRFX0FDVElWRRADEhQKEFRBU0tfU1RBVEVfUkVUUlkQBBIYChRUQVNLX1NUQVRFX0NPTVBMRVRFRBAFEhcKE1RBU0tfU1RBVEVfQVJDSElWRUQQBhIXChNUQVNLX1NUQVRFX0NBTkNFTEVEEAcSGgoWVEFTS19TVEFURV9BR0dSRUdBVElORxAIEhYKElRBU0tfU1RBVEVfQkxPQ0tFRBAJKp8CCg1UYXNrRXZlbnRUeXBlEh8KG1RBU0tfRVZFTlRfVFlQRV9VTlNQRUNJRklFRBAAEhwKGFRBU0tfRVZFTlRfVFlQRV9FTlFVRVVFRBABEh0KGVRBU0tfRVZFTlRfVFlQRV9TQ0hFRFVMRUQQAhIaChZUQVNLX0VWRU5UX1RZUEVfTEVBU0VEEAMSHQoZVEFTS19FVkVOVF9UWVBFX0NPTVBMRVRFRBAEEhsKF1RBU0tfRVZFTlRfVFlQRV9SRVRSSUVEEAUSHAoYVEFTS19FVkVOVF9UWVBFX0FSQ0hJVkVEEAYSHAoYVEFTS19FVkVOVF9UWVBFX0NBTkNFTEVEEAcSHAoYVEFTS19FVkVOVF9UWVBFX1JFTEVBU0VEEAgqvwEKF0RlcGVuZGVuY3lGYWlsdXJlUG9saWN5EikKJURFUEVOREVOQ1lfRkFJTFVSRV9QT0xJQ1lfVU5TUEVDSUZJRUQQABIjCh9ERVBFTkRFTkNZX0ZBSUxVUkVfUE9MSUNZX0JMT0NLEAESLAooREVQRU5ERU5DWV9GQUlMVVJFX1BPTElDWV9DQVNDQURFX0NBTkNFTBACEiYKIkRFUEVOREVOQ1lfRkFJTFVSRV9QT0xJQ1lfQ09OVElOVUUQAyqEAQoNUmV0cnlTdHJhdGVneRIeChpSRVRSWV9TVFJBVEVHWV9VTlNQRUNJRklFRBAAEh4KGlJFVFJZX1NUUkFURUdZX0VYUE9ORU5USUFMEAESGQoVUkVUUllfU1RSQVRFR1lfTElORUFSEAISGAoUUkVUUllfU1RSQVRFR1lfRklYRUQQA2IGcHJvdG8z", [file_google_protobuf_duration, file_google_protobuf_timestamp]);
 
 /**
  * TaskEvent is one task lifecycle transition delivered on the AdminService
@@ -347,6 +347,15 @@ export type TaskOptions = Message<"conveyor.v1.TaskOptions"> & {
    * @generated from field: string concurrency_key = 12;
    */
   concurrencyKey: string;
+
+  /**
+   * retry_policy overrides the server's default retry backoff for this task,
+   * e.g. a fast linear retry for a flaky internal call or a long fixed delay
+   * for a rate-limited downstream. Unset uses the server default.
+   *
+   * @generated from field: conveyor.v1.RetryPolicy retry_policy = 13;
+   */
+  retryPolicy?: RetryPolicy | undefined;
 };
 
 /**
@@ -355,6 +364,43 @@ export type TaskOptions = Message<"conveyor.v1.TaskOptions"> & {
  */
 export const TaskOptionsSchema: GenMessage<TaskOptions> = /*@__PURE__*/
   messageDesc(file_conveyor_v1_task, 3);
+
+/**
+ * RetryPolicy overrides the server's default retry backoff for one task. Each
+ * field falls back to the server default when left at its zero value, so a task
+ * can override only the strategy, only the timing, or all of it.
+ *
+ * @generated from message conveyor.v1.RetryPolicy
+ */
+export type RetryPolicy = Message<"conveyor.v1.RetryPolicy"> & {
+  /**
+   * strategy selects how the backoff delay grows.
+   *
+   * @generated from field: conveyor.v1.RetryStrategy strategy = 1;
+   */
+  strategy: RetryStrategy;
+
+  /**
+   * base is the first-retry delay ceiling.
+   *
+   * @generated from field: google.protobuf.Duration base = 2;
+   */
+  base?: Duration | undefined;
+
+  /**
+   * max bounds the delay regardless of how many retries have elapsed.
+   *
+   * @generated from field: google.protobuf.Duration max = 3;
+   */
+  max?: Duration | undefined;
+};
+
+/**
+ * Describes the message conveyor.v1.RetryPolicy.
+ * Use `create(RetryPolicySchema)` to create a new message.
+ */
+export const RetryPolicySchema: GenMessage<RetryPolicy> = /*@__PURE__*/
+  messageDesc(file_conveyor_v1_task, 4);
 
 /**
  * TaskState enumerates the lifecycle states of a task.
@@ -568,4 +614,45 @@ export enum DependencyFailurePolicy {
  */
 export const DependencyFailurePolicySchema: GenEnum<DependencyFailurePolicy> = /*@__PURE__*/
   enumDesc(file_conveyor_v1_task, 2);
+
+/**
+ * RetryStrategy selects how a task's retry backoff delay grows with the attempt.
+ *
+ * @generated from enum conveyor.v1.RetryStrategy
+ */
+export enum RetryStrategy {
+  /**
+   * RETRY_STRATEGY_UNSPECIFIED uses the server's default strategy.
+   *
+   * @generated from enum value: RETRY_STRATEGY_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * RETRY_STRATEGY_EXPONENTIAL doubles the delay ceiling each retry.
+   *
+   * @generated from enum value: RETRY_STRATEGY_EXPONENTIAL = 1;
+   */
+  EXPONENTIAL = 1,
+
+  /**
+   * RETRY_STRATEGY_LINEAR grows the delay ceiling linearly with the attempt.
+   *
+   * @generated from enum value: RETRY_STRATEGY_LINEAR = 2;
+   */
+  LINEAR = 2,
+
+  /**
+   * RETRY_STRATEGY_FIXED holds the delay ceiling constant across retries.
+   *
+   * @generated from enum value: RETRY_STRATEGY_FIXED = 3;
+   */
+  FIXED = 3,
+}
+
+/**
+ * Describes the enum conveyor.v1.RetryStrategy.
+ */
+export const RetryStrategySchema: GenEnum<RetryStrategy> = /*@__PURE__*/
+  enumDesc(file_conveyor_v1_task, 3);
 

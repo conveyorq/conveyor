@@ -22,6 +22,8 @@ import (
 	"github.com/knadh/koanf/providers/rawbytes"
 	"github.com/knadh/koanf/providers/structs"
 	"github.com/knadh/koanf/v2"
+
+	"github.com/conveyorq/conveyor/internal/backoff"
 )
 
 // Deployment modes. Embedded mode is a Go package, not a conveyord mode,
@@ -97,6 +99,9 @@ const (
 	defaultPromoteInterval   = time.Second
 	defaultPassivateAfter    = 5 * time.Minute
 	defaultMaxRetry          = 25
+	defaultRetryBackoff      = "exponential"
+	defaultRetryBackoffBase  = backoff.DefaultBase
+	defaultRetryBackoffCap   = backoff.DefaultCap
 	defaultShutdownTimeout   = 30 * time.Second
 	defaultGroupMaxSize      = 100
 	defaultGroupMaxDelay     = time.Minute
@@ -300,6 +305,13 @@ type EngineConfig struct {
 	PassivateAfter time.Duration `koanf:"passivate_after"`
 	// DefaultMaxRetry applies to tasks that do not set max_retry.
 	DefaultMaxRetry int `koanf:"default_max_retry"`
+	// RetryBackoffStrategy is the default retry backoff growth: "exponential",
+	// "linear", or "fixed". A task may override it with its own retry policy.
+	RetryBackoffStrategy string `koanf:"retry_backoff_strategy"`
+	// RetryBackoffBase is the default first-retry delay ceiling.
+	RetryBackoffBase time.Duration `koanf:"retry_backoff_base"`
+	// RetryBackoffCap bounds the default retry delay regardless of attempt.
+	RetryBackoffCap time.Duration `koanf:"retry_backoff_cap"`
 	// ShutdownTimeout bounds graceful shutdown of the whole node.
 	ShutdownTimeout time.Duration `koanf:"shutdown_timeout"`
 	// GroupMaxSize fires an aggregation group once this many members
@@ -357,19 +369,22 @@ func DefaultConfig() *Config {
 			},
 		},
 		Engine: EngineConfig{
-			LeaseTTL:           defaultLeaseTTL,
-			LeaseBatchMax:      defaultLeaseBatchMax,
-			ResolverPoolSize:   defaultResolverPoolSize,
-			ReapInterval:       defaultReapInterval,
-			PromoteInterval:    defaultPromoteInterval,
-			PassivateAfter:     defaultPassivateAfter,
-			DefaultMaxRetry:    defaultMaxRetry,
-			ShutdownTimeout:    defaultShutdownTimeout,
-			GroupMaxSize:       defaultGroupMaxSize,
-			GroupMaxDelay:      defaultGroupMaxDelay,
-			GroupGracePeriod:   defaultGroupGracePeriod,
-			GroupSweepInterval: defaultGroupSweep,
-			RateLimitEnabled:   defaultRateLimitEnabled,
+			LeaseTTL:             defaultLeaseTTL,
+			LeaseBatchMax:        defaultLeaseBatchMax,
+			ResolverPoolSize:     defaultResolverPoolSize,
+			ReapInterval:         defaultReapInterval,
+			PromoteInterval:      defaultPromoteInterval,
+			PassivateAfter:       defaultPassivateAfter,
+			DefaultMaxRetry:      defaultMaxRetry,
+			RetryBackoffStrategy: defaultRetryBackoff,
+			RetryBackoffBase:     defaultRetryBackoffBase,
+			RetryBackoffCap:      defaultRetryBackoffCap,
+			ShutdownTimeout:      defaultShutdownTimeout,
+			GroupMaxSize:         defaultGroupMaxSize,
+			GroupMaxDelay:        defaultGroupMaxDelay,
+			GroupGracePeriod:     defaultGroupGracePeriod,
+			GroupSweepInterval:   defaultGroupSweep,
+			RateLimitEnabled:     defaultRateLimitEnabled,
 		},
 		Log:     LogConfig{Level: LogLevelInfo, Format: LogFormatJSON},
 		Otel:    OtelConfig{ServiceName: defaultOtelServiceName},
@@ -481,6 +496,24 @@ func validateRateLimitDefault(engine EngineConfig) error {
 
 	if engine.RateLimitRatePerSec > 0 && engine.RateLimitBurst < 1 {
 		return fmt.Errorf("engine.rate_limit_burst: must be at least 1 when a default rate is set, got %d", engine.RateLimitBurst)
+	}
+
+	return nil
+}
+
+// validateRetryBackoff checks the default retry backoff knobs: a known strategy,
+// a positive base, and a cap no smaller than the base.
+func validateRetryBackoff(engine EngineConfig) error {
+	if _, ok := backoff.ParseKind(engine.RetryBackoffStrategy); !ok {
+		return fmt.Errorf("engine.retry_backoff_strategy: %q is not one of exponential, linear, fixed", engine.RetryBackoffStrategy)
+	}
+
+	if engine.RetryBackoffBase <= 0 {
+		return fmt.Errorf("engine.retry_backoff_base: must be positive, got %s", engine.RetryBackoffBase)
+	}
+
+	if engine.RetryBackoffCap < engine.RetryBackoffBase {
+		return fmt.Errorf("engine.retry_backoff_cap: must be at least retry_backoff_base (%s), got %s", engine.RetryBackoffBase, engine.RetryBackoffCap)
 	}
 
 	return nil
@@ -606,6 +639,10 @@ func (c *Config) Validate() error {
 	}
 
 	if err := validateRateLimitDefault(c.Engine); err != nil {
+		return err
+	}
+
+	if err := validateRetryBackoff(c.Engine); err != nil {
 		return err
 	}
 

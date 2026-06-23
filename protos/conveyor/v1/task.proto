@@ -203,6 +203,35 @@ message TaskOptions {
   // dispatched as a batch on a separate path.
   string concurrency_key = 12;
 
+  // retry_policy overrides the server's default retry backoff for this task,
+  // e.g. a fast linear retry for a flaky internal call or a long fixed delay
+  // for a rate-limited downstream. Unset uses the server default.
+  RetryPolicy retry_policy = 13;
+
   // Reserved for future options.
-  reserved 13 to 15;
+  reserved 14 to 15;
+}
+
+// RetryStrategy selects how a task's retry backoff delay grows with the attempt.
+enum RetryStrategy {
+  // RETRY_STRATEGY_UNSPECIFIED uses the server's default strategy.
+  RETRY_STRATEGY_UNSPECIFIED = 0;
+  // RETRY_STRATEGY_EXPONENTIAL doubles the delay ceiling each retry.
+  RETRY_STRATEGY_EXPONENTIAL = 1;
+  // RETRY_STRATEGY_LINEAR grows the delay ceiling linearly with the attempt.
+  RETRY_STRATEGY_LINEAR = 2;
+  // RETRY_STRATEGY_FIXED holds the delay ceiling constant across retries.
+  RETRY_STRATEGY_FIXED = 3;
+}
+
+// RetryPolicy overrides the server's default retry backoff for one task. Each
+// field falls back to the server default when left at its zero value, so a task
+// can override only the strategy, only the timing, or all of it.
+message RetryPolicy {
+  // strategy selects how the backoff delay grows.
+  RetryStrategy strategy = 1;
+  // base is the first-retry delay ceiling.
+  google.protobuf.Duration base = 2;
+  // max bounds the delay regardless of how many retries have elapsed.
+  google.protobuf.Duration max = 3;
 }

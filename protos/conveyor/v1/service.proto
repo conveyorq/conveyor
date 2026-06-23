@@ -127,6 +127,9 @@ message EnqueueRequest {
   // concurrency_key caps how many tasks sharing it the queue runs at once, up to
   // the queue's configured concurrency limit. Mutually exclusive with group.
   string concurrency_key = 20;
+  // retry_policy overrides the server's default retry backoff for this task;
+  // unset uses the server default.
+  RetryPolicy retry_policy = 21;
 }
 
 message EnqueueResponse {

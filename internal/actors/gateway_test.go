@@ -752,3 +752,35 @@ func TestGatewayResultForUnregisteredQueue(t *testing.T) {
 	// is dropped.
 	requireTaskState(t, engine, "task-stray", conveyorv1.TaskState_TASK_STATE_COMPLETED)
 }
+
+func TestGatewayStrategyFor(t *testing.T) {
+	g := &Gateway{strategy: backoff.New(2*time.Second, time.Hour)}
+
+	// No policy uses the gateway default (exponential, 2s, 1h).
+	got := g.strategyFor(nil)
+	require.Equal(t, backoff.Exponential, got.Kind())
+	require.Equal(t, 2*time.Second, got.Base())
+	require.Equal(t, time.Hour, got.Cap())
+
+	// A strategy-only override keeps the default timing.
+	got = g.strategyFor(&conveyorv1.RetryPolicy{Strategy: conveyorv1.RetryStrategy_RETRY_STRATEGY_FIXED})
+	require.Equal(t, backoff.Fixed, got.Kind())
+	require.Equal(t, 2*time.Second, got.Base())
+	require.Equal(t, time.Hour, got.Cap())
+
+	// A timing-only override keeps the default strategy.
+	got = g.strategyFor(&conveyorv1.RetryPolicy{Base: durationpb.New(5 * time.Minute)})
+	require.Equal(t, backoff.Exponential, got.Kind())
+	require.Equal(t, 5*time.Minute, got.Base())
+	require.Equal(t, time.Hour, got.Cap())
+
+	// A full override applies every field.
+	got = g.strategyFor(&conveyorv1.RetryPolicy{
+		Strategy: conveyorv1.RetryStrategy_RETRY_STRATEGY_LINEAR,
+		Base:     durationpb.New(time.Minute),
+		Max:      durationpb.New(10 * time.Minute),
+	})
+	require.Equal(t, backoff.Linear, got.Kind())
+	require.Equal(t, time.Minute, got.Base())
+	require.Equal(t, 10*time.Minute, got.Cap())
+}

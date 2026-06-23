@@ -167,6 +167,9 @@ func newEnqueueCommand(conn *connection) *cobra.Command {
 		unique        time.Duration
 		uniqueKey     string
 		encryptionKey string
+		retryStrategy string
+		retryBase     time.Duration
+		retryMax      time.Duration
 	)
 
 	command := &cobra.Command{
@@ -189,6 +192,15 @@ func newEnqueueCommand(conn *connection) *cobra.Command {
 			options, err := buildEnqueueOptions(queue, taskID, processAt, expiresAt, uniqueKey, processIn, expiresIn, retention, unique, maxRetry, priority)
 			if err != nil {
 				return err
+			}
+
+			retryOption, err := buildRetryPolicy(retryStrategy, retryBase, retryMax)
+			if err != nil {
+				return err
+			}
+
+			if retryOption != nil {
+				options = append(options, retryOption)
 			}
 
 			encryptor, err := buildEncryptor(encryptionKey)
@@ -226,8 +238,40 @@ func newEnqueueCommand(conn *connection) *cobra.Command {
 	flags.DurationVar(&unique, "unique", 0, "reject duplicates of this task for the given TTL")
 	flags.StringVar(&uniqueKey, "unique-key", "", "explicit uniqueness key (default: type + payload hash)")
 	flags.StringVar(&encryptionKey, "encryption-key", "", `encrypt the payload with AES-256-GCM, as "<id>:<base64-secret>" (default $CONVEYOR_ENCRYPTION_KEY)`)
+	flags.StringVar(&retryStrategy, "retry-strategy", "", "retry backoff strategy: exponential|linear|fixed (server default when empty)")
+	flags.DurationVar(&retryBase, "retry-base", 0, "first-retry delay ceiling (server default when 0)")
+	flags.DurationVar(&retryMax, "retry-max", 0, "overall retry delay cap (server default when 0)")
 
 	return command
+}
+
+// buildRetryPolicy turns the retry flags into an enqueue option, or nil when no
+// override was requested. An unknown strategy name is rejected.
+func buildRetryPolicy(strategy string, base, maxDelay time.Duration) (conveyor.EnqueueOption, error) {
+	if strategy == "" && base == 0 && maxDelay == 0 {
+		return nil, nil
+	}
+
+	parsed := conveyor.RetryDefault
+
+	switch strategy {
+	case "", "default":
+		parsed = conveyor.RetryDefault
+
+	case "exponential":
+		parsed = conveyor.RetryExponential
+
+	case "linear":
+		parsed = conveyor.RetryLinear
+
+	case "fixed":
+		parsed = conveyor.RetryFixed
+
+	default:
+		return nil, fmt.Errorf("enqueue: --retry-strategy %q is not one of exponential, linear, fixed", strategy)
+	}
+
+	return conveyor.RetryPolicy(parsed, base, maxDelay), nil
 }
 
 // newTasksCommand groups the task inspection and operation subcommands.
