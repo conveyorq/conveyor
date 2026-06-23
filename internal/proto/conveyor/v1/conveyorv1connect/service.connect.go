@@ -79,6 +79,9 @@ const (
 	AdminServiceDeleteTaskProcedure = "/conveyor.v1.AdminService/DeleteTask"
 	// AdminServiceRunTaskProcedure is the fully-qualified name of the AdminService's RunTask RPC.
 	AdminServiceRunTaskProcedure = "/conveyor.v1.AdminService/RunTask"
+	// AdminServiceRescheduleTaskProcedure is the fully-qualified name of the AdminService's
+	// RescheduleTask RPC.
+	AdminServiceRescheduleTaskProcedure = "/conveyor.v1.AdminService/RescheduleTask"
 	// AdminServiceArchiveTaskProcedure is the fully-qualified name of the AdminService's ArchiveTask
 	// RPC.
 	AdminServiceArchiveTaskProcedure = "/conveyor.v1.AdminService/ArchiveTask"
@@ -338,6 +341,9 @@ type AdminServiceClient interface {
 	CancelTask(context.Context, *connect.Request[v1.CancelTaskRequest]) (*connect.Response[v1.CancelTaskResponse], error)
 	DeleteTask(context.Context, *connect.Request[v1.DeleteTaskRequest]) (*connect.Response[v1.DeleteTaskResponse], error)
 	RunTask(context.Context, *connect.Request[v1.RunTaskRequest]) (*connect.Response[v1.RunTaskResponse], error)
+	// RescheduleTask moves a waiting (scheduled, pending, or retry) task's due
+	// time to a new instant.
+	RescheduleTask(context.Context, *connect.Request[v1.RescheduleTaskRequest]) (*connect.Response[v1.RescheduleTaskResponse], error)
 	// ArchiveTask dead-letters a waiting (scheduled, pending, or retry) task.
 	ArchiveTask(context.Context, *connect.Request[v1.ArchiveTaskRequest]) (*connect.Response[v1.ArchiveTaskResponse], error)
 	// BatchDeleteTasks deletes each listed task, reporting per-id outcomes.
@@ -458,6 +464,12 @@ func NewAdminServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(adminServiceMethods.ByName("RunTask")),
 			connect.WithClientOptions(opts...),
 		),
+		rescheduleTask: connect.NewClient[v1.RescheduleTaskRequest, v1.RescheduleTaskResponse](
+			httpClient,
+			baseURL+AdminServiceRescheduleTaskProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("RescheduleTask")),
+			connect.WithClientOptions(opts...),
+		),
 		archiveTask: connect.NewClient[v1.ArchiveTaskRequest, v1.ArchiveTaskResponse](
 			httpClient,
 			baseURL+AdminServiceArchiveTaskProcedure,
@@ -560,6 +572,7 @@ type adminServiceClient struct {
 	cancelTask                  *connect.Client[v1.CancelTaskRequest, v1.CancelTaskResponse]
 	deleteTask                  *connect.Client[v1.DeleteTaskRequest, v1.DeleteTaskResponse]
 	runTask                     *connect.Client[v1.RunTaskRequest, v1.RunTaskResponse]
+	rescheduleTask              *connect.Client[v1.RescheduleTaskRequest, v1.RescheduleTaskResponse]
 	archiveTask                 *connect.Client[v1.ArchiveTaskRequest, v1.ArchiveTaskResponse]
 	batchDeleteTasks            *connect.Client[v1.BatchTasksRequest, v1.BatchTasksResponse]
 	batchRunTasks               *connect.Client[v1.BatchTasksRequest, v1.BatchTasksResponse]
@@ -639,6 +652,11 @@ func (c *adminServiceClient) DeleteTask(ctx context.Context, req *connect.Reques
 // RunTask calls conveyor.v1.AdminService.RunTask.
 func (c *adminServiceClient) RunTask(ctx context.Context, req *connect.Request[v1.RunTaskRequest]) (*connect.Response[v1.RunTaskResponse], error) {
 	return c.runTask.CallUnary(ctx, req)
+}
+
+// RescheduleTask calls conveyor.v1.AdminService.RescheduleTask.
+func (c *adminServiceClient) RescheduleTask(ctx context.Context, req *connect.Request[v1.RescheduleTaskRequest]) (*connect.Response[v1.RescheduleTaskResponse], error) {
+	return c.rescheduleTask.CallUnary(ctx, req)
 }
 
 // ArchiveTask calls conveyor.v1.AdminService.ArchiveTask.
@@ -732,6 +750,9 @@ type AdminServiceHandler interface {
 	CancelTask(context.Context, *connect.Request[v1.CancelTaskRequest]) (*connect.Response[v1.CancelTaskResponse], error)
 	DeleteTask(context.Context, *connect.Request[v1.DeleteTaskRequest]) (*connect.Response[v1.DeleteTaskResponse], error)
 	RunTask(context.Context, *connect.Request[v1.RunTaskRequest]) (*connect.Response[v1.RunTaskResponse], error)
+	// RescheduleTask moves a waiting (scheduled, pending, or retry) task's due
+	// time to a new instant.
+	RescheduleTask(context.Context, *connect.Request[v1.RescheduleTaskRequest]) (*connect.Response[v1.RescheduleTaskResponse], error)
 	// ArchiveTask dead-letters a waiting (scheduled, pending, or retry) task.
 	ArchiveTask(context.Context, *connect.Request[v1.ArchiveTaskRequest]) (*connect.Response[v1.ArchiveTaskResponse], error)
 	// BatchDeleteTasks deletes each listed task, reporting per-id outcomes.
@@ -848,6 +869,12 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(adminServiceMethods.ByName("RunTask")),
 		connect.WithHandlerOptions(opts...),
 	)
+	adminServiceRescheduleTaskHandler := connect.NewUnaryHandler(
+		AdminServiceRescheduleTaskProcedure,
+		svc.RescheduleTask,
+		connect.WithSchema(adminServiceMethods.ByName("RescheduleTask")),
+		connect.WithHandlerOptions(opts...),
+	)
 	adminServiceArchiveTaskHandler := connect.NewUnaryHandler(
 		AdminServiceArchiveTaskProcedure,
 		svc.ArchiveTask,
@@ -960,6 +987,8 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 			adminServiceDeleteTaskHandler.ServeHTTP(w, r)
 		case AdminServiceRunTaskProcedure:
 			adminServiceRunTaskHandler.ServeHTTP(w, r)
+		case AdminServiceRescheduleTaskProcedure:
+			adminServiceRescheduleTaskHandler.ServeHTTP(w, r)
 		case AdminServiceArchiveTaskProcedure:
 			adminServiceArchiveTaskHandler.ServeHTTP(w, r)
 		case AdminServiceBatchDeleteTasksProcedure:
@@ -1047,6 +1076,10 @@ func (UnimplementedAdminServiceHandler) DeleteTask(context.Context, *connect.Req
 
 func (UnimplementedAdminServiceHandler) RunTask(context.Context, *connect.Request[v1.RunTaskRequest]) (*connect.Response[v1.RunTaskResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("conveyor.v1.AdminService.RunTask is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) RescheduleTask(context.Context, *connect.Request[v1.RescheduleTaskRequest]) (*connect.Response[v1.RescheduleTaskResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("conveyor.v1.AdminService.RescheduleTask is not implemented"))
 }
 
 func (UnimplementedAdminServiceHandler) ArchiveTask(context.Context, *connect.Request[v1.ArchiveTaskRequest]) (*connect.Response[v1.ArchiveTaskResponse], error) {

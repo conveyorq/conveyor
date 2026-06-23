@@ -14,6 +14,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/types/known/durationpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/conveyorq/conveyor/internal/broker"
 	"github.com/conveyorq/conveyor/internal/clock"
@@ -323,6 +324,72 @@ func TestRunTaskMakesScheduledDue(t *testing.T) {
 
 	_, err = admin.RunTask(ctx, connect.NewRequest(&conveyorv1.RunTaskRequest{Id: "missing"}))
 	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
+}
+
+func TestRescheduleTaskMovesDueTime(t *testing.T) {
+	admin, tasks, taskLog := newTestAdminService(t)
+	ctx := context.Background()
+
+	id := mustEnqueueType(t, tasks, &conveyorv1.EnqueueRequest{Type: "test:reschedule", ProcessIn: durationpb.New(time.Hour)})
+
+	future := timestamppb.New(time.Date(2999, time.January, 1, 0, 0, 0, 0, time.UTC))
+
+	// An absolute future time keeps the task scheduled.
+	_, err := admin.RescheduleTask(ctx, connect.NewRequest(&conveyorv1.RescheduleTaskRequest{Id: id, ProcessAt: future}))
+	require.NoError(t, err)
+
+	_, state, err := taskLog.GetTask(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, conveyorv1.TaskState_TASK_STATE_SCHEDULED, state)
+
+	// A relative delay (process_in) resolves against the server clock and, when
+	// positive, also leaves the task scheduled.
+	_, err = admin.RescheduleTask(ctx, connect.NewRequest(&conveyorv1.RescheduleTaskRequest{Id: id, ProcessIn: durationpb.New(time.Hour)}))
+	require.NoError(t, err)
+
+	_, state, err = taskLog.GetTask(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, conveyorv1.TaskState_TASK_STATE_SCHEDULED, state)
+
+	// A past time makes the task due immediately.
+	_, err = admin.RescheduleTask(ctx, connect.NewRequest(&conveyorv1.RescheduleTaskRequest{
+		Id:        id,
+		ProcessAt: timestamppb.New(time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC)),
+	}))
+	require.NoError(t, err)
+
+	_, state, err = taskLog.GetTask(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, conveyorv1.TaskState_TASK_STATE_PENDING, state)
+
+	// Neither form set is rejected.
+	_, err = admin.RescheduleTask(ctx, connect.NewRequest(&conveyorv1.RescheduleTaskRequest{Id: id}))
+	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+
+	// Both forms set is rejected.
+	_, err = admin.RescheduleTask(ctx, connect.NewRequest(&conveyorv1.RescheduleTaskRequest{
+		Id:        id,
+		ProcessAt: future,
+		ProcessIn: durationpb.New(time.Hour),
+	}))
+	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+
+	// An empty id is rejected.
+	_, err = admin.RescheduleTask(ctx, connect.NewRequest(&conveyorv1.RescheduleTaskRequest{ProcessAt: future}))
+	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+
+	// An unknown id is a not-found.
+	_, err = admin.RescheduleTask(ctx, connect.NewRequest(&conveyorv1.RescheduleTaskRequest{Id: "missing", ProcessAt: future}))
+	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
+
+	// A task in a terminal state cannot be rescheduled.
+	canceled := mustEnqueueType(t, tasks, &conveyorv1.EnqueueRequest{Type: "test:reschedule-canceled"})
+
+	_, err = admin.CancelTask(ctx, connect.NewRequest(&conveyorv1.CancelTaskRequest{Id: canceled}))
+	require.NoError(t, err)
+
+	_, err = admin.RescheduleTask(ctx, connect.NewRequest(&conveyorv1.RescheduleTaskRequest{Id: canceled, ProcessAt: future}))
+	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
 }
 
 func TestArchiveTaskDeadLetters(t *testing.T) {

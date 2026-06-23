@@ -5,7 +5,7 @@
   "description": "Production-shaped email-delivery service built on the Conveyor TypeScript SDK.",
   "license": "Apache-2.0",
   "type": "module",
-  "packageManager": "pnpm@10.33.0",
+  "packageManager": "pnpm@11.8.0",
   "engines": {
     "node": ">=20"
   },

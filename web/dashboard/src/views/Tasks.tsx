@@ -10,6 +10,7 @@ import { errorMessage } from "../lib/errors.ts";
 import { decodePayload, formatDuration, formatTime, orDash, taskStateLabel, taskStateTone } from "../lib/format.ts";
 import { TaskState } from "../gen/conveyor/v1/task_pb.ts";
 import type { TaskInfo } from "../gen/conveyor/v1/service_pb.ts";
+import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 
 // stateOptions are the task-state filter choices; UNSPECIFIED means all states.
 const stateOptions: { value: TaskState; label: string }[] = [
@@ -310,6 +311,10 @@ function TaskDetail({
       state === TaskState.RETRY ||
       state === TaskState.ACTIVE);
   const canDelete = !readOnly && state !== TaskState.ACTIVE;
+  const canReschedule =
+    !readOnly && (state === TaskState.SCHEDULED || state === TaskState.PENDING || state === TaskState.RETRY);
+
+  const [rescheduleAt, setRescheduleAt] = useState("");
 
   const rows: [string, string][] = [
     ["ID", task.id],
@@ -366,10 +371,38 @@ function TaskDetail({
         {canDelete && (
           <ConfirmButton label="Delete" confirm danger onConfirm={() => act(() => api.admin.deleteTask({ id: task.id }))} />
         )}
-        {!canRun && !canArchive && !canCancel && !canDelete && (
+        {!canRun && !canArchive && !canCancel && !canDelete && !canReschedule && (
           <span className="text-xs text-[var(--muted)]">No actions available.</span>
         )}
       </div>
+
+      {canReschedule && (
+        <div className="mt-3 flex items-center gap-2">
+          <input
+            type="datetime-local"
+            aria-label="Reschedule to"
+            value={rescheduleAt}
+            onChange={(event) => setRescheduleAt(event.target.value)}
+            className="rounded border border-[var(--border)] bg-[var(--bg)] px-2 py-0.5 text-xs text-[var(--text-soft)]"
+          />
+          <button
+            type="button"
+            disabled={rescheduleAt === ""}
+            onClick={() => {
+              const when = new Date(rescheduleAt);
+
+              if (Number.isNaN(when.getTime())) {
+                return;
+              }
+
+              void act(() => api.admin.rescheduleTask({ id: task.id, processAt: timestampFromDate(when) }));
+            }}
+            className="rounded bg-[var(--btn-bg)] px-2 py-0.5 text-xs text-[var(--text-soft)] hover:bg-[var(--btn-hover)] disabled:opacity-50"
+          >
+            Reschedule
+          </button>
+        </div>
+      )}
     </div>
   );
 }

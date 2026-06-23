@@ -234,6 +234,19 @@ UPDATE conveyor_tasks t
   RETURNING t.queue, t.type, prev.old_state, t.state, t.retried, t.last_error`,
 	statePending, stateScheduled, statePending, stateRetry, stateArchived)
 
+// rescheduleQuery moves a waiting task's due time to $2 and sets its resulting
+// state ($3: scheduled for a future time, pending otherwise). The prev CTE
+// captures the pre-update state so a same-state move (e.g. scheduled to another
+// future time) emits no transition event.
+var rescheduleQuery = fmt.Sprintf(`WITH prev AS (
+  SELECT id, state AS old_state FROM conveyor_tasks WHERE id = $1 FOR UPDATE
+)
+UPDATE conveyor_tasks t
+  SET state = $3, process_at = $2, updated_at = $4
+  FROM prev WHERE t.id = prev.id AND t.state IN (%d, %d, %d)
+  RETURNING t.queue, t.type, prev.old_state, t.state, t.retried, t.last_error`,
+	stateScheduled, statePending, stateRetry)
+
 // archiveWaitingQuery dead-letters a scheduled, pending, retry, or blocked task.
 var archiveWaitingQuery = fmt.Sprintf(`UPDATE conveyor_tasks
   SET state = %d, completed_at = $2, updated_at = $2
@@ -1593,6 +1606,31 @@ func (b *Broker) RunTaskNow(ctx context.Context, id string) error {
 
 	// Making an already-pending task due again is a no-op state-wise; Derive
 	// suppresses the event when oldState equals the new pending state.
+	b.emitChange(id, oldState, change, now)
+
+	return nil
+}
+
+// RescheduleTask moves a waiting task's due time; see broker.Broker.
+func (b *Broker) RescheduleTask(ctx context.Context, id string, processAt time.Time) error {
+	now := b.clock.Now()
+
+	newState := statePending
+	if processAt.After(now) {
+		newState = stateScheduled
+	}
+
+	oldState, change, found, err := b.mutateScopedOld(ctx, rescheduleQuery, id, processAt, newState, now)
+	if err != nil {
+		return fmt.Errorf("postgres: reschedule task: %w", err)
+	}
+
+	if !found {
+		return b.explainMiss(ctx, id)
+	}
+
+	// A move that does not change state (e.g. one future time to another) is a
+	// no-op event-wise; emitChange suppresses it when oldState equals the new state.
 	b.emitChange(id, oldState, change, now)
 
 	return nil

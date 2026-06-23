@@ -567,6 +567,24 @@ class RunTaskResponse(_message.Message):
     def __init__(self) -> None:
         ...
 
+class RescheduleTaskRequest(_message.Message):
+    __slots__ = ('id', 'process_at', 'process_in')
+    ID_FIELD_NUMBER: _ClassVar[int]
+    PROCESS_AT_FIELD_NUMBER: _ClassVar[int]
+    PROCESS_IN_FIELD_NUMBER: _ClassVar[int]
+    id: str
+    process_at: _timestamp_pb2.Timestamp
+    process_in: _duration_pb2.Duration
+
+    def __init__(self, id: _Optional[str]=..., process_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., process_in: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=...) -> None:
+        ...
+
+class RescheduleTaskResponse(_message.Message):
+    __slots__ = ()
+
+    def __init__(self) -> None:
+        ...
+
 class ArchiveTaskRequest(_message.Message):
     __slots__ = ('id',)
     ID_FIELD_NUMBER: _ClassVar[int]
@@ -779,4 +797,14 @@ class BrokerInfoResponse(_message.Message):
     metrics: _containers.ScalarMap[str, str]
 
     def __init__(self, driver: _Optional[str]=..., metrics: _Optional[_Mapping[str, str]]=...) -> None:
+        ...
+
+class WatchEventsRequest(_message.Message):
+    __slots__ = ('queues', 'event_types')
+    QUEUES_FIELD_NUMBER: _ClassVar[int]
+    EVENT_TYPES_FIELD_NUMBER: _ClassVar[int]
+    queues: _containers.RepeatedScalarFieldContainer[str]
+    event_types: _containers.RepeatedScalarFieldContainer[_task_pb2.TaskEventType]
+
+    def __init__(self, queues: _Optional[_Iterable[str]]=..., event_types: _Optional[_Iterable[_Union[_task_pb2.TaskEventType, str]]]=...) -> None:
         ...

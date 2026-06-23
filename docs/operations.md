@@ -2,6 +2,13 @@
 
 How to deploy, configure, scale, secure, observe, and upgrade `conveyord`.
 
+Administration is driven by the **`conveyor` CLI** and the **dashboard**:
+rescheduling, running, canceling, deleting, and archiving tasks, pausing and
+resuming queues, setting rate and concurrency limits, and managing cron are
+operator actions, kept deliberately out of the SDK. The SDK is the produce and
+consume surface for application code; operating the system is the CLI and
+dashboard.
+
 ## Deployment modes
 
 One binary, selected by `mode` (or `--mode`):

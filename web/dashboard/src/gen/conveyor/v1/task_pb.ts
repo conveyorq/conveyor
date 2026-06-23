@@ -12,7 +12,83 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file conveyor/v1/task.proto.
  */
 export const file_conveyor_v1_task: GenFile = /*@__PURE__*/
-  fileDesc("ChZjb252ZXlvci92MS90YXNrLnByb3RvEgtjb252ZXlvci52MSJbCg5UYXNrRGVwZW5kZW5jeRIPCgd0YXNrX2lkGAEgASgJEjgKCm9uX2ZhaWx1cmUYAiABKA4yJC5jb252ZXlvci52MS5EZXBlbmRlbmN5RmFpbHVyZVBvbGljeSKtAwoMVGFza0VudmVsb3BlEgoKAmlkGAEgASgJEg0KBXF1ZXVlGAIgASgJEgwKBHR5cGUYAyABKAkSDwoHcGF5bG9hZBgEIAEoDBIUCgxjb250ZW50X3R5cGUYBSABKAkSOQoIbWV0YWRhdGEYBiADKAsyJy5jb252ZXlvci52MS5UYXNrRW52ZWxvcGUuTWV0YWRhdGFFbnRyeRIpCgdvcHRpb25zGAcgASgLMhguY29udmV5b3IudjEuVGFza09wdGlvbnMSDwoHcmV0cmllZBgIIAEoBRISCgpsYXN0X2Vycm9yGAkgASgJEi8KC2VucXVldWVkX2F0GAogASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIuCgpzdGFydGVkX2F0GAsgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIwCgxjb21wbGV0ZWRfYXQYDCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wGi8KDU1ldGFkYXRhRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASK8AwoLVGFza09wdGlvbnMSEQoJbWF4X3JldHJ5GAEgASgFEioKB3RpbWVvdXQYAiABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24SLAoIZGVhZGxpbmUYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi4KCnByb2Nlc3NfYXQYBCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhIKCnVuaXF1ZV9rZXkYBSABKAkSLQoKdW5pcXVlX3R0bBgGIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbhIsCglyZXRlbnRpb24YByABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24SEAoIcHJpb3JpdHkYCCABKAUSDQoFZ3JvdXAYCSABKAkSLgoKZXhwaXJlc19hdBgKIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLwoKZGVwZW5kc19vbhgLIAMoCzIbLmNvbnZleW9yLnYxLlRhc2tEZXBlbmRlbmN5EhcKD2NvbmN1cnJlbmN5X2tleRgMIAEoCUoECA0QECqGAgoJVGFza1N0YXRlEhoKFlRBU0tfU1RBVEVfVU5TUEVDSUZJRUQQABIYChRUQVNLX1NUQVRFX1NDSEVEVUxFRBABEhYKElRBU0tfU1RBVEVfUEVORElORxACEhUKEVRBU0tfU1RBVEVfQUNUSVZFEAMSFAoQVEFTS19TVEFURV9SRVRSWRAEEhgKFFRBU0tfU1RBVEVfQ09NUExFVEVEEAUSFwoTVEFTS19TVEFURV9BUkNISVZFRBAGEhcKE1RBU0tfU1RBVEVfQ0FOQ0VMRUQQBxIaChZUQVNLX1NUQVRFX0FHR1JFR0FUSU5HEAgSFgoSVEFTS19TVEFURV9CTE9DS0VEEAkqvwEKF0RlcGVuZGVuY3lGYWlsdXJlUG9saWN5EikKJURFUEVOREVOQ1lfRkFJTFVSRV9QT0xJQ1lfVU5TUEVDSUZJRUQQABIjCh9ERVBFTkRFTkNZX0ZBSUxVUkVfUE9MSUNZX0JMT0NLEAESLAooREVQRU5ERU5DWV9GQUlMVVJFX1BPTElDWV9DQVNDQURFX0NBTkNFTBACEiYKIkRFUEVOREVOQ1lfRkFJTFVSRV9QT0xJQ1lfQ09OVElOVUUQA2IGcHJvdG8z", [file_google_protobuf_duration, file_google_protobuf_timestamp]);
+  fileDesc("ChZjb252ZXlvci92MS90YXNrLnByb3RvEgtjb252ZXlvci52MSLhAQoJVGFza0V2ZW50EgoKAmlkGAEgASgJEg0KBXF1ZXVlGAIgASgJEgwKBHR5cGUYAyABKAkSJQoFc3RhdGUYBCABKA4yFi5jb252ZXlvci52MS5UYXNrU3RhdGUSLgoKZXZlbnRfdHlwZRgFIAEoDjIaLmNvbnZleW9yLnYxLlRhc2tFdmVudFR5cGUSLwoLb2NjdXJyZWRfYXQYBiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEg8KB2F0dGVtcHQYByABKAUSEgoKbGFzdF9lcnJvchgIIAEoCSJbCg5UYXNrRGVwZW5kZW5jeRIPCgd0YXNrX2lkGAEgASgJEjgKCm9uX2ZhaWx1cmUYAiABKA4yJC5jb252ZXlvci52MS5EZXBlbmRlbmN5RmFpbHVyZVBvbGljeSKtAwoMVGFza0VudmVsb3BlEgoKAmlkGAEgASgJEg0KBXF1ZXVlGAIgASgJEgwKBHR5cGUYAyABKAkSDwoHcGF5bG9hZBgEIAEoDBIUCgxjb250ZW50X3R5cGUYBSABKAkSOQoIbWV0YWRhdGEYBiADKAsyJy5jb252ZXlvci52MS5UYXNrRW52ZWxvcGUuTWV0YWRhdGFFbnRyeRIpCgdvcHRpb25zGAcgASgLMhguY29udmV5b3IudjEuVGFza09wdGlvbnMSDwoHcmV0cmllZBgIIAEoBRISCgpsYXN0X2Vycm9yGAkgASgJEi8KC2VucXVldWVkX2F0GAogASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIuCgpzdGFydGVkX2F0GAsgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIwCgxjb21wbGV0ZWRfYXQYDCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wGi8KDU1ldGFkYXRhRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASK8AwoLVGFza09wdGlvbnMSEQoJbWF4X3JldHJ5GAEgASgFEioKB3RpbWVvdXQYAiABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24SLAoIZGVhZGxpbmUYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi4KCnByb2Nlc3NfYXQYBCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhIKCnVuaXF1ZV9rZXkYBSABKAkSLQoKdW5pcXVlX3R0bBgGIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbhIsCglyZXRlbnRpb24YByABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24SEAoIcHJpb3JpdHkYCCABKAUSDQoFZ3JvdXAYCSABKAkSLgoKZXhwaXJlc19hdBgKIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLwoKZGVwZW5kc19vbhgLIAMoCzIbLmNvbnZleW9yLnYxLlRhc2tEZXBlbmRlbmN5EhcKD2NvbmN1cnJlbmN5X2tleRgMIAEoCUoECA0QECqGAgoJVGFza1N0YXRlEhoKFlRBU0tfU1RBVEVfVU5TUEVDSUZJRUQQABIYChRUQVNLX1NUQVRFX1NDSEVEVUxFRBABEhYKElRBU0tfU1RBVEVfUEVORElORxACEhUKEVRBU0tfU1RBVEVfQUNUSVZFEAMSFAoQVEFTS19TVEFURV9SRVRSWRAEEhgKFFRBU0tfU1RBVEVfQ09NUExFVEVEEAUSFwoTVEFTS19TVEFURV9BUkNISVZFRBAGEhcKE1RBU0tfU1RBVEVfQ0FOQ0VMRUQQBxIaChZUQVNLX1NUQVRFX0FHR1JFR0FUSU5HEAgSFgoSVEFTS19TVEFURV9CTE9DS0VEEAkqnwIKDVRhc2tFdmVudFR5cGUSHwobVEFTS19FVkVOVF9UWVBFX1VOU1BFQ0lGSUVEEAASHAoYVEFTS19FVkVOVF9UWVBFX0VOUVVFVUVEEAESHQoZVEFTS19FVkVOVF9UWVBFX1NDSEVEVUxFRBACEhoKFlRBU0tfRVZFTlRfVFlQRV9MRUFTRUQQAxIdChlUQVNLX0VWRU5UX1RZUEVfQ09NUExFVEVEEAQSGwoXVEFTS19FVkVOVF9UWVBFX1JFVFJJRUQQBRIcChhUQVNLX0VWRU5UX1RZUEVfQVJDSElWRUQQBhIcChhUQVNLX0VWRU5UX1RZUEVfQ0FOQ0VMRUQQBxIcChhUQVNLX0VWRU5UX1RZUEVfUkVMRUFTRUQQCCq/AQoXRGVwZW5kZW5jeUZhaWx1cmVQb2xpY3kSKQolREVQRU5ERU5DWV9GQUlMVVJFX1BPTElDWV9VTlNQRUNJRklFRBAAEiMKH0RFUEVOREVOQ1lfRkFJTFVSRV9QT0xJQ1lfQkxPQ0sQARIsCihERVBFTkRFTkNZX0ZBSUxVUkVfUE9MSUNZX0NBU0NBREVfQ0FOQ0VMEAISJgoiREVQRU5ERU5DWV9GQUlMVVJFX1BPTElDWV9DT05USU5VRRADYgZwcm90bzM", [file_google_protobuf_duration, file_google_protobuf_timestamp]);
+
+/**
+ * TaskEvent is one task lifecycle transition delivered on the AdminService
+ * WatchEvents stream and the optional webhook sink. It is a lightweight
+ * notification: it carries the task's identity and new state, not its payload.
+ * Delivery is best-effort and non-durable (fire-and-forget, at-least-once to
+ * connected listeners); a slow watcher's missed events are dropped, never
+ * buffered without bound.
+ *
+ * @generated from message conveyor.v1.TaskEvent
+ */
+export type TaskEvent = Message<"conveyor.v1.TaskEvent"> & {
+  /**
+   * id is the task ULID the transition applies to.
+   *
+   * @generated from field: string id = 1;
+   */
+  id: string;
+
+  /**
+   * queue is the task's queue.
+   *
+   * @generated from field: string queue = 2;
+   */
+  queue: string;
+
+  /**
+   * type is the handler routing key, e.g. "email:welcome".
+   *
+   * @generated from field: string type = 3;
+   */
+  type: string;
+
+  /**
+   * state is the task's lifecycle state after the transition.
+   *
+   * @generated from field: conveyor.v1.TaskState state = 4;
+   */
+  state: TaskState;
+
+  /**
+   * event_type is the transition that occurred.
+   *
+   * @generated from field: conveyor.v1.TaskEventType event_type = 5;
+   */
+  eventType: TaskEventType;
+
+  /**
+   * occurred_at is when the transition was recorded, from the server clock.
+   *
+   * @generated from field: google.protobuf.Timestamp occurred_at = 6;
+   */
+  occurredAt?: Timestamp | undefined;
+
+  /**
+   * attempt is the task's retry count after the transition.
+   *
+   * @generated from field: int32 attempt = 7;
+   */
+  attempt: number;
+
+  /**
+   * last_error is the most recent failure message, set on retried and archived
+   * transitions and empty otherwise.
+   *
+   * @generated from field: string last_error = 8;
+   */
+  lastError: string;
+};
+
+/**
+ * Describes the message conveyor.v1.TaskEvent.
+ * Use `create(TaskEventSchema)` to create a new message.
+ */
+export const TaskEventSchema: GenMessage<TaskEvent> = /*@__PURE__*/
+  messageDesc(file_conveyor_v1_task, 0);
 
 /**
  * TaskDependency is one edge of a workflow: the enclosing task must wait for the
@@ -41,7 +117,7 @@ export type TaskDependency = Message<"conveyor.v1.TaskDependency"> & {
  * Use `create(TaskDependencySchema)` to create a new message.
  */
 export const TaskDependencySchema: GenMessage<TaskDependency> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_task, 0);
+  messageDesc(file_conveyor_v1_task, 1);
 
 /**
  * TaskEnvelope is the internal, durable representation of a task.
@@ -147,7 +223,7 @@ export type TaskEnvelope = Message<"conveyor.v1.TaskEnvelope"> & {
  * Use `create(TaskEnvelopeSchema)` to create a new message.
  */
 export const TaskEnvelopeSchema: GenMessage<TaskEnvelope> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_task, 1);
+  messageDesc(file_conveyor_v1_task, 2);
 
 /**
  * TaskOptions captures the per-task execution options.
@@ -261,7 +337,7 @@ export type TaskOptions = Message<"conveyor.v1.TaskOptions"> & {
  * Use `create(TaskOptionsSchema)` to create a new message.
  */
 export const TaskOptionsSchema: GenMessage<TaskOptions> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_task, 2);
+  messageDesc(file_conveyor_v1_task, 3);
 
 /**
  * TaskState enumerates the lifecycle states of a task.
@@ -352,6 +428,86 @@ export const TaskStateSchema: GenEnum<TaskState> = /*@__PURE__*/
   enumDesc(file_conveyor_v1_task, 0);
 
 /**
+ * TaskEventType labels a task lifecycle transition emitted on the event stream.
+ * It is the transition that occurred; the resulting TaskState rides alongside it
+ * on the TaskEvent, so a watcher can filter on either the action or the state.
+ *
+ * @generated from enum conveyor.v1.TaskEventType
+ */
+export enum TaskEventType {
+  /**
+   * @generated from enum value: TASK_EVENT_TYPE_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * TASK_EVENT_TYPE_ENQUEUED is a task newly committed and due (or made due
+   * again: a promoted scheduled/blocked task that is now runnable).
+   *
+   * @generated from enum value: TASK_EVENT_TYPE_ENQUEUED = 1;
+   */
+  ENQUEUED = 1,
+
+  /**
+   * TASK_EVENT_TYPE_SCHEDULED is a task committed with a future process_at.
+   *
+   * @generated from enum value: TASK_EVENT_TYPE_SCHEDULED = 2;
+   */
+  SCHEDULED = 2,
+
+  /**
+   * TASK_EVENT_TYPE_LEASED is a task leased to a worker (now active).
+   *
+   * @generated from enum value: TASK_EVENT_TYPE_LEASED = 3;
+   */
+  LEASED = 3,
+
+  /**
+   * TASK_EVENT_TYPE_COMPLETED is a task that executed successfully.
+   *
+   * @generated from enum value: TASK_EVENT_TYPE_COMPLETED = 4;
+   */
+  COMPLETED = 4,
+
+  /**
+   * TASK_EVENT_TYPE_RETRIED is a failed attempt scheduled for a later retry.
+   *
+   * @generated from enum value: TASK_EVENT_TYPE_RETRIED = 5;
+   */
+  RETRIED = 5,
+
+  /**
+   * TASK_EVENT_TYPE_ARCHIVED is a dead-lettered task (retries exhausted, skipped,
+   * expired before dispatch, or canceled mid-execution).
+   *
+   * @generated from enum value: TASK_EVENT_TYPE_ARCHIVED = 6;
+   */
+  ARCHIVED = 6,
+
+  /**
+   * TASK_EVENT_TYPE_CANCELED is a waiting task canceled via the Admin API or by a
+   * failed dependency's cascade-cancel policy.
+   *
+   * @generated from enum value: TASK_EVENT_TYPE_CANCELED = 7;
+   */
+  CANCELED = 7,
+
+  /**
+   * TASK_EVENT_TYPE_RELEASED is an active task returned to pending without a retry
+   * penalty (graceful worker disconnect).
+   *
+   * @generated from enum value: TASK_EVENT_TYPE_RELEASED = 8;
+   */
+  RELEASED = 8,
+}
+
+/**
+ * Describes the enum conveyor.v1.TaskEventType.
+ */
+export const TaskEventTypeSchema: GenEnum<TaskEventType> = /*@__PURE__*/
+  enumDesc(file_conveyor_v1_task, 1);
+
+/**
  * DependencyFailurePolicy decides what happens to a dependent task when one of
  * the tasks it depends on fails terminally (archived or canceled).
  *
@@ -394,5 +550,5 @@ export enum DependencyFailurePolicy {
  * Describes the enum conveyor.v1.DependencyFailurePolicy.
  */
 export const DependencyFailurePolicySchema: GenEnum<DependencyFailurePolicy> = /*@__PURE__*/
-  enumDesc(file_conveyor_v1_task, 1);
+  enumDesc(file_conveyor_v1_task, 2);
 

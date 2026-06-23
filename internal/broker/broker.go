@@ -395,6 +395,13 @@ type Broker interface {
 	// attempt. It returns ErrInvalidState in any other state.
 	RunTaskNow(ctx context.Context, id string) error
 
+	// RescheduleTask moves a waiting task's due time to processAt. A
+	// scheduled, pending, or retry task is accepted: it becomes scheduled
+	// when processAt is in the future and pending when it is now or in the
+	// past. It returns ErrInvalidState in any other state and ErrTaskNotFound
+	// when the id is unknown.
+	RescheduleTask(ctx context.Context, id string, processAt time.Time) error
+
 	// ArchiveTask dead-letters a waiting task: a scheduled, pending, or
 	// retry task becomes archived. It returns ErrInvalidState in any other
 	// state (an active task is dead-lettered through its lease instead) and

@@ -1354,6 +1354,40 @@ func (b *Broker) RunTaskNow(_ context.Context, id string) error {
 	}
 }
 
+// RescheduleTask moves a waiting task's due time; see broker.Broker.
+func (b *Broker) RescheduleTask(_ context.Context, id string, processAt time.Time) error {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	row, exists := b.tasks[id]
+	if !exists {
+		return broker.ErrTaskNotFound
+	}
+
+	switch row.state {
+	case conveyorv1.TaskState_TASK_STATE_SCHEDULED,
+		conveyorv1.TaskState_TASK_STATE_PENDING,
+		conveyorv1.TaskState_TASK_STATE_RETRY:
+		now := b.clock.Now()
+		oldState := row.state
+		row.processAt = processAt
+		row.state = conveyorv1.TaskState_TASK_STATE_PENDING
+
+		if processAt.After(now) {
+			row.state = conveyorv1.TaskState_TASK_STATE_SCHEDULED
+		}
+
+		// A move that does not change state carries no transition event.
+		if oldState != row.state {
+			b.emit(oldState, row.state, id, row.envelope.GetQueue(), row.envelope.GetType(), row.lastError, row.retried, now)
+		}
+
+		return nil
+	default:
+		return broker.ErrInvalidState
+	}
+}
+
 // ArchiveTask dead-letters a waiting task; see broker.Broker.
 func (b *Broker) ArchiveTask(_ context.Context, id string) error {
 	b.mutex.Lock()

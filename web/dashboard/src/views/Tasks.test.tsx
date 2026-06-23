@@ -1,5 +1,5 @@
 import { expect, test, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createRouterTransport } from "@connectrpc/connect";
 import { create } from "@bufbuild/protobuf";
@@ -146,4 +146,35 @@ test("runs a task from the detail panel", async () => {
   await userEvent.click(screen.getByRole("button", { name: "Run now" }));
 
   expect(runTask).toHaveBeenCalledOnce();
+});
+
+test("reschedules a task from the detail panel", async () => {
+  // The handler receives a protobuf message whose descriptor graph is cyclic,
+  // so assert on individual fields rather than deep-comparing the message.
+  const rescheduleTask = vi.fn().mockReturnValue({});
+  const transport = createRouterTransport((router) => {
+    router.service(AdminService, {
+      listTasks: () => ({ tasks: [task("01ABC", TaskState.SCHEDULED)], nextPageToken: "" }),
+      rescheduleTask,
+    });
+  });
+
+  render(
+    <ApiProvider api={createApi(transport)}>
+      <Tasks />
+    </ApiProvider>,
+  );
+
+  await userEvent.click(await screen.findByText("01ABC"));
+
+  // The button stays disabled until a time is chosen.
+  const button = screen.getByRole("button", { name: "Reschedule" });
+  expect(button).toBeDisabled();
+
+  fireEvent.change(screen.getByLabelText("Reschedule to"), { target: { value: "2999-01-01T00:00" } });
+  await userEvent.click(button);
+
+  await waitFor(() => expect(rescheduleTask).toHaveBeenCalledOnce());
+  expect(rescheduleTask.mock.calls[0][0].id).toBe("01ABC");
+  expect(rescheduleTask.mock.calls[0][0].processAt).toBeDefined();
 });

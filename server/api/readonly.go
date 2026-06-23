@@ -30,6 +30,7 @@ var mutatingProcedures = map[string]struct{}{
 	conveyorv1connect.AdminServiceCancelTaskProcedure:                  {},
 	conveyorv1connect.AdminServiceDeleteTaskProcedure:                  {},
 	conveyorv1connect.AdminServiceRunTaskProcedure:                     {},
+	conveyorv1connect.AdminServiceRescheduleTaskProcedure:              {},
 	conveyorv1connect.AdminServiceArchiveTaskProcedure:                 {},
 	conveyorv1connect.AdminServiceBatchDeleteTasksProcedure:            {},
 	conveyorv1connect.AdminServiceBatchRunTasksProcedure:               {},

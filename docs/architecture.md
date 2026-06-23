@@ -169,7 +169,7 @@ The interface methods group as:
 | **Lease / dispatch**          | `Lease`, `LeaseGroup`, `ExtendLease`                                                                                                                   |
 | **Outcomes (lease-scoped)**   | `Ack`, `Fail`, `Release`, `Archive`                                                                                                                    |
 | **Maintenance sweeps**        | `ReapExpiredLeases`, `PromoteScheduled`, `PurgeCompleted`, `ArchiveExpired`                                                                            |
-| **Inspection / admin**        | `PendingCount`, `QueueStats`, `GetTask`, `ListTasks`, `CancelTask`, `DeleteTask`, `RunTaskNow`, `ArchiveTask`, `SetQueuePaused`, `QueuePaused`, `Info` |
+| **Inspection / admin**        | `PendingCount`, `QueueStats`, `GetTask`, `ListTasks`, `CancelTask`, `DeleteTask`, `RunTaskNow`, `RescheduleTask`, `ArchiveTask`, `SetQueuePaused`, `QueuePaused`, `Info` |
 | **Rate limits (config only)** | `SetQueueRateLimit`, `DeleteQueueRateLimit`, `QueueRateLimit`, `QueueRateLimits`                                                                       |
 | **Groups**                    | `GroupStats`                                                                                                                                           |
 | **Cron**                      | `UpsertCronEntry`, `ListCronEntries`, `ListDueCronEntries`, `SetCronPaused`, `UpdateCronNextRun`, `DeleteCronEntry`                                    |
@@ -220,7 +220,9 @@ stateDiagram-v2
     [*] --> PENDING: Enqueue (due now)
     [*] --> AGGREGATING: Enqueue (grouped)
 
-    SCHEDULED --> PENDING: PromoteScheduled
+    SCHEDULED --> PENDING: PromoteScheduled / RescheduleTask (now or past)
+    PENDING --> SCHEDULED: RescheduleTask (future)
+    RETRY --> SCHEDULED: RescheduleTask (future)
     PENDING --> ACTIVE: Lease
     RETRY --> ACTIVE: Lease (backoff elapsed)
     AGGREGATING --> ACTIVE: LeaseGroup (group fires)
