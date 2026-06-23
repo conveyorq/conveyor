@@ -13,6 +13,14 @@ import type { Task } from "./task.js";
 export interface HandlerContext {
   /** Aborts on the task's effective deadline or an operator cancel. */
   readonly signal: AbortSignal;
+  /**
+   * reportProgress records how far the running task has advanced, as a percent
+   * (0 to 100, clamped) plus an optional human-readable message. It is
+   * advisory: the value surfaces on the task's status for inspection and never
+   * affects execution. Consecutive identical reports are coalesced. For a batch
+   * handler it is a no-op, since progress is per single task.
+   */
+  reportProgress(percent: number, message?: string): void;
 }
 
 /**

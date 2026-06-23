@@ -63,6 +63,43 @@ async def test_enqueue_then_process_round_trips():
         await asyncio.wait_for(worker_task, timeout=10)
 
 
+async def test_handler_reports_progress():
+    task_type = f"itest:progress:{uuid.uuid4()}"
+    done = asyncio.Event()
+
+    mux = Mux()
+
+    @mux.handler(task_type)
+    async def handle(task, ctx):
+        ctx.report_progress(50, "halfway")
+        done.set()
+
+    stop = asyncio.Event()
+    worker_task = await _run_worker_until(mux, stop)
+
+    try:
+        async with Client(ADDR, token=TOKEN) as client:
+            info = await client.enqueue(new_task(task_type, json({})), retention=3600)
+            await asyncio.wait_for(done.wait(), timeout=15)
+
+            async def progress_recorded() -> bool:
+                fetched = await client.get_task(info.id)
+                return fetched.progress == 50 and fetched.progress_message == "halfway"
+
+            deadline = asyncio.get_event_loop().time() + 15
+            while asyncio.get_event_loop().time() < deadline:
+                if await progress_recorded():
+                    break
+                await asyncio.sleep(0.1)
+
+            fetched = await client.get_task(info.id)
+            assert fetched.progress == 50
+            assert fetched.progress_message == "halfway"
+    finally:
+        stop.set()
+        await asyncio.wait_for(worker_task, timeout=10)
+
+
 async def test_run_returns_promptly_on_stop():
     # An idle worker must drain and return quickly when stopped (no hang on the
     # receive loop waiting for a server that has nothing to send).

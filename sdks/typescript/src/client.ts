@@ -224,6 +224,8 @@ function taskInfoFromProto(info: ProtoTaskInfo | undefined): TaskInfo {
     retried: info.retried,
     maxRetry: info.maxRetry,
     lastError: info.lastError,
+    progress: info.progress,
+    progressMessage: info.progressMessage,
   };
 
   const enqueuedAt = dateFromTimestamp(info.enqueuedAt);

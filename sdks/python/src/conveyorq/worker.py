@@ -310,7 +310,7 @@ class _Session:
                                  f"conveyor: no handler registered for type {envelope.type}")
                     return
 
-                ctx = HandlerContext(cancelled, deadline)
+                ctx = HandlerContext(cancelled, deadline, self._progress_reporter(envelope.id))
                 outcome, error_msg = await _run_handler(handler, task, ctx, self._executor)
                 self._report(envelope.id, outcome, error_msg)
         except Exception as error:  # noqa: BLE001 -- undecryptable/decoding failure → retryable
@@ -413,6 +413,30 @@ class _Session:
                 result=service_pb2.Result(task_id=task_id, outcome=outcome, error_msg=error_msg)
             )
         )
+
+    def _progress_reporter(self, task_id: str) -> "Callable[[int, str], None]":
+        """Build a per-task progress reporter that clamps the percent to 0..100
+        and coalesces consecutive identical reports so a chatty handler cannot
+        flood the stream."""
+        state = {"reported": False, "percent": 0, "message": ""}
+
+        def report(percent: int, message: str = "") -> None:
+            clamped = max(0, min(100, int(percent)))
+
+            if state["reported"] and clamped == state["percent"] and message == state["message"]:
+                return
+
+            state["reported"] = True
+            state["percent"] = clamped
+            state["message"] = message
+
+            self._send(
+                service_pb2.WorkerMessage(
+                    progress=service_pb2.Progress(task_id=task_id, percent=clamped, message=message)
+                )
+            )
+
+        return report
 
     def _report_each(self, ids: List[str], outcome: "service_pb2.TaskOutcome", error_msg: str) -> None:
         for task_id in ids:

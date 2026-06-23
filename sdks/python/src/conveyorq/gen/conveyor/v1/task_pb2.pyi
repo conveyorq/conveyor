@@ -95,7 +95,7 @@ class TaskDependency(_message.Message):
         ...
 
 class TaskEnvelope(_message.Message):
-    __slots__ = ('id', 'queue', 'type', 'payload', 'content_type', 'metadata', 'options', 'retried', 'last_error', 'enqueued_at', 'started_at', 'completed_at')
+    __slots__ = ('id', 'queue', 'type', 'payload', 'content_type', 'metadata', 'options', 'retried', 'last_error', 'enqueued_at', 'started_at', 'completed_at', 'progress', 'progress_message')
 
     class MetadataEntry(_message.Message):
         __slots__ = ('key', 'value')
@@ -118,6 +118,8 @@ class TaskEnvelope(_message.Message):
     ENQUEUED_AT_FIELD_NUMBER: _ClassVar[int]
     STARTED_AT_FIELD_NUMBER: _ClassVar[int]
     COMPLETED_AT_FIELD_NUMBER: _ClassVar[int]
+    PROGRESS_FIELD_NUMBER: _ClassVar[int]
+    PROGRESS_MESSAGE_FIELD_NUMBER: _ClassVar[int]
     id: str
     queue: str
     type: str
@@ -130,8 +132,10 @@ class TaskEnvelope(_message.Message):
     enqueued_at: _timestamp_pb2.Timestamp
     started_at: _timestamp_pb2.Timestamp
     completed_at: _timestamp_pb2.Timestamp
+    progress: int
+    progress_message: str
 
-    def __init__(self, id: _Optional[str]=..., queue: _Optional[str]=..., type: _Optional[str]=..., payload: _Optional[bytes]=..., content_type: _Optional[str]=..., metadata: _Optional[_Mapping[str, str]]=..., options: _Optional[_Union[TaskOptions, _Mapping]]=..., retried: _Optional[int]=..., last_error: _Optional[str]=..., enqueued_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., started_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., completed_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=...) -> None:
+    def __init__(self, id: _Optional[str]=..., queue: _Optional[str]=..., type: _Optional[str]=..., payload: _Optional[bytes]=..., content_type: _Optional[str]=..., metadata: _Optional[_Mapping[str, str]]=..., options: _Optional[_Union[TaskOptions, _Mapping]]=..., retried: _Optional[int]=..., last_error: _Optional[str]=..., enqueued_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., started_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., completed_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., progress: _Optional[int]=..., progress_message: _Optional[str]=...) -> None:
         ...
 
 class TaskOptions(_message.Message):

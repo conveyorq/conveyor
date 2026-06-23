@@ -242,4 +242,6 @@ def _task_info_from_proto(info: "service_pb2.TaskInfo") -> TaskInfo:
         process_at=_time.datetime_from_timestamp(info.process_at),
         completed_at=_time.datetime_from_timestamp(info.completed_at),
         started_at=_time.datetime_from_timestamp(info.started_at),
+        progress=info.progress,
+        progress_message=info.progress_message,
     )

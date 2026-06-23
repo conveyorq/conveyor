@@ -147,6 +147,13 @@ message TaskEnvelope {
   // (completed, archived, or canceled). It is an overlay field, stamped on
   // reads from the authoritative column. Unset while the task is not terminal.
   google.protobuf.Timestamp completed_at = 12;
+  // progress is the latest completion estimate (0 to 100) the running worker
+  // reported. It is an overlay field, stamped on reads from the authoritative
+  // column; zero when none was reported.
+  uint32 progress = 13;
+  // progress_message is the latest human-readable status reported alongside
+  // progress. Overlay field; empty when none was reported.
+  string progress_message = 14;
 }
 
 // TaskOptions captures the per-task execution options.

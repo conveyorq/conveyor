@@ -119,3 +119,18 @@ async def test_invoke_passes_payload_and_ctx(executor):
 
     assert captured["task"] is task
     assert captured["ctx"] is ctx
+
+
+def test_report_progress_forwards_to_the_reporter():
+    sent: list[tuple[int, str]] = []
+    ctx = HandlerContext(asyncio.Event(), None, lambda percent, message: sent.append((percent, message)))
+
+    ctx.report_progress(42, "working")
+
+    assert sent == [(42, "working")]
+
+
+def test_report_progress_without_a_reporter_is_a_noop():
+    ctx = HandlerContext(asyncio.Event(), None)
+
+    ctx.report_progress(42, "working")  # no reporter wired: must not raise

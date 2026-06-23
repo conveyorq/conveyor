@@ -458,9 +458,16 @@ type TaskEnvelope struct {
 	// completed_at is when the task reached its most recent terminal state
 	// (completed, archived, or canceled). It is an overlay field, stamped on
 	// reads from the authoritative column. Unset while the task is not terminal.
-	CompletedAt   *timestamppb.Timestamp `protobuf:"bytes,12,opt,name=completed_at,json=completedAt,proto3" json:"completed_at,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	CompletedAt *timestamppb.Timestamp `protobuf:"bytes,12,opt,name=completed_at,json=completedAt,proto3" json:"completed_at,omitempty"`
+	// progress is the latest completion estimate (0 to 100) the running worker
+	// reported. It is an overlay field, stamped on reads from the authoritative
+	// column; zero when none was reported.
+	Progress uint32 `protobuf:"varint,13,opt,name=progress,proto3" json:"progress,omitempty"`
+	// progress_message is the latest human-readable status reported alongside
+	// progress. Overlay field; empty when none was reported.
+	ProgressMessage string `protobuf:"bytes,14,opt,name=progress_message,json=progressMessage,proto3" json:"progress_message,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *TaskEnvelope) Reset() {
@@ -575,6 +582,20 @@ func (x *TaskEnvelope) GetCompletedAt() *timestamppb.Timestamp {
 		return x.CompletedAt
 	}
 	return nil
+}
+
+func (x *TaskEnvelope) GetProgress() uint32 {
+	if x != nil {
+		return x.Progress
+	}
+	return 0
+}
+
+func (x *TaskEnvelope) GetProgressMessage() string {
+	if x != nil {
+		return x.ProgressMessage
+	}
+	return ""
 }
 
 // TaskOptions captures the per-task execution options.
@@ -758,7 +779,7 @@ const file_conveyor_v1_task_proto_rawDesc = "" +
 	"\x0eTaskDependency\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12C\n" +
 	"\n" +
-	"on_failure\x18\x02 \x01(\x0e2$.conveyor.v1.DependencyFailurePolicyR\tonFailure\"\xab\x04\n" +
+	"on_failure\x18\x02 \x01(\x0e2$.conveyor.v1.DependencyFailurePolicyR\tonFailure\"\xf2\x04\n" +
 	"\fTaskEnvelope\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x14\n" +
 	"\x05queue\x18\x02 \x01(\tR\x05queue\x12\x12\n" +
@@ -775,7 +796,9 @@ const file_conveyor_v1_task_proto_rawDesc = "" +
 	"enqueuedAt\x129\n" +
 	"\n" +
 	"started_at\x18\v \x01(\v2\x1a.google.protobuf.TimestampR\tstartedAt\x12=\n" +
-	"\fcompleted_at\x18\f \x01(\v2\x1a.google.protobuf.TimestampR\vcompletedAt\x1a;\n" +
+	"\fcompleted_at\x18\f \x01(\v2\x1a.google.protobuf.TimestampR\vcompletedAt\x12\x1a\n" +
+	"\bprogress\x18\r \x01(\rR\bprogress\x12)\n" +
+	"\x10progress_message\x18\x0e \x01(\tR\x0fprogressMessage\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xbc\x04\n" +

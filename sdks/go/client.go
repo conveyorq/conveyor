@@ -68,6 +68,11 @@ type TaskInfo struct {
 	EnqueuedAt time.Time
 	// ProcessAt is when the task becomes due; zero means immediately.
 	ProcessAt time.Time
+	// Progress is the latest completion estimate (0 to 100) the running worker
+	// reported via ReportProgress; zero when none was reported.
+	Progress uint32
+	// ProgressMessage is the latest status reported alongside Progress.
+	ProgressMessage string
 }
 
 // EnqueueFunc commits one task and returns its initial state. It is the core
@@ -272,14 +277,16 @@ func wireError(err error) error {
 // taskInfoFromProto maps the wire task view to the SDK type.
 func taskInfoFromProto(info *conveyorv1.TaskInfo) *TaskInfo {
 	result := &TaskInfo{
-		ID:        info.GetId(),
-		Queue:     info.GetQueue(),
-		Type:      info.GetType(),
-		State:     taskStateFromProto(info.GetState()),
-		Priority:  int(info.GetPriority()),
-		Retried:   int(info.GetRetried()),
-		MaxRetry:  int(info.GetMaxRetry()),
-		LastError: info.GetLastError(),
+		ID:              info.GetId(),
+		Queue:           info.GetQueue(),
+		Type:            info.GetType(),
+		State:           taskStateFromProto(info.GetState()),
+		Priority:        int(info.GetPriority()),
+		Retried:         int(info.GetRetried()),
+		MaxRetry:        int(info.GetMaxRetry()),
+		LastError:       info.GetLastError(),
+		Progress:        info.GetProgress(),
+		ProgressMessage: info.GetProgressMessage(),
 	}
 
 	if info.GetEnqueuedAt().IsValid() {

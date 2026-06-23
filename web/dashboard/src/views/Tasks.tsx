@@ -328,6 +328,12 @@ function TaskDetail({
     ["Started", formatTime(task.startedAt)],
     ["Completed", formatTime(task.completedAt)],
     ["Duration", formatDuration(task.startedAt, task.completedAt)],
+    [
+      "Progress",
+      task.progress > 0 || task.progressMessage !== ""
+        ? `${task.progress}%${task.progressMessage !== "" ? ` (${task.progressMessage})` : ""}`
+        : orDash(""),
+    ],
   ];
 
   const payload = decodePayload(task.payload, task.contentType);

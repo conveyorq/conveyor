@@ -327,6 +327,12 @@ func (e *encryptedBroker) RescheduleTask(ctx context.Context, id string, process
 	return e.inner.RescheduleTask(ctx, id, processAt)
 }
 
+// SetProgress delegates to the wrapped broker. Progress carries no payload, so
+// no sealing is needed.
+func (e *encryptedBroker) SetProgress(ctx context.Context, taskID, leaseID string, percent uint32, message string) error {
+	return e.inner.SetProgress(ctx, taskID, leaseID, percent, message)
+}
+
 // ArchiveTask delegates to the wrapped broker.
 func (e *encryptedBroker) ArchiveTask(ctx context.Context, id string) error {
 	return e.inner.ArchiveTask(ctx, id)

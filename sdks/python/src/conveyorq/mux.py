@@ -23,13 +23,31 @@ class HandlerContext:
     it simply runs to completion.
     """
 
-    __slots__ = ("cancelled", "deadline")
+    __slots__ = ("cancelled", "deadline", "_report_progress")
 
-    def __init__(self, cancelled: asyncio.Event, deadline: Optional[float]) -> None:
+    def __init__(
+        self,
+        cancelled: asyncio.Event,
+        deadline: Optional[float],
+        report_progress: Optional[Callable[[int, str], None]] = None,
+    ) -> None:
         #: An :class:`asyncio.Event` set on deadline or operator cancel.
         self.cancelled = cancelled
         #: The effective deadline as a UNIX timestamp (seconds), or ``None``.
         self.deadline = deadline
+        self._report_progress = report_progress
+
+    def report_progress(self, percent: int, message: str = "") -> None:
+        """Record how far the running task has advanced.
+
+        ``percent`` is a completion estimate from 0 to 100 (clamped) and
+        ``message`` an optional human-readable status. Progress is advisory: it
+        surfaces on the task's status for inspection and never affects
+        execution. Consecutive identical reports are coalesced. It is a no-op
+        for a batch handler, where progress is per single task.
+        """
+        if self._report_progress is not None:
+            self._report_progress(percent, message)
 
     def is_cancelled(self) -> bool:
         """Whether the task has been cancelled or its deadline has passed."""

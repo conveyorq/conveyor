@@ -27,6 +27,9 @@ import (
 	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 )
 
+// maxProgressPercent is the upper bound of a reported progress percent.
+const maxProgressPercent = 100
+
 // taskRow is one stored task. The envelope is immutable after enqueue;
 // execution state lives in the row fields and is overlaid on reads.
 type taskRow struct {
@@ -54,6 +57,11 @@ type taskRow struct {
 	startedAt time.Time
 	// completedAt is when the task reached a terminal state.
 	completedAt time.Time
+	// progress is the latest completion estimate (0..100) the running worker
+	// reported; zero when none was reported.
+	progress uint32
+	// progressMessage is the latest status reported alongside progress.
+	progressMessage string
 	// retention keeps the completed row for inspection before purge.
 	retention time.Duration
 	// uniqueKey is the uniqueness claim, empty when unclaimed or lapsed.
@@ -391,6 +399,8 @@ func (b *Broker) Lease(_ context.Context, queue string, limit int, ttl time.Dura
 		row.leaseID = leaseID
 		row.leaseExpiresAt = now.Add(ttl)
 		row.startedAt = now
+		row.progress = 0
+		row.progressMessage = ""
 		leased = append(leased, overlay(row))
 		b.emit(oldState, row.state, row.envelope.GetId(), row.envelope.GetQueue(), row.envelope.GetType(), row.lastError, row.retried, now)
 	}
@@ -437,6 +447,8 @@ func (b *Broker) LeaseGroup(_ context.Context, queue, group string, limit int, t
 		row.leaseID = leaseID
 		row.leaseExpiresAt = now.Add(ttl)
 		row.startedAt = now
+		row.progress = 0
+		row.progressMessage = ""
 		leased = append(leased, overlay(row))
 		b.emit(oldState, row.state, row.envelope.GetId(), row.envelope.GetQueue(), row.envelope.GetType(), row.lastError, row.retried, now)
 	}
@@ -524,6 +536,9 @@ func overlay(row *taskRow) *conveyorv1.TaskEnvelope {
 		envelope.CompletedAt = timestamppb.New(row.completedAt)
 	}
 
+	envelope.Progress = row.progress
+	envelope.ProgressMessage = row.progressMessage
+
 	return envelope
 }
 
@@ -553,6 +568,26 @@ func (b *Broker) ExtendLease(_ context.Context, taskID, leaseID string, ttl time
 	}
 
 	row.leaseExpiresAt = b.clock.Now().Add(ttl)
+
+	return nil
+}
+
+// SetProgress records a running task's latest progress; see broker.Broker.
+func (b *Broker) SetProgress(_ context.Context, taskID, leaseID string, percent uint32, message string) error {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	row, err := b.activeRow(taskID, leaseID)
+	if err != nil {
+		return err
+	}
+
+	if percent > maxProgressPercent {
+		percent = maxProgressPercent
+	}
+
+	row.progress = percent
+	row.progressMessage = message
 
 	return nil
 }

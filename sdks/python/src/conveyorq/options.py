@@ -69,6 +69,10 @@ class TaskInfo:
     process_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     started_at: Optional[datetime] = None
+    #: Latest completion estimate (0 to 100) the running worker reported; 0 when none.
+    progress: int = 0
+    #: Latest status reported alongside progress; empty when none.
+    progress_message: str = ""
 
 
 @dataclass

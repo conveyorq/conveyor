@@ -6,6 +6,8 @@ All notable changes to Conveyor are documented here. The format is based on [Kee
 
 ### Added
 
+- **Task progress reporting**: long-running handlers can report how far they have advanced, so an operator can tell a slow task from a stuck one. A handler calls `conveyor.ReportProgress(ctx, percent, message)` in Go, `ctx.reportProgress(percent, message)` in TypeScript, or `ctx.report_progress(percent, message)` in Python; the value (a percent from 0 to 100 plus an optional status such as "dumped 11/54 tables") rides the existing worker session as a new `Progress` frame, is recorded under the active lease, and surfaces on `GetTask`, `ListTasks`, and the dashboard task detail. Consecutive identical reports are coalesced so a chatty handler cannot flood the stream, and the value is advisory: it never gates execution and a dropped frame only loses a stale update. Available in the Go, TypeScript, and Python SDKs.
+
 - **Reschedule a task**: move a waiting task's due time to a new instant in place, without deleting and re-enqueuing (which changes the task id and breaks any workflow dependencies pointing at it). `AdminService.RescheduleTask`, the `conveyor tasks reschedule <id>` CLI command (`--at <RFC3339>` or `--in <duration>`), and the dashboard task detail all accept a scheduled, pending, or retry task: a future time leaves it scheduled, while a past or present time makes it due immediately. The task id, its dependency edges, and its unique-key claim are preserved. Delayed tasks carry no per-task timer, so the change is just a new `process_at` that the scheduler's next promotion pass picks up; a task made due now is woken at once. Rescheduling an active or terminal task is rejected.
 
 ## [v0.2.0] - 2026-06-22

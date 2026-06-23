@@ -57,6 +57,10 @@ export interface TaskInfo {
   processAt?: Date;
   completedAt?: Date;
   startedAt?: Date;
+  /** Latest completion estimate (0 to 100) the running worker reported; 0 when none. */
+  progress: number;
+  /** Latest status reported alongside progress; empty when none. */
+  progressMessage: string;
 }
 
 /**

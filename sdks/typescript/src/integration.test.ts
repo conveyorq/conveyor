@@ -113,6 +113,28 @@ describe("integration against a live conveyord", () => {
     await running;
   }, 30_000);
 
+  it("reports task progress from a handler", async () => {
+    const client = new Client(baseUrl);
+
+    const mux = new Mux().handle("report:progress", (_task, ctx) => {
+      ctx.reportProgress(50, "halfway");
+    });
+
+    const worker = new Worker(baseUrl, { queues: { default: 1 }, concurrency: 2 });
+    const stop = new AbortController();
+    const running = worker.run(mux, stop.signal);
+
+    const info = await client.enqueue(newTask("report:progress", json({})), { retention: 3_600_000 });
+
+    await waitUntil(async () => {
+      const task = await client.getTask(info.id);
+      return task.progress === 50 && task.progressMessage === "halfway";
+    }, 15_000);
+
+    stop.abort();
+    await running;
+  }, 30_000);
+
   it("round-trips an end-to-end encrypted task", async () => {
     const secret = new Uint8Array(32).fill(7);
     const codec = newAESGCM("k1", { id: "k1", secret });

@@ -20,6 +20,8 @@ const (
 	retryCountContextKey
 	// maxRetryContextKey carries the executing task's retry budget.
 	maxRetryContextKey
+	// progressReporterContextKey carries the executing task's progress reporter.
+	progressReporterContextKey
 )
 
 // withTaskValues injects the task's identity and retry counters into the
@@ -30,6 +32,20 @@ func withTaskValues(ctx context.Context, task *Task) context.Context {
 	ctx = context.WithValue(ctx, maxRetryContextKey, task.maxRetry)
 
 	return ctx
+}
+
+// withProgressReporter injects the executing task's progress reporter into the
+// handler context, backing ReportProgress.
+func withProgressReporter(ctx context.Context, reporter *progressReporter) context.Context {
+	return context.WithValue(ctx, progressReporterContextKey, reporter)
+}
+
+// progressReporterFrom returns the executing task's progress reporter, if the
+// context carries one.
+func progressReporterFrom(ctx context.Context) (*progressReporter, bool) {
+	reporter, ok := ctx.Value(progressReporterContextKey).(*progressReporter)
+
+	return reporter, ok
 }
 
 // GetTaskID returns the id of the task the handler is executing. The bool

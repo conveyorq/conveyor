@@ -290,20 +290,22 @@ func (s *TaskService) initialState(envelope *conveyorv1.TaskEnvelope) conveyorv1
 // they stay unset for tasks that have not yet been dispatched or finished.
 func taskInfo(envelope *conveyorv1.TaskEnvelope, state conveyorv1.TaskState) *conveyorv1.TaskInfo {
 	return &conveyorv1.TaskInfo{
-		Id:          envelope.GetId(),
-		Queue:       envelope.GetQueue(),
-		Type:        envelope.GetType(),
-		State:       state,
-		Priority:    envelope.GetOptions().GetPriority(),
-		Retried:     envelope.GetRetried(),
-		MaxRetry:    envelope.GetOptions().GetMaxRetry(),
-		LastError:   envelope.GetLastError(),
-		EnqueuedAt:  envelope.GetEnqueuedAt(),
-		ProcessAt:   envelope.GetOptions().GetProcessAt(),
-		StartedAt:   envelope.GetStartedAt(),
-		CompletedAt: envelope.GetCompletedAt(),
-		Payload:     envelope.GetPayload(),
-		ContentType: envelope.GetContentType(),
+		Id:              envelope.GetId(),
+		Queue:           envelope.GetQueue(),
+		Type:            envelope.GetType(),
+		State:           state,
+		Priority:        envelope.GetOptions().GetPriority(),
+		Retried:         envelope.GetRetried(),
+		MaxRetry:        envelope.GetOptions().GetMaxRetry(),
+		LastError:       envelope.GetLastError(),
+		EnqueuedAt:      envelope.GetEnqueuedAt(),
+		ProcessAt:       envelope.GetOptions().GetProcessAt(),
+		StartedAt:       envelope.GetStartedAt(),
+		CompletedAt:     envelope.GetCompletedAt(),
+		Payload:         envelope.GetPayload(),
+		ContentType:     envelope.GetContentType(),
+		Progress:        envelope.GetProgress(),
+		ProgressMessage: envelope.GetProgressMessage(),
 	}
 }
 

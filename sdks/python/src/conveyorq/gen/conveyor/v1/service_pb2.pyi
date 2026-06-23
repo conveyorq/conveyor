@@ -128,7 +128,7 @@ class GetTaskResponse(_message.Message):
         ...
 
 class TaskInfo(_message.Message):
-    __slots__ = ('id', 'queue', 'type', 'state', 'priority', 'retried', 'max_retry', 'last_error', 'enqueued_at', 'process_at', 'completed_at', 'payload', 'content_type', 'started_at')
+    __slots__ = ('id', 'queue', 'type', 'state', 'priority', 'retried', 'max_retry', 'last_error', 'enqueued_at', 'process_at', 'completed_at', 'payload', 'content_type', 'started_at', 'progress', 'progress_message')
     ID_FIELD_NUMBER: _ClassVar[int]
     QUEUE_FIELD_NUMBER: _ClassVar[int]
     TYPE_FIELD_NUMBER: _ClassVar[int]
@@ -143,6 +143,8 @@ class TaskInfo(_message.Message):
     PAYLOAD_FIELD_NUMBER: _ClassVar[int]
     CONTENT_TYPE_FIELD_NUMBER: _ClassVar[int]
     STARTED_AT_FIELD_NUMBER: _ClassVar[int]
+    PROGRESS_FIELD_NUMBER: _ClassVar[int]
+    PROGRESS_MESSAGE_FIELD_NUMBER: _ClassVar[int]
     id: str
     queue: str
     type: str
@@ -157,24 +159,28 @@ class TaskInfo(_message.Message):
     payload: bytes
     content_type: str
     started_at: _timestamp_pb2.Timestamp
+    progress: int
+    progress_message: str
 
-    def __init__(self, id: _Optional[str]=..., queue: _Optional[str]=..., type: _Optional[str]=..., state: _Optional[_Union[_task_pb2.TaskState, str]]=..., priority: _Optional[int]=..., retried: _Optional[int]=..., max_retry: _Optional[int]=..., last_error: _Optional[str]=..., enqueued_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., process_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., completed_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., payload: _Optional[bytes]=..., content_type: _Optional[str]=..., started_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=...) -> None:
+    def __init__(self, id: _Optional[str]=..., queue: _Optional[str]=..., type: _Optional[str]=..., state: _Optional[_Union[_task_pb2.TaskState, str]]=..., priority: _Optional[int]=..., retried: _Optional[int]=..., max_retry: _Optional[int]=..., last_error: _Optional[str]=..., enqueued_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., process_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., completed_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., payload: _Optional[bytes]=..., content_type: _Optional[str]=..., started_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., progress: _Optional[int]=..., progress_message: _Optional[str]=...) -> None:
         ...
 
 class WorkerMessage(_message.Message):
-    __slots__ = ('hello', 'credit', 'result', 'heartbeat', 'batch_result')
+    __slots__ = ('hello', 'credit', 'result', 'heartbeat', 'batch_result', 'progress')
     HELLO_FIELD_NUMBER: _ClassVar[int]
     CREDIT_FIELD_NUMBER: _ClassVar[int]
     RESULT_FIELD_NUMBER: _ClassVar[int]
     HEARTBEAT_FIELD_NUMBER: _ClassVar[int]
     BATCH_RESULT_FIELD_NUMBER: _ClassVar[int]
+    PROGRESS_FIELD_NUMBER: _ClassVar[int]
     hello: Hello
     credit: Credit
     result: Result
     heartbeat: Heartbeat
     batch_result: BatchResult
+    progress: Progress
 
-    def __init__(self, hello: _Optional[_Union[Hello, _Mapping]]=..., credit: _Optional[_Union[Credit, _Mapping]]=..., result: _Optional[_Union[Result, _Mapping]]=..., heartbeat: _Optional[_Union[Heartbeat, _Mapping]]=..., batch_result: _Optional[_Union[BatchResult, _Mapping]]=...) -> None:
+    def __init__(self, hello: _Optional[_Union[Hello, _Mapping]]=..., credit: _Optional[_Union[Credit, _Mapping]]=..., result: _Optional[_Union[Result, _Mapping]]=..., heartbeat: _Optional[_Union[Heartbeat, _Mapping]]=..., batch_result: _Optional[_Union[BatchResult, _Mapping]]=..., progress: _Optional[_Union[Progress, _Mapping]]=...) -> None:
         ...
 
 class ServerMessage(_message.Message):
@@ -259,6 +265,18 @@ class Heartbeat(_message.Message):
     active_task_ids: _containers.RepeatedScalarFieldContainer[str]
 
     def __init__(self, active_task_ids: _Optional[_Iterable[str]]=...) -> None:
+        ...
+
+class Progress(_message.Message):
+    __slots__ = ('task_id', 'percent', 'message')
+    TASK_ID_FIELD_NUMBER: _ClassVar[int]
+    PERCENT_FIELD_NUMBER: _ClassVar[int]
+    MESSAGE_FIELD_NUMBER: _ClassVar[int]
+    task_id: str
+    percent: int
+    message: str
+
+    def __init__(self, task_id: _Optional[str]=..., percent: _Optional[int]=..., message: _Optional[str]=...) -> None:
         ...
 
 class Welcome(_message.Message):

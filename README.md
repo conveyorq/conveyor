@@ -46,6 +46,8 @@ and priorities, backed by Postgres or an in-memory broker, with **no Redis and n
   rolling out a new build never burns a task's retry budget.
 - **Retries** with exponential backoff, **delayed** and **scheduled** tasks,
   per-task **timeouts/deadlines**, and per-task **priorities**.
+- **Reschedule tasks**: move a waiting task's due time to a new instant in place,
+  keeping its id and dependencies, from the CLI, dashboard, or API.
 - **Weighted queues**: a worker declares a relative weight per queue, and the
   server hands a queue's tasks to the workers serving it in proportion to those
   weights, so a higher-weighted worker draws proportionally more of the work.
@@ -82,6 +84,9 @@ and priorities, backed by Postgres or an in-memory broker, with **no Redis and n
   the server refuses to start unauthenticated unless you opt in explicitly.
 - **Built-in operations dashboard**: an embedded web console to inspect and
   operate queues, tasks, cron, and connected workers; host it anywhere.
+- **Task progress reporting**: a long-running handler reports how far it has
+  advanced (a percent plus an optional status); the value surfaces on the task in
+  the dashboard and API, so you can tell a slow task from a stuck one.
 - **Prometheus metrics** and **OpenTelemetry traces** out of the box.
 - **Lifecycle events**: subscribe to a live push stream of task state transitions
   (enqueued, leased, completed, retried, archived, …) over the API or the
@@ -108,6 +113,7 @@ embedded inside a Go process.
 | Weighted queues               |                                                                               ✓                                                                                |              ✓               |                   ✗                    |
 | Per-task priority             |                                                                           ✓ (1 to 9)                                                                           |      ✗ (queue weights)       |                   ✓                    |
 | Delayed / scheduled           |                                                                               ✓                                                                                |              ✓               |                   ✓                    |
+| Reschedule a task's run time  |                                                                               ✓                                                                                |              ✗               |                   ✗                    |
 | Cron / periodic               |                                                            ✓ (server-persisted, survives failover)                                                             |         ✓ (in code)          |              ✓ (in code)               |
 | Unique tasks                  |                                                                               ✓                                                                                |              ✓               |                   ✓                    |
 | Retries with backoff          |                                                                               ✓                                                                                |              ✓               |                   ✓                    |
@@ -120,6 +126,7 @@ embedded inside a Go process.
 | Group aggregation / batching  |                                                                               ✓                                                                                |              ✓               |                   ✗                    |
 | End-to-end payload encryption |                                                                               ✓                                                                                |              ✗               |                   ✗                    |
 | Lifecycle events / webhooks   |                                                                               ✓                                                                                |              ✗               |                   ✗                    |
+| Task progress reporting       |                                                                               ✓                                                                                |              ✗               |                   ✗                    |
 | Web operations UI             |                                                                    Embedded, read and write                                                                    |           asynqmon           |                riverui                 |
 
 ¹ River commits the job inside *your* database transaction (`InsertTx`), so the

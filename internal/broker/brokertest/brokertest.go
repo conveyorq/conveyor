@@ -60,6 +60,7 @@ func Run(t *testing.T, factory Factory) {
 		{"ReleaseReturnsToPendingWithoutPenalty", testReleaseReturnsToPendingWithoutPenalty},
 		{"ArchiveDeadLetters", testArchiveDeadLetters},
 		{"ExtendLeaseDefersReaping", testExtendLeaseDefersReaping},
+		{"SetProgress", testSetProgress},
 		{"ReapExpiredLeases", testReapExpiredLeases},
 		{"ReapArchivesExhaustedRetries", testReapArchivesExhaustedRetries},
 		{"PromoteScheduled", testPromoteScheduled},
@@ -525,6 +526,65 @@ func testArchiveDeadLetters(t *testing.T, b broker.Broker, _ *clock.Fake) {
 
 	if err := b.Archive(context.Background(), "task-003", "", "late"); !errors.Is(err, broker.ErrInvalidState) {
 		t.Fatalf("Archive completed: err = %v, want ErrInvalidState", err)
+	}
+}
+
+// testSetProgress covers recording progress under the active lease, clamping an
+// out-of-range percent, rejecting a stale lease, and resetting progress when a
+// task is re-leased for another attempt.
+func testSetProgress(t *testing.T, b broker.Broker, _ *clock.Fake) {
+	mustEnqueue(t, b, newTask("task-001"))
+	mustLease(t, b, queueName, 1, "lease-1")
+
+	if err := b.SetProgress(context.Background(), "task-001", "lease-1", 40, "warming up"); err != nil {
+		t.Fatal(err)
+	}
+
+	envelope, _, err := b.GetTask(context.Background(), "task-001")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if envelope.GetProgress() != 40 || envelope.GetProgressMessage() != "warming up" {
+		t.Fatalf("progress = %d/%q, want 40/%q", envelope.GetProgress(), envelope.GetProgressMessage(), "warming up")
+	}
+
+	// An out-of-range percent is clamped to 100.
+	if err := b.SetProgress(context.Background(), "task-001", "lease-1", 150, "done"); err != nil {
+		t.Fatal(err)
+	}
+
+	envelope, _, err = b.GetTask(context.Background(), "task-001")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if envelope.GetProgress() != 100 {
+		t.Fatalf("clamped progress = %d, want 100", envelope.GetProgress())
+	}
+
+	// A stale lease cannot overwrite progress.
+	if err := b.SetProgress(context.Background(), "task-001", "wrong-lease", 5, "reset"); !errors.Is(err, broker.ErrLeaseLost) {
+		t.Fatalf("SetProgress with wrong lease: err = %v, want ErrLeaseLost", err)
+	}
+
+	// Re-leasing the task for another attempt resets its progress, so the value
+	// reflects the current attempt rather than a stale one.
+	if err := b.Fail(context.Background(), "task-001", "lease-1", "boom", start); err != nil {
+		t.Fatal(err)
+	}
+
+	if leased := mustLease(t, b, queueName, 1, "lease-2"); len(leased) != 1 {
+		t.Fatal("failed task must be re-leasable")
+	}
+
+	envelope, _, err = b.GetTask(context.Background(), "task-001")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if envelope.GetProgress() != 0 || envelope.GetProgressMessage() != "" {
+		t.Fatalf("progress after re-lease = %d/%q, want 0/%q", envelope.GetProgress(), envelope.GetProgressMessage(), "")
 	}
 }
 

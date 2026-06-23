@@ -148,6 +148,35 @@ test("runs a task from the detail panel", async () => {
   expect(runTask).toHaveBeenCalledOnce();
 });
 
+test("shows reported progress in the detail panel", async () => {
+  const transport = createRouterTransport((router) => {
+    router.service(AdminService, {
+      listTasks: () => ({
+        tasks: [
+          create(TaskInfoSchema, {
+            id: "01PROG",
+            type: "report:build",
+            queue: "default",
+            state: TaskState.ACTIVE,
+            progress: 42,
+            progressMessage: "halfway",
+          }),
+        ],
+        nextPageToken: "",
+      }),
+    });
+  });
+
+  render(
+    <ApiProvider api={createApi(transport)}>
+      <Tasks />
+    </ApiProvider>,
+  );
+
+  await userEvent.click(await screen.findByText("01PROG"));
+  expect(screen.getByLabelText("Task detail")).toHaveTextContent("42% (halfway)");
+});
+
 test("reschedules a task from the detail panel", async () => {
   // The handler receives a protobuf message whose descriptor graph is cyclic,
   // so assert on individual fields rather than deep-comparing the message.

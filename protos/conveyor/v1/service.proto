@@ -177,6 +177,12 @@ message TaskInfo {
   // started_at is when the most recent execution attempt began (lease time).
   // Unset for tasks that have never been dispatched.
   google.protobuf.Timestamp started_at = 14;
+  // progress is the latest completion estimate (0 to 100) reported by the
+  // running worker. Zero for tasks that have reported none.
+  uint32 progress = 15;
+  // progress_message is the latest human-readable status reported alongside
+  // progress. Empty when none was reported.
+  string progress_message = 16;
 }
 
 // ---- WorkerService frames ----
@@ -189,6 +195,7 @@ message WorkerMessage {
     Result result = 3;
     Heartbeat heartbeat = 4;
     BatchResult batch_result = 5;
+    Progress progress = 6;
   }
 }
 
@@ -257,6 +264,18 @@ message Result {
 // Heartbeat lists the task ids still executing so their leases extend.
 message Heartbeat {
   repeated string active_task_ids = 1;
+}
+
+// Progress reports how far a running task has advanced, for inspection while it
+// executes. It is advisory: the server records the latest value and never gates
+// execution on it, and a dropped Progress frame only loses a stale update.
+message Progress {
+  // task_id is the dispatched task the progress applies to.
+  string task_id = 1;
+  // percent is the completion estimate, 0 to 100. Values above 100 are clamped.
+  uint32 percent = 2;
+  // message is an optional human-readable status, e.g. "dumped 11/54 tables".
+  string message = 3;
 }
 
 // Welcome acknowledges Hello and carries session parameters.

@@ -219,7 +219,10 @@ func (g *Gateway) Receive(ctx *goakt.ReceiveContext) {
 		g.batchResult(ctx, message)
 
 	case *conveyorv1.Heartbeat:
-		g.heartbeat(message)
+		g.heartbeat(ctx, message)
+
+	case *conveyorv1.Progress:
+		g.progress(ctx, message)
 
 	case *conveyorv1.Credit:
 		g.credit(ctx, message)
@@ -395,6 +398,23 @@ func (g *Gateway) result(ctx *goakt.ReceiveContext, message *conveyorv1.Result) 
 	g.reportCompletion(ctx, entry.queue, message.GetTaskId(), success)
 }
 
+// progress records a running task's latest reported progress under its lease.
+// It is advisory: an unknown task id (a duplicate, or a delivery whose lease was
+// already lost) is dropped, and a persistence failure is logged rather than
+// propagated, since progress never gates execution.
+func (g *Gateway) progress(ctx *goakt.ReceiveContext, message *conveyorv1.Progress) {
+	entry, ok := g.inflight[message.GetTaskId()]
+	if !ok {
+		g.runtime.Logger().Debug("progress for unknown task dropped", "task_id", message.GetTaskId(), "gateway", g.name)
+
+		return
+	}
+
+	if err := g.runtime.Broker().SetProgress(ctx.Context(), message.GetTaskId(), entry.leaseID, message.GetPercent(), message.GetMessage()); err != nil {
+		g.runtime.Logger().Debug("recording task progress failed", "task_id", message.GetTaskId(), "error", err)
+	}
+}
+
 // applyOutcome performs the durable transition for one finished delivery and
 // records its process-duration and breaker sample. It returns whether the
 // delivery succeeded and whether it reached a terminal state (completed or
@@ -553,8 +573,8 @@ func (g *Gateway) deferCompletion(ctx *goakt.ReceiveContext, queue, taskID strin
 // heartbeat extends the lease of every task the worker reports as still
 // executing. A lost lease means another delivery owns the task now: the
 // worker is told to cancel and the slot is reported back to the grain.
-func (g *Gateway) heartbeat(message *conveyorv1.Heartbeat) {
-	goCtx := context.Background()
+func (g *Gateway) heartbeat(ctx *goakt.ReceiveContext, message *conveyorv1.Heartbeat) {
+	goCtx := ctx.Context()
 	taskLog := g.runtime.Broker()
 	ttl := g.runtime.Settings().LeaseTTL
 

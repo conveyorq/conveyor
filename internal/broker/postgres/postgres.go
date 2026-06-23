@@ -123,7 +123,8 @@ var leaseQuery = fmt.Sprintf(`WITH due AS (
   FOR UPDATE SKIP LOCKED
 ), claimed AS (
   UPDATE conveyor_tasks t
-  SET state = %d, lease_id = $3, lease_expires_at = $5, started_at = $4, updated_at = $4
+  SET state = %d, lease_id = $3, lease_expires_at = $5, started_at = $4, updated_at = $4,
+    progress = 0, progress_message = ''
   FROM due WHERE t.id = due.id
   RETURNING t.id, t.payload, t.retried, t.last_error
 )
@@ -167,6 +168,12 @@ RETURNING t.id, t.queue, t.type, t.retried, t.last_error`,
 // extendLeaseQuery pushes an active task's lease expiry forward.
 var extendLeaseQuery = fmt.Sprintf(`UPDATE conveyor_tasks
   SET lease_expires_at = $3, updated_at = $4
+  WHERE id = $1 AND state = %d AND lease_id = $2`, stateActive)
+
+// setProgressQuery records a running task's latest progress, scoped to the
+// active lease so a stale delivery cannot overwrite a newer one's value.
+var setProgressQuery = fmt.Sprintf(`UPDATE conveyor_tasks
+  SET progress = $3, progress_message = $4, updated_at = $5
   WHERE id = $1 AND state = %d AND lease_id = $2`, stateActive)
 
 // returningChange is the RETURNING projection mutateScoped scans for event
@@ -358,7 +365,8 @@ var leaseGroupQuery = fmt.Sprintf(`WITH due AS (
   FOR UPDATE SKIP LOCKED
 ), claimed AS (
   UPDATE conveyor_tasks t
-  SET state = %d, lease_id = $4, lease_expires_at = $6, started_at = $5, updated_at = $5
+  SET state = %d, lease_id = $4, lease_expires_at = $6, started_at = $5, updated_at = $5,
+    progress = 0, progress_message = ''
   FROM due WHERE t.id = due.id
   RETURNING t.id, t.payload, t.retried, t.last_error
 )
@@ -795,6 +803,11 @@ func (b *Broker) ExtendLease(ctx context.Context, taskID, leaseID string, ttl ti
 	now := b.clock.Now()
 
 	return b.leaseScopedExec(ctx, extendLeaseQuery, taskID, leaseID, now.Add(ttl), now)
+}
+
+// SetProgress records a running task's latest progress; see broker.Broker.
+func (b *Broker) SetProgress(ctx context.Context, taskID, leaseID string, percent uint32, message string) error {
+	return b.leaseScopedExec(ctx, setProgressQuery, taskID, leaseID, clampPercent(percent), message, b.clock.Now())
 }
 
 // Ack completes an active task; see broker.Broker.
@@ -1451,17 +1464,19 @@ func (b *Broker) Info(ctx context.Context) (broker.Info, error) {
 // GetTask returns one task and its state; see broker.Broker.
 func (b *Broker) GetTask(ctx context.Context, id string) (*conveyorv1.TaskEnvelope, conveyorv1.TaskState, error) {
 	var (
-		payload     []byte
-		state       int16
-		retried     int32
-		lastError   string
-		startedAt   *time.Time
-		completedAt *time.Time
+		payload         []byte
+		state           int16
+		retried         int32
+		lastError       string
+		startedAt       *time.Time
+		completedAt     *time.Time
+		progress        int16
+		progressMessage string
 	)
 
 	err := b.pool.QueryRow(ctx,
-		"SELECT payload, state, retried, last_error, started_at, completed_at FROM conveyor_tasks WHERE id = $1", id,
-	).Scan(&payload, &state, &retried, &lastError, &startedAt, &completedAt)
+		"SELECT payload, state, retried, last_error, started_at, completed_at, progress, progress_message FROM conveyor_tasks WHERE id = $1", id,
+	).Scan(&payload, &state, &retried, &lastError, &startedAt, &completedAt, &progress, &progressMessage)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, conveyorv1.TaskState_TASK_STATE_UNSPECIFIED, broker.ErrTaskNotFound
 	}
@@ -1476,6 +1491,7 @@ func (b *Broker) GetTask(ctx context.Context, id string) (*conveyorv1.TaskEnvelo
 	}
 
 	stampExecutionTimes(envelope, startedAt, completedAt)
+	stampProgress(envelope, progress, progressMessage)
 
 	return envelope, conveyorv1.TaskState(state), nil
 }
@@ -1506,7 +1522,7 @@ func (b *Broker) ListTasks(ctx context.Context, query broker.TaskQuery) ([]broke
 		addCondition("id", "<", query.AfterID)
 	}
 
-	listTasks := "SELECT payload, retried, last_error, state, started_at, completed_at FROM conveyor_tasks"
+	listTasks := "SELECT payload, retried, last_error, state, started_at, completed_at, progress, progress_message FROM conveyor_tasks"
 	if len(conditions) > 0 {
 		listTasks += " WHERE " + strings.Join(conditions, " AND ")
 	}
@@ -1524,15 +1540,17 @@ func (b *Broker) ListTasks(ctx context.Context, query broker.TaskQuery) ([]broke
 
 	for rows.Next() {
 		var (
-			payload     []byte
-			retried     int32
-			lastError   string
-			state       int16
-			startedAt   *time.Time
-			completedAt *time.Time
+			payload         []byte
+			retried         int32
+			lastError       string
+			state           int16
+			startedAt       *time.Time
+			completedAt     *time.Time
+			progress        int16
+			progressMessage string
 		)
 
-		if err = rows.Scan(&payload, &retried, &lastError, &state, &startedAt, &completedAt); err != nil {
+		if err = rows.Scan(&payload, &retried, &lastError, &state, &startedAt, &completedAt, &progress, &progressMessage); err != nil {
 			return nil, fmt.Errorf("postgres: scan task: %w", err)
 		}
 
@@ -1542,6 +1560,7 @@ func (b *Broker) ListTasks(ctx context.Context, query broker.TaskQuery) ([]broke
 		}
 
 		stampExecutionTimes(envelope, startedAt, completedAt)
+		stampProgress(envelope, progress, progressMessage)
 
 		records = append(records, broker.TaskRecord{Envelope: envelope, State: conveyorv1.TaskState(state)})
 	}
@@ -2220,6 +2239,26 @@ func stampExecutionTimes(envelope *conveyorv1.TaskEnvelope, startedAt, completed
 	if completedAt != nil {
 		envelope.CompletedAt = timestamppb.New(*completedAt)
 	}
+}
+
+// stampProgress overlays a task's latest reported progress onto an envelope
+// read from storage.
+func stampProgress(envelope *conveyorv1.TaskEnvelope, progress int16, message string) {
+	envelope.Progress = uint32(progress)
+	envelope.ProgressMessage = message
+}
+
+// maxProgressPercent is the upper bound of a reported progress percent.
+const maxProgressPercent = 100
+
+// clampPercent bounds a reported progress percent to the 0..maxProgressPercent
+// range stored in the progress column.
+func clampPercent(percent uint32) int16 {
+	if percent > maxProgressPercent {
+		return maxProgressPercent
+	}
+
+	return int16(percent)
 }
 
 // isUniqueViolation reports whether err is a 23505 on the index enforcing

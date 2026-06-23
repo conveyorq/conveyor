@@ -166,7 +166,7 @@ The interface methods group as:
 | Group                         | Methods                                                                                                                                                |
 |-------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------|
 | **Enqueue**                   | `Enqueue` (idempotent on id; `ErrDuplicateTask` on a live unique key)                                                                                  |
-| **Lease / dispatch**          | `Lease`, `LeaseGroup`, `ExtendLease`                                                                                                                   |
+| **Lease / dispatch**          | `Lease`, `LeaseGroup`, `ExtendLease`, `SetProgress`                                                                                                    |
 | **Outcomes (lease-scoped)**   | `Ack`, `Fail`, `Release`, `Archive`                                                                                                                    |
 | **Maintenance sweeps**        | `ReapExpiredLeases`, `PromoteScheduled`, `PurgeCompleted`, `ArchiveExpired`                                                                            |
 | **Inspection / admin**        | `PendingCount`, `QueueStats`, `GetTask`, `ListTasks`, `CancelTask`, `DeleteTask`, `RunTaskNow`, `RescheduleTask`, `ArchiveTask`, `SetQueuePaused`, `QueuePaused`, `Info` |

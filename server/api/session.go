@@ -94,6 +94,13 @@ func (s *sessionState) check(message *conveyorv1.WorkerMessage) error {
 
 		return nil
 
+	case *conveyorv1.WorkerMessage_Progress:
+		if !s.helloSeen {
+			return errFrameBeforeHello
+		}
+
+		return validateProgress(frame.Progress)
+
 	default:
 		if !s.helloSeen {
 			return errFrameBeforeHello
@@ -167,6 +174,16 @@ func validateBatchResult(batch *conveyorv1.BatchResult) error {
 }
 
 // validateResult checks a result frame: a task id and a defined outcome.
+// validateProgress checks a progress frame: it must name a task. The percent is
+// not range-checked here; the broker clamps it, keeping the frame advisory.
+func validateProgress(progress *conveyorv1.Progress) error {
+	if progress.GetTaskId() == "" {
+		return errors.New("protocol violation: Progress without task_id")
+	}
+
+	return nil
+}
+
 func validateResult(result *conveyorv1.Result) error {
 	if result.GetTaskId() == "" {
 		return errors.New("protocol violation: Result without task_id")

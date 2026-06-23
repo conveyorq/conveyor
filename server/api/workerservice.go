@@ -407,6 +407,9 @@ func (s *WorkerService) forward(ctx context.Context, handle *actors.GatewayHandl
 	case *conveyorv1.WorkerMessage_Heartbeat:
 		return handle.Tell(ctx, frame.Heartbeat)
 
+	case *conveyorv1.WorkerMessage_Progress:
+		return handle.Tell(ctx, frame.Progress)
+
 	default:
 		// The state machine admits no other frame past Hello.
 		return nil

@@ -381,7 +381,10 @@ func (s *workerSession) execute(ctx context.Context, release func(), envelope *c
 		return
 	}
 
-	s.finish(ctx, task.id, traced(withTaskValues(ctx, task), task, func(spanCtx context.Context) error {
+	reporter := &progressReporter{send: s.send, taskID: task.id}
+	handlerCtx := withProgressReporter(withTaskValues(ctx, task), reporter)
+
+	s.finish(ctx, task.id, traced(handlerCtx, task, func(spanCtx context.Context) error {
 		return invoke(spanCtx, handler, task)
 	}))
 }

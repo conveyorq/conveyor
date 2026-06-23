@@ -10,6 +10,7 @@ import { ENCRYPTION_MARKER_KEY, type Encryptor } from "./encryption.js";
 import {
   HeartbeatSchema,
   HelloSchema,
+  ProgressSchema,
   ResultSchema,
   type ServerMessage,
   TaskOutcome,
@@ -214,7 +215,7 @@ class Session {
         return;
       }
 
-      const [outcome, errorMsg] = await runHandler(handler, task, controller.signal);
+      const [outcome, errorMsg] = await runHandler(handler, task, controller.signal, this.progressReporter(envelope.id));
       this.report(envelope.id, outcome, errorMsg);
     } catch (error) {
       // A payload that could not be opened (e.g. an undecryptable task) is
@@ -248,7 +249,8 @@ class Session {
 
   private async runBatchHandler(handler: BatchHandler, tasks: Task[], ids: string[], signal: AbortSignal): Promise<void> {
     try {
-      await handler(tasks, { signal });
+      // Progress is per single task; a batch handler gets a no-op reporter.
+      await handler(tasks, { signal, reportProgress: () => {} });
       this.reportEach(ids, TaskOutcome.SUCCESS, "");
     } catch (error) {
       if (error instanceof BatchError) {
@@ -320,6 +322,35 @@ class Session {
     );
   }
 
+  /**
+   * progressReporter returns a per-task reporter that pushes a Progress frame,
+   * clamping the percent to 0..100 and coalescing consecutive identical reports
+   * so a chatty handler cannot flood the stream.
+   */
+  private progressReporter(taskId: string): (percent: number, message?: string) => void {
+    let reported = false;
+    let lastPercent = 0;
+    let lastMessage = "";
+
+    return (percent: number, message = ""): void => {
+      const clamped = Math.max(0, Math.min(100, Math.floor(percent)));
+
+      if (reported && clamped === lastPercent && message === lastMessage) {
+        return;
+      }
+
+      reported = true;
+      lastPercent = clamped;
+      lastMessage = message;
+
+      this.outbound.push(
+        create(WorkerMessageSchema, {
+          frame: { case: "progress", value: create(ProgressSchema, { taskId, percent: clamped, message }) },
+        }),
+      );
+    };
+  }
+
   private reportEach(ids: string[], outcome: TaskOutcome, errorMsg: string): void {
     for (const id of ids) {
       this.report(id, outcome, errorMsg);
@@ -368,9 +399,14 @@ class Session {
 }
 
 /** runHandler runs a single-task handler and maps its result to an outcome. */
-async function runHandler(handler: Handler, task: Task, signal: AbortSignal): Promise<[TaskOutcome, string]> {
+async function runHandler(
+  handler: Handler,
+  task: Task,
+  signal: AbortSignal,
+  reportProgress: (percent: number, message?: string) => void,
+): Promise<[TaskOutcome, string]> {
   try {
-    await handler(task, { signal });
+    await handler(task, { signal, reportProgress });
 
     return [TaskOutcome.SUCCESS, ""];
   } catch (error) {

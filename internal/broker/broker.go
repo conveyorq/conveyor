@@ -248,6 +248,13 @@ type Broker interface {
 	// cheap regardless of total task volume. Groups with no members are omitted.
 	GroupStats(ctx context.Context) ([]GroupStat, error)
 
+	// SetProgress records a running task's latest progress (percent 0..100 and
+	// an optional message). It is lease-scoped: it matches only a task active
+	// under leaseID and returns ErrLeaseLost otherwise, so a stale delivery
+	// cannot overwrite a newer one's progress. Progress is advisory and never
+	// gates execution.
+	SetProgress(ctx context.Context, taskID, leaseID string, percent uint32, message string) error
+
 	// ExtendLease pushes the lease expiry to now+ttl. It returns
 	// ErrLeaseLost when the task is not active under leaseID.
 	ExtendLease(ctx context.Context, taskID, leaseID string, ttl time.Duration) error
