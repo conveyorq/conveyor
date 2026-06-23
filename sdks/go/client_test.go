@@ -66,6 +66,10 @@ func TestRetryPolicyToProto(t *testing.T) {
 	require.Equal(t, conveyorv1.RetryStrategy_RETRY_STRATEGY_UNSPECIFIED, policy.GetStrategy())
 	require.Equal(t, 30*time.Second, policy.GetBase().AsDuration())
 	require.Nil(t, policy.GetMax())
+
+	// Each strategy maps to its wire enum.
+	require.Equal(t, conveyorv1.RetryStrategy_RETRY_STRATEGY_EXPONENTIAL, retryPolicyToProto(RetryExponential, 0, 0).GetStrategy())
+	require.Equal(t, conveyorv1.RetryStrategy_RETRY_STRATEGY_LINEAR, retryPolicyToProto(RetryLinear, 0, 0).GetStrategy())
 }
 
 func TestWithEnqueueMiddlewareWrapsInOrder(t *testing.T) {

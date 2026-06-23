@@ -271,3 +271,26 @@ func TestOrDash(t *testing.T) {
 	require.Equal(t, "-", orDash(""))
 	require.Equal(t, "boom", orDash("boom"))
 }
+
+func TestBuildRetryPolicy(t *testing.T) {
+	// No flags set yields no option.
+	option, err := buildRetryPolicy("", 0, 0)
+	require.NoError(t, err)
+	require.Nil(t, option)
+
+	// Every known strategy maps without error.
+	for _, strategy := range []string{"default", "exponential", "linear", "fixed"} {
+		option, err := buildRetryPolicy(strategy, time.Minute, 5*time.Minute)
+		require.NoError(t, err, strategy)
+		require.NotNil(t, option, strategy)
+	}
+
+	// A timing-only override (no strategy) is accepted.
+	option, err = buildRetryPolicy("", time.Minute, 0)
+	require.NoError(t, err)
+	require.NotNil(t, option)
+
+	// An unknown strategy is rejected.
+	_, err = buildRetryPolicy("quadratic", 0, 0)
+	require.ErrorContains(t, err, "retry-strategy")
+}

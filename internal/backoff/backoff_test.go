@@ -98,8 +98,29 @@ func TestFixedDelayIsCappedAtMax(t *testing.T) {
 	require.Equal(t, 5*time.Minute, strategy.Delay(0))
 }
 
-func TestBaseAndCapAccessors(t *testing.T) {
+func TestKindBaseAndCapAccessors(t *testing.T) {
 	strategy := NewWithKind(Fixed, 5*time.Second, time.Hour)
+	require.Equal(t, Fixed, strategy.Kind())
 	require.Equal(t, 5*time.Second, strategy.Base())
 	require.Equal(t, time.Hour, strategy.Cap())
+
+	// New defaults to exponential.
+	require.Equal(t, Exponential, New(time.Second, time.Minute).Kind())
+}
+
+func TestParseKind(t *testing.T) {
+	cases := map[string]Kind{
+		"exponential": Exponential,
+		"linear":      Linear,
+		"fixed":       Fixed,
+	}
+
+	for name, want := range cases {
+		got, ok := ParseKind(name)
+		require.True(t, ok, name)
+		require.Equal(t, want, got, name)
+	}
+
+	_, ok := ParseKind("quadratic")
+	require.False(t, ok)
 }
