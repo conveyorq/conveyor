@@ -20,6 +20,18 @@ class TaskState(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     TASK_STATE_AGGREGATING: _ClassVar[TaskState]
     TASK_STATE_BLOCKED: _ClassVar[TaskState]
 
+class TaskEventType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    TASK_EVENT_TYPE_UNSPECIFIED: _ClassVar[TaskEventType]
+    TASK_EVENT_TYPE_ENQUEUED: _ClassVar[TaskEventType]
+    TASK_EVENT_TYPE_SCHEDULED: _ClassVar[TaskEventType]
+    TASK_EVENT_TYPE_LEASED: _ClassVar[TaskEventType]
+    TASK_EVENT_TYPE_COMPLETED: _ClassVar[TaskEventType]
+    TASK_EVENT_TYPE_RETRIED: _ClassVar[TaskEventType]
+    TASK_EVENT_TYPE_ARCHIVED: _ClassVar[TaskEventType]
+    TASK_EVENT_TYPE_CANCELED: _ClassVar[TaskEventType]
+    TASK_EVENT_TYPE_RELEASED: _ClassVar[TaskEventType]
+
 class DependencyFailurePolicy(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
     DEPENDENCY_FAILURE_POLICY_UNSPECIFIED: _ClassVar[DependencyFailurePolicy]
@@ -36,10 +48,41 @@ TASK_STATE_ARCHIVED: TaskState
 TASK_STATE_CANCELED: TaskState
 TASK_STATE_AGGREGATING: TaskState
 TASK_STATE_BLOCKED: TaskState
+TASK_EVENT_TYPE_UNSPECIFIED: TaskEventType
+TASK_EVENT_TYPE_ENQUEUED: TaskEventType
+TASK_EVENT_TYPE_SCHEDULED: TaskEventType
+TASK_EVENT_TYPE_LEASED: TaskEventType
+TASK_EVENT_TYPE_COMPLETED: TaskEventType
+TASK_EVENT_TYPE_RETRIED: TaskEventType
+TASK_EVENT_TYPE_ARCHIVED: TaskEventType
+TASK_EVENT_TYPE_CANCELED: TaskEventType
+TASK_EVENT_TYPE_RELEASED: TaskEventType
 DEPENDENCY_FAILURE_POLICY_UNSPECIFIED: DependencyFailurePolicy
 DEPENDENCY_FAILURE_POLICY_BLOCK: DependencyFailurePolicy
 DEPENDENCY_FAILURE_POLICY_CASCADE_CANCEL: DependencyFailurePolicy
 DEPENDENCY_FAILURE_POLICY_CONTINUE: DependencyFailurePolicy
+
+class TaskEvent(_message.Message):
+    __slots__ = ('id', 'queue', 'type', 'state', 'event_type', 'occurred_at', 'attempt', 'last_error')
+    ID_FIELD_NUMBER: _ClassVar[int]
+    QUEUE_FIELD_NUMBER: _ClassVar[int]
+    TYPE_FIELD_NUMBER: _ClassVar[int]
+    STATE_FIELD_NUMBER: _ClassVar[int]
+    EVENT_TYPE_FIELD_NUMBER: _ClassVar[int]
+    OCCURRED_AT_FIELD_NUMBER: _ClassVar[int]
+    ATTEMPT_FIELD_NUMBER: _ClassVar[int]
+    LAST_ERROR_FIELD_NUMBER: _ClassVar[int]
+    id: str
+    queue: str
+    type: str
+    state: TaskState
+    event_type: TaskEventType
+    occurred_at: _timestamp_pb2.Timestamp
+    attempt: int
+    last_error: str
+
+    def __init__(self, id: _Optional[str]=..., queue: _Optional[str]=..., type: _Optional[str]=..., state: _Optional[_Union[TaskState, str]]=..., event_type: _Optional[_Union[TaskEventType, str]]=..., occurred_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., attempt: _Optional[int]=..., last_error: _Optional[str]=...) -> None:
+        ...
 
 class TaskDependency(_message.Message):
     __slots__ = ('task_id', 'on_failure')

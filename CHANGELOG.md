@@ -2,6 +2,12 @@
 
 All notable changes to Conveyor are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Reschedule a task**: move a waiting task's due time to a new instant in place, without deleting and re-enqueuing (which changes the task id and breaks any workflow dependencies pointing at it). `AdminService.RescheduleTask`, the `conveyor tasks reschedule <id>` CLI command (`--at <RFC3339>` or `--in <duration>`), and the dashboard task detail all accept a scheduled, pending, or retry task: a future time leaves it scheduled, while a past or present time makes it due immediately. The task id, its dependency edges, and its unique-key claim are preserved. Delayed tasks carry no per-task timer, so the change is just a new `process_at` that the scheduler's next promotion pass picks up; a task made due now is woken at once. Rescheduling an active or terminal task is rejected.
+
 ## [v0.2.0] - 2026-06-22
 
 ### Added

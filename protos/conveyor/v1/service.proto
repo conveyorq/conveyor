@@ -47,6 +47,9 @@ service AdminService {
   rpc CancelTask(CancelTaskRequest) returns (CancelTaskResponse) {}
   rpc DeleteTask(DeleteTaskRequest) returns (DeleteTaskResponse) {}
   rpc RunTask(RunTaskRequest) returns (RunTaskResponse) {}
+  // RescheduleTask moves a waiting (scheduled, pending, or retry) task's due
+  // time to a new instant.
+  rpc RescheduleTask(RescheduleTaskRequest) returns (RescheduleTaskResponse) {}
   // ArchiveTask dead-letters a waiting (scheduled, pending, or retry) task.
   rpc ArchiveTask(ArchiveTaskRequest) returns (ArchiveTaskResponse) {}
   // BatchDeleteTasks deletes each listed task, reporting per-id outcomes.
@@ -438,6 +441,20 @@ message RunTaskRequest {
 }
 
 message RunTaskResponse {}
+
+// RescheduleTaskRequest moves a waiting task's due time.
+message RescheduleTaskRequest {
+  // id identifies the task to reschedule.
+  string id = 1;
+
+  // process_at and process_in are mutually exclusive forms of the new due time;
+  // exactly one must be set. A future time leaves the task scheduled, while a
+  // past or present time makes it due immediately.
+  google.protobuf.Timestamp process_at = 2;
+  google.protobuf.Duration process_in = 3;
+}
+
+message RescheduleTaskResponse {}
 
 message ArchiveTaskRequest {
   string id = 1;

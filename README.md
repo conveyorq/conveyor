@@ -389,6 +389,12 @@ across all three. The SDKs are not yet published to npm or PyPI, so install from
 the in-repo source; each SDK's README has the exact commands. The wire contract
 that any new SDK implements is specified in [`docs/protocol.md`](docs/protocol.md).
 
+The SDK surface is deliberately limited to **producing and consuming** work.
+Operational actions on tasks and queues (reschedule, run-now, cancel, delete,
+archive, pause and resume, rate and concurrency limits, cron) are driven by the
+`conveyor` CLI and the [dashboard](#dashboard), which keeps the application
+surface small and operator concerns out of app code.
+
 ## Embedded mode
 
 Run the whole system (broker, server, and dispatch) inside your own Go
@@ -442,7 +448,7 @@ enter a token in the UI, which is kept client-side and sent on each call.
 
 It is a full read **and write** console: inspect queues, drill into tasks by
 state with a detail view, manage cron, and see the worker sessions connected to
-each node, and act: run/cancel/delete tasks, pause/resume queues, edit cron.
+each node, and act: run, reschedule, cancel, and delete tasks, pause/resume queues, edit cron.
 Auto-refresh keeps it live, and a configurable link deep-links to Grafana for
 time-series metrics.
 

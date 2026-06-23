@@ -250,6 +250,7 @@ func newTasksCommand(conn *connection) *cobra.Command {
 		newTasksGetCommand(conn),
 		newTasksListCommand(conn),
 		newTasksRunCommand(conn),
+		newTasksRescheduleCommand(conn),
 		newTasksCancelCommand(conn),
 		newTasksDeleteCommand(conn),
 	)

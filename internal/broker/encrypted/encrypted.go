@@ -322,6 +322,11 @@ func (e *encryptedBroker) RunTaskNow(ctx context.Context, id string) error {
 	return e.inner.RunTaskNow(ctx, id)
 }
 
+// RescheduleTask delegates to the wrapped broker.
+func (e *encryptedBroker) RescheduleTask(ctx context.Context, id string, processAt time.Time) error {
+	return e.inner.RescheduleTask(ctx, id, processAt)
+}
+
 // ArchiveTask delegates to the wrapped broker.
 func (e *encryptedBroker) ArchiveTask(ctx context.Context, id string) error {
 	return e.inner.ArchiveTask(ctx, id)

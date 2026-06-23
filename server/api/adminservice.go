@@ -368,6 +368,49 @@ func (s *AdminService) RunTask(ctx context.Context, request *connect.Request[con
 	return connect.NewResponse(&conveyorv1.RunTaskResponse{}), nil
 }
 
+// RescheduleTask moves a waiting (scheduled, pending, or retry) task's due time
+// to a new instant. A future time leaves the task scheduled; a past or present
+// time makes it due immediately and wakes its queue grain.
+func (s *AdminService) RescheduleTask(ctx context.Context, request *connect.Request[conveyorv1.RescheduleTaskRequest]) (*connect.Response[conveyorv1.RescheduleTaskResponse], error) {
+	if err := requireTaskID(request.Msg.GetId()); err != nil {
+		return nil, err
+	}
+
+	processAt, err := s.rescheduleDueTime(request.Msg)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := s.rescheduleTask(ctx, request.Msg.GetId(), processAt); err != nil {
+		return nil, adminTaskError(err)
+	}
+
+	return connect.NewResponse(&conveyorv1.RescheduleTaskResponse{}), nil
+}
+
+// rescheduleDueTime resolves the new due time from the mutually exclusive
+// process_at and process_in forms; exactly one must be set. A relative delay is
+// anchored to the server clock, matching the enqueue path.
+func (s *AdminService) rescheduleDueTime(request *conveyorv1.RescheduleTaskRequest) (time.Time, error) {
+	at := request.GetProcessAt()
+	in := request.GetProcessIn()
+
+	if at.IsValid() && in.IsValid() {
+		return time.Time{}, connect.NewError(connect.CodeInvalidArgument, errors.New("process_at and process_in are mutually exclusive"))
+	}
+
+	switch {
+	case at.IsValid():
+		return at.AsTime(), nil
+
+	case in.IsValid():
+		return s.timeSource.Now().Add(in.AsDuration()), nil
+
+	default:
+		return time.Time{}, connect.NewError(connect.CodeInvalidArgument, errors.New("one of process_at or process_in is required"))
+	}
+}
+
 // ArchiveTask dead-letters a waiting (scheduled, pending, or retry) task.
 func (s *AdminService) ArchiveTask(ctx context.Context, request *connect.Request[conveyorv1.ArchiveTaskRequest]) (*connect.Response[conveyorv1.ArchiveTaskResponse], error) {
 	if err := requireTaskID(request.Msg.GetId()); err != nil {
@@ -454,6 +497,29 @@ func (s *AdminService) runTask(ctx context.Context, id string) error {
 	// The wake-up is a best-effort hint; the reaper sweep recovers lost ones.
 	queue := envelope.GetQueue()
 	_ = s.engine.TellQueue(ctx, queue, &conveyorv1.TaskEnqueued{Queue: queue})
+
+	return nil
+}
+
+// rescheduleTask moves one task's due time to processAt. A task that is now due
+// gets a best-effort wake so it dispatches at once; a future task is left for
+// the scheduler's promotion sweep to pick up, so it needs neither a lookup nor
+// a wake.
+func (s *AdminService) rescheduleTask(ctx context.Context, id string, processAt time.Time) error {
+	if err := s.taskLog.RescheduleTask(ctx, id, processAt); err != nil {
+		return err
+	}
+
+	if processAt.After(s.timeSource.Now()) {
+		return nil
+	}
+
+	// Best-effort wake; the reaper sweep recovers a lost hint, and a lookup
+	// failure here does not undo the reschedule that already committed.
+	if envelope, _, err := s.taskLog.GetTask(ctx, id); err == nil {
+		queue := envelope.GetQueue()
+		_ = s.engine.TellQueue(ctx, queue, &conveyorv1.TaskEnqueued{Queue: queue})
+	}
 
 	return nil
 }

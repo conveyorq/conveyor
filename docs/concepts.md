@@ -150,6 +150,16 @@ need never know about each other; the server and broker decouple them in space
 (different processes/hosts) and in time (a task can wait in the broker until a
 worker is free).
 
+## Administering
+
+The SDK is the **produce and consume** surface: a client enqueues, a worker runs
+your handlers. It deliberately does not include operational actions on tasks or
+queues. Those are operator concerns, and you drive them with the **`conveyor`
+CLI** and the **dashboard**: reschedule, run-now, cancel, delete, or archive a
+task; pause and resume queues; set rate and concurrency limits; manage cron.
+Keeping administration out of the SDK keeps application code small and draws a
+clear line between running work and operating the system.
+
 ## Where to go next
 
 - [Writing a worker](../README.md#writing-a-worker): the minimal Go worker, with

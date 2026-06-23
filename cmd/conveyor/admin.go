@@ -15,6 +15,8 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
+	"google.golang.org/protobuf/types/known/durationpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 	"github.com/conveyorq/conveyor/internal/proto/conveyor/v1/conveyorv1connect"
@@ -408,6 +410,68 @@ func newTasksRunCommand(conn *connection) *cobra.Command {
 
 			return err
 		})
+}
+
+// newTasksRescheduleCommand builds the tasks reschedule subcommand: it moves a
+// waiting task's due time, given either as a delay from now (--in) or an
+// absolute RFC3339 instant (--at).
+func newTasksRescheduleCommand(conn *connection) *cobra.Command {
+	var (
+		in time.Duration
+		at string
+	)
+
+	command := &cobra.Command{
+		Use:   "reschedule <id>",
+		Short: "Move a scheduled, pending, or retry task's due time",
+		Args:  exactTaskID("tasks reschedule"),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id := args[0]
+
+			request, err := rescheduleRequest(id, in, at)
+			if err != nil {
+				return err
+			}
+
+			if _, err := conn.admin().RescheduleTask(context.Background(), connect.NewRequest(request)); err != nil {
+				return err
+			}
+
+			fmt.Fprintf(cmd.OutOrStdout(), "task %s: reschedule requested\n", id)
+
+			return nil
+		},
+	}
+
+	flags := command.Flags()
+	flags.DurationVar(&in, "in", 0, "make the task due this duration from now, e.g. 5m")
+	flags.StringVar(&at, "at", "", "make the task due at an RFC3339 time")
+
+	return command
+}
+
+// rescheduleRequest builds the reschedule request from the mutually exclusive
+// --in and --at flags; exactly one must be set. A relative delay is sent as
+// process_in so the server resolves it against its own clock.
+func rescheduleRequest(id string, in time.Duration, at string) (*conveyorv1.RescheduleTaskRequest, error) {
+	switch {
+	case in > 0 && at != "":
+		return nil, errors.New("tasks reschedule: set only one of --in or --at")
+
+	case in > 0:
+		return &conveyorv1.RescheduleTaskRequest{Id: id, ProcessIn: durationpb.New(in)}, nil
+
+	case at != "":
+		parsed, err := time.Parse(time.RFC3339, at)
+		if err != nil {
+			return nil, fmt.Errorf("tasks reschedule: parsing --at: %w", err)
+		}
+
+		return &conveyorv1.RescheduleTaskRequest{Id: id, ProcessAt: timestamppb.New(parsed)}, nil
+
+	default:
+		return nil, errors.New("tasks reschedule: set one of --in or --at")
+	}
 }
 
 // newTasksCancelCommand builds the tasks cancel subcommand.

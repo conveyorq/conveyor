@@ -166,6 +166,34 @@ func TestTaskLifecycleAgainstEmbeddedServer(t *testing.T) {
 	require.NoError(t, run([]string{"--addr", addr, "tasks", "run", scheduledID}, &runOut))
 	require.Contains(t, runOut.String(), "run requested")
 
+	// Reschedule a waiting task to a new future time and confirm it stays scheduled.
+	rescheduleID := enqueueOne(t, addr, "report:monthly", "--in", "1h")
+
+	var rescheduleOut bytes.Buffer
+
+	require.NoError(t, run([]string{"--addr", addr, "tasks", "reschedule", rescheduleID, "--in", "2h"}, &rescheduleOut))
+	require.Contains(t, rescheduleOut.String(), "reschedule requested")
+
+	var rescheduledList bytes.Buffer
+
+	require.NoError(t, run([]string{"--addr", addr, "tasks", "list", "--state", "scheduled"}, &rescheduledList))
+	require.Contains(t, rescheduledList.String(), rescheduleID)
+
+	// An absolute --at instant is accepted; a malformed one is rejected.
+	var rescheduleAtOut bytes.Buffer
+
+	require.NoError(t, run([]string{"--addr", addr, "tasks", "reschedule", rescheduleID, "--at", "2999-01-01T00:00:00Z"}, &rescheduleAtOut))
+	require.Contains(t, rescheduleAtOut.String(), "reschedule requested")
+
+	require.ErrorContains(t, run([]string{"--addr", addr, "tasks", "reschedule", rescheduleID, "--at", "not-a-time"}, &bytes.Buffer{}),
+		"parsing --at")
+
+	// Setting neither flag, or both, is rejected before any call.
+	require.ErrorContains(t, run([]string{"--addr", addr, "tasks", "reschedule", rescheduleID}, &bytes.Buffer{}),
+		"set one of --in or --at")
+	require.ErrorContains(t, run([]string{"--addr", addr, "tasks", "reschedule", rescheduleID, "--in", "1h", "--at", "2999-01-01T00:00:00Z"}, &bytes.Buffer{}),
+		"set only one of --in or --at")
+
 	canceledID := enqueueOne(t, addr, "report:weekly", "--in", "1h")
 
 	var cancelOut bytes.Buffer

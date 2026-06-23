@@ -71,6 +71,7 @@ func Run(t *testing.T, factory Factory) {
 		{"CancelTask", testCancelTask},
 		{"DeleteTask", testDeleteTask},
 		{"RunTaskNow", testRunTaskNow},
+		{"RescheduleTask", testRescheduleTask},
 		{"ArchiveTask", testArchiveTask},
 		{"QueuePauseFlag", testQueuePauseFlag},
 		{"QueueRateLimit", testQueueRateLimit},
@@ -808,6 +809,46 @@ func testRunTaskNow(t *testing.T, b broker.Broker, _ *clock.Fake) {
 
 	if err := b.RunTaskNow(context.Background(), "task-001"); !errors.Is(err, broker.ErrInvalidState) {
 		t.Fatalf("run-now active: err = %v, want ErrInvalidState", err)
+	}
+}
+
+// testRescheduleTask covers moving a waiting task's due time earlier (into the
+// dispatch path) and later (back out of it), and rejecting a reschedule of a
+// non-waiting task or an unknown id.
+func testRescheduleTask(t *testing.T, b broker.Broker, _ *clock.Fake) {
+	mustEnqueue(t, b, newTask("task-001", withProcessAt(start.Add(time.Hour))))
+
+	// Moving the due time into the past makes the task immediately leasable.
+	if err := b.RescheduleTask(context.Background(), "task-001", start.Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+
+	mustState(t, b, "task-001", conveyorv1.TaskState_TASK_STATE_PENDING)
+
+	if leased := mustLease(t, b, queueName, 1, "lease-1"); len(leased) != 1 {
+		t.Fatal("reschedule into the past must make the task leasable")
+	}
+
+	// Rescheduling an active (leased) task is rejected.
+	if err := b.RescheduleTask(context.Background(), "task-001", start.Add(time.Hour)); !errors.Is(err, broker.ErrInvalidState) {
+		t.Fatalf("reschedule active: err = %v, want ErrInvalidState", err)
+	}
+
+	// A future due time keeps a due task out of the dispatch path.
+	mustEnqueue(t, b, newTask("task-002"))
+
+	if err := b.RescheduleTask(context.Background(), "task-002", start.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	mustState(t, b, "task-002", conveyorv1.TaskState_TASK_STATE_SCHEDULED)
+
+	if leased := mustLease(t, b, queueName, 1, "lease-2"); len(leased) != 0 {
+		t.Fatal("reschedule into the future must remove the task from the dispatch path")
+	}
+
+	if err := b.RescheduleTask(context.Background(), "absent", start); !errors.Is(err, broker.ErrTaskNotFound) {
+		t.Fatalf("reschedule absent: err = %v, want ErrTaskNotFound", err)
 	}
 }
 
