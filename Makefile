@@ -59,8 +59,8 @@ build: ## Build the conveyord and conveyor binaries
 quickstart: ## Run the scripted README quickstart (CI enforces a 60s budget)
 	./hack/quickstart.sh
 
-test: ## Run all tests with the race detector (needs the host Docker daemon)
-	$(GO) test -race ./...
+test: ## Run all tests with the race detector and report coverage (needs Docker)
+	GO="$(GO)" ./hack/cover.sh
 
 lint: lint-go lint-ts lint-py ## Lint every language (Go, TypeScript, Python)
 

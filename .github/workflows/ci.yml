@@ -48,6 +48,7 @@ jobs:
               - 'buf.yaml'
               - 'buf.gen.yaml'
               - 'Makefile'
+              - 'hack/cover.sh'
               - '.golangci.yml'
               - '.github/workflows/ci.yml'
             deploy:
@@ -148,27 +149,19 @@ jobs:
         if: matrix.os == 'linux'
         run: make license-check
       - name: Test (race)
-        shell: bash
-        run: |
-          # Exclude the example and benchmark commands, the generated protobuf
-          # packages, and the broker test-scaffolding package: they have no
-          # tests of their own and would only drag the reported coverage number
-          # down.
-          PKGS=$(go list -mod=vendor ./... | grep -vE '/examples/|/benchmark$|/internal/proto/|/internal/broker/brokertest$')
-          # -p 1: serialize packages so concurrent GoAkt clusters don't
-          # oversubscribe the runner's 4 vCPUs — under -race they starve
-          # otherwise. Do not raise this to "speed up" CI.
-          # -timeout 15m: per-package bound; packages run well under a minute,
-          # so this only trips on a genuine hang.
-          go test -mod=vendor -p 1 -timeout 15m -race -v -covermode=atomic -coverprofile=coverage.out $PKGS
+        # `make test` runs hack/cover.sh: the race suite over the curated
+        # package set, with the overall coverage number reported at the end.
+        # See that script for the race/serialization flags and what the
+        # coverage denominator excludes.
+        run: make test
       
-      # - name: Upload coverage report
-      #   if: matrix.os == 'linux'
-      #   uses: codecov/codecov-action@v5
-      #   with:
-      #     token: ${{ secrets.CODECOV_TOKEN }}
-      #     files: coverage.out
-      #     slug: conveyorq/conveyor
+      - name: Upload coverage report
+        if: matrix.os == 'linux'
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.out
+          slug: conveyorq/conveyor
       # DX gate: the build above warmed the cache, so the 60s budget measures
       # the quickstart workflow, not the compiler's cold start.
       - name: Quickstart (60s budget)
