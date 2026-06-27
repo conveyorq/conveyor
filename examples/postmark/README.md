@@ -22,23 +22,23 @@ contrived: it's how such a platform actually behaves.
 
 ## What it shows
 
-| Conveyor feature | How Postmark uses it |
-| --- | --- |
-| **Weighted queues** | `transactional` (10) ≫ `default` (5) ≫ `marketing` (1): resets and codes never wait behind a campaign blast. |
+| Conveyor feature                | How Postmark uses it                                                                                                |
+|---------------------------------|---------------------------------------------------------------------------------------------------------------------|
+| **Weighted queues**             | `transactional` (10) ≫ `default` (5) ≫ `marketing` (1): resets and codes never wait behind a campaign blast.        |
 | **Push dispatch + concurrency** | Workers run 20 slots against a provider that accepts only 8 connections, so back-pressure is real, not theoretical. |
-| **Per-task priority** | A 2FA code (priority 9) jumps ahead of a welcome email in the same transactional queue. |
-| **Delayed / scheduled tasks** | The welcome series and trial-ending reminder are enqueued with `ProcessIn`, sent later, not now. |
-| **Cron** | A weekly digest is materialized by a cron entry; kill the scheduler's node and it still fires. |
-| **Unique tasks** | Password resets are keyed `user:<id>:password-reset`, so a "resend" storm collapses to one mail. |
-| **Retries with backoff** | The provider fails a fraction of sends transiently; tasks retry and succeed. |
-| **Dead-letter / archive** | A hard-bounce address returns `SkipRetry`; the task lands in the archive. |
-| **Circuit breaker** | When the provider goes fully down, each task type's breaker trips, then recovers. |
-| **Pause / resume** | The "stop all marketing now" incident button, while transactional keeps flowing. |
-| **Per-key concurrency** | A campaign tags every send with its tenant, capping each tenant's in-flight sends. |
-| **Rate limiting** | The marketing queue is capped at 20 sends/second to protect the provider. |
-| **Retention** | Delivered receipts stay visible for the audit view before they're purged. |
-| **Timeouts** | A 2FA send is abandoned if it can't complete fast, because a late code is useless. |
-| **Crash safety / clustering** | Three Postgres-backed nodes; delete a pod under load and nothing is lost. |
+| **Per-task priority**           | A 2FA code (priority 9) jumps ahead of a welcome email in the same transactional queue.                             |
+| **Delayed / scheduled tasks**   | The welcome series and trial-ending reminder are enqueued with `ProcessIn`, sent later, not now.                    |
+| **Cron**                        | A weekly digest is materialized by a cron entry; kill the scheduler's node and it still fires.                      |
+| **Unique tasks**                | Password resets are keyed `user:<id>:password-reset`, so a "resend" storm collapses to one mail.                    |
+| **Retries with backoff**        | The provider fails a fraction of sends transiently; tasks retry and succeed.                                        |
+| **Dead-letter / archive**       | A hard-bounce address returns `SkipRetry`; the task lands in the archive.                                           |
+| **Circuit breaker**             | When the provider goes fully down, each task type's breaker trips, then recovers.                                   |
+| **Pause / resume**              | The "stop all marketing now" incident button, while transactional keeps flowing.                                    |
+| **Per-key concurrency**         | A campaign tags every send with its tenant, capping each tenant's in-flight sends.                                  |
+| **Rate limiting**               | The marketing queue is capped at 20 sends/second to protect the provider.                                           |
+| **Retention**                   | Delivered receipts stay visible for the audit view before they're purged.                                           |
+| **Timeouts**                    | A 2FA send is abandoned if it can't complete fast, because a late code is useless.                                  |
+| **Crash safety / clustering**   | Three Postgres-backed nodes; delete a pod under load and nothing is lost.                                           |
 
 ## Run it
 
@@ -82,9 +82,11 @@ node, the queues rebalance, in-flight work redelivers elsewhere, and the digest
 cron survives, and nothing is lost.
 
 The workers cycle a **provider outage every 4 minutes for 40 seconds**. During
-each outage every send fails, each task type's circuit breaker trips, and the
-dashboard's breaker indicator lights up; when the provider recovers, the
-breakers close and the backlog drains. No action needed; just watch.
+each outage every send fails and each task type's circuit breaker trips: the
+server withholds that type's credit, so the affected queues stop draining and
+their backlog grows in the dashboard (the trip is also recorded by the
+`conveyor.breaker.open` metric). When the provider recovers, the breakers close
+and the backlog drains. No action needed; just watch.
 
 ## Tear it down
 
@@ -104,16 +106,16 @@ broker keeps cron entries, and the admin CLI exposes pause/resume, not delete.)
 The application is broker-agnostic Go; the deployment makes it durable and
 clustered.
 
-| File | Responsibility |
-| --- | --- |
-| [`postmark.go`](postmark.go) | The vocabulary: queues, task types, priorities, and the `Email` payload. |
-| [`provider.go`](provider.go) | The simulated provider: a connection limit, transient flakiness, hard bounces, and an outage switch. |
-| [`handlers.go`](handlers.go) | The `Mux`: every send type, the weekly digest, and a logging middleware that labels each outcome (delivered / archived / retry). |
-| [`produce.go`](produce.go) | The producer: the realistic, transactional-heavy mix of product actions and the per-action Conveyor options that exercise each feature. |
-| [`cmd/worker`](cmd/worker) | The worker process: serves the three queues and delivers through the provider. |
-| [`cmd/producer`](cmd/producer) | The producer process: drives a continuous workload. |
-| [`deploy/`](deploy) | The image and Kubernetes manifests for running it in-cluster. |
-| [`setup.sh`](setup.sh) | Configures per-queue concurrency, the marketing rate limit, and the digest cron through the admin CLI. |
+| File                           | Responsibility                                                                                                                          |
+|--------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------|
+| [`postmark.go`](postmark.go)   | The vocabulary: queues, task types, priorities, and the `Email` payload.                                                                |
+| [`provider.go`](provider.go)   | The simulated provider: a connection limit, transient flakiness, hard bounces, and an outage switch.                                    |
+| [`handlers.go`](handlers.go)   | The `Mux`: every send type, the weekly digest, and a logging middleware that labels each outcome (delivered / archived / retry).        |
+| [`produce.go`](produce.go)     | The producer: the realistic, transactional-heavy mix of product actions and the per-action Conveyor options that exercise each feature. |
+| [`cmd/worker`](cmd/worker)     | The worker process: serves the three queues and delivers through the provider.                                                          |
+| [`cmd/producer`](cmd/producer) | The producer process: drives a continuous workload.                                                                                     |
+| [`deploy/`](deploy)            | The image and Kubernetes manifests for running it in-cluster.                                                                           |
+| [`setup.sh`](setup.sh)         | Configures per-queue concurrency, the marketing rate limit, and the digest cron through the admin CLI.                                  |
 
 ## Deploy it on your own cluster
 
@@ -123,14 +125,25 @@ building blocks are ordinary; adapt these to your namespace, image registry,
 and API Service:
 
 ```sh
-# 1. Build the workload image (worker + producer) and push it where your cluster can pull it.
+# 1. Stand up the conveyord cluster itself — the server the workload runs
+#    against. This example ships no conveyord manifest; it reuses the production
+#    Helm chart, which creates the `conveyor` StatefulSet, the `conveyor` API
+#    Service, and the `conveyor-headless` peer Service. See
+#    deploy/helm/conveyor/README.md for the Postgres DSN and API-token Secrets
+#    it expects.
+helm install conveyor deploy/helm/conveyor -n conveyor --create-namespace \
+  --set broker.driver=postgres --set replicaCount=3 \
+  --set broker.dsnSecret.name=conveyor-broker \
+  --set auth.tokensSecret.name=conveyor-auth
+
+# 2. Build the workload image (worker + producer) and push it where your cluster can pull it.
 docker build -f examples/postmark/deploy/Dockerfile -t postmark:e2e .
 
-# 2. Deploy the workers and producer (they read the API URL and token from the
-#    same conveyor-auth Secret the cluster setup creates).
+# 3. Deploy the workers and producer (they read the API URL and token from the
+#    same conveyor-auth Secret the chart consumes).
 kubectl -n conveyor apply -f examples/postmark/deploy/postmark.yaml
 
-# 3. Configure the queues and the weekly-digest cron. Point the CLI at the API,
+# 4. Configure the queues and the weekly-digest cron. Point the CLI at the API,
 #    e.g. through a port-forward:
 kubectl -n conveyor port-forward svc/conveyor 8080:8080 &
 CONVEYOR_ADDR=http://localhost:8080 CONVEYOR_TOKEN=<your-token> \

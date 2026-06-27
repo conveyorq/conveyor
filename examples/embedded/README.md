@@ -14,7 +14,7 @@ welcome emails, processes them with an in-process worker, and exits.
 
 ## Moving to a real cluster
 
-The handler and enqueue code is identical to the
+The enqueue and handler code mirrors the
 [standalone example](../standalone); the migration is swapping
 constructors:
 
@@ -22,7 +22,7 @@ constructors:
 // embedded
 system, _ := embedded.Start(ctx, embedded.Config{Broker: embedded.Memory()})
 client := system.Client()
-worker := system.Worker(conveyor.WithQueues(map[string]int{"default": 1}))
+worker := system.Worker(conveyor.WithQueues(map[string]int{"default": 1}), conveyor.WithConcurrency(8))
 
 // remote
 client, _ := conveyor.NewClient("https://conveyor.internal:8080", conveyor.WithToken(token))

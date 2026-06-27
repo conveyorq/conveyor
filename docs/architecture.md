@@ -210,40 +210,57 @@ deployment uses one or the other, never both.
 ## Task lifecycle
 
 The task states are defined in
-[`protos/conveyor/v1/task.proto`](../protos/conveyor/v1/task.proto). There is no
-separate "expired" state; a pre-dispatch expiry resolves to `archived` with
+[`protos/conveyor/v1/task.proto`](../protos/conveyor/v1/task.proto). Every path
+funnels through `pending` into a single `Lease`, and the diagram reads
+top-to-bottom: enqueue, become runnable, finish. A task enqueued with unmet
+dependencies starts `blocked` and is promoted once every dependency completes —
+to `pending`, or to `scheduled`/`aggregating` when it is also delayed or grouped;
+a dependency that fails applies its on-failure policy (keep blocked, treat as
+satisfied, or cascade-cancel). There is no separate "expired" state: a
+pre-dispatch expiry resolves to `archived` with
 `last_error = "task expired before dispatch"`.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> SCHEDULED: Enqueue (future process_at)
+    %% Enqueue — where a new task first lands
     [*] --> PENDING: Enqueue (due now)
+    [*] --> SCHEDULED: Enqueue (future process_at)
     [*] --> AGGREGATING: Enqueue (grouped)
+    [*] --> BLOCKED: Enqueue (waiting on dependencies)
 
-    SCHEDULED --> PENDING: PromoteScheduled / RescheduleTask (now or past)
-    PENDING --> SCHEDULED: RescheduleTask (future)
-    RETRY --> SCHEDULED: RescheduleTask (future)
+    %% Becoming runnable — every waiting path funnels toward a lease
+    SCHEDULED --> PENDING: becomes due (Scheduler / Reschedule)
+    BLOCKED --> PENDING: dependencies satisfied
     PENDING --> ACTIVE: Lease
     RETRY --> ACTIVE: Lease (backoff elapsed)
-    AGGREGATING --> ACTIVE: LeaseGroup (group fires)
+    AGGREGATING --> ACTIVE: group fires (LeaseGroup)
 
-    ACTIVE --> COMPLETED: Ack
+    %% How an active task ends
+    ACTIVE --> COMPLETED: Ack (success)
     ACTIVE --> RETRY: Fail / lease expired (retries left)
-    ACTIVE --> ARCHIVED: Archive / lease expired (exhausted, SkipRetry)
+    ACTIVE --> ARCHIVED: Archive / retries exhausted / SkipRetry
     ACTIVE --> PENDING: Release (graceful drain, no penalty)
 
-    SCHEDULED --> ARCHIVED: ArchiveExpired
-    PENDING --> ARCHIVED: ArchiveExpired
-    RETRY --> ARCHIVED: ArchiveExpired
+    %% Reschedule a waiting task's due time into the future
+    PENDING --> SCHEDULED: RescheduleTask (future)
+    RETRY --> SCHEDULED: RescheduleTask (future)
 
-    PENDING --> CANCELED: CancelTask
-    SCHEDULED --> CANCELED: CancelTask
-    RETRY --> CANCELED: CancelTask
-    AGGREGATING --> CANCELED: CancelTask
-
+    %% Revive & purge
     ARCHIVED --> PENDING: RunTaskNow (revive)
     COMPLETED --> [*]: PurgeCompleted (retention lapsed)
     CANCELED --> [*]
+
+    note right of CANCELED
+        CancelTask cancels any task still waiting —
+        SCHEDULED, PENDING, RETRY, AGGREGATING, or BLOCKED.
+        A dependency that fails under the cascade-cancel
+        policy lands its dependents here too.
+    end note
+
+    note right of ARCHIVED
+        ArchiveExpired dead-letters a SCHEDULED, PENDING,
+        or RETRY task whose expires_at passes before dispatch.
+    end note
 ```
 
 ## Key flows
