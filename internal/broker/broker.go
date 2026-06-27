@@ -231,13 +231,41 @@ type TaskQuery struct {
 	AfterID string
 }
 
-// Broker is the durable task log. Implementations must be safe for
-// concurrent use and must derive every notion of "now" from the clock they
-// were constructed with, never from the system clock or the database clock.
+// Broker is the durable task log: a store of random-access, mutable task
+// state with queries over it, not an append-only stream. Implementations must
+// be safe for concurrent use and must derive every notion of "now" from the
+// clock they were constructed with, never from the system clock or the
+// database clock.
 //
 // Mutable execution fields (state, retried, last error, lease, timestamps)
 // are authoritative in the store; implementations overlay them onto the
 // returned TaskEnvelope so callers always observe current values.
+//
+// Any backing store must provide six capabilities; they are the bar a new
+// implementation has to clear, and each interface method below relies on one
+// or more of them:
+//
+//   - Atomic conditional claim. Lease and LeaseGroup hand a due task to
+//     exactly one caller, ordered by priority descending, then process_at,
+//     then id, recording the lease id and TTL in the same step. Concurrent
+//     claims never overlap.
+//   - Lease-scoped mutation. Ack, Fail, Release, Archive, ExtendLease, and
+//     SetProgress mutate a task only while it is still held under the given
+//     lease id, returning ErrLeaseLost otherwise, so a stale delivery cannot
+//     clobber a newer lease.
+//   - Filtered, ordered scans over secondary attributes. ListTasks,
+//     GroupStats, PendingCount, QueueStats, ReapExpiredLeases,
+//     PromoteScheduled, and ArchiveExpired select rows by state, queue, group,
+//     or expiry rather than by primary key.
+//   - Multi-row transactions. ResolveDependents and PromoteReadyDependents
+//     reconcile a dependency graph, flipping several tasks together (including
+//     transitive cascade-cancel) so dependents never observe a partial result.
+//   - Unique constraint with TTL. Enqueue rejects a second task sharing an
+//     incomplete task's unique key with ErrDuplicateTask until that key's TTL
+//     lapses.
+//   - Compare-and-set. UpdateCronNextRun advances a cron slot only from the
+//     next-run time the caller observed, so a relocating scheduler cannot
+//     double-fire it.
 type Broker interface {
 	// Enqueue durably commits a task. The task lands in the pending state,
 	// or scheduled when its process_at lies in the future. Committing the
