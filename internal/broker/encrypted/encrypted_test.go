@@ -81,6 +81,29 @@ func TestEncryptErrorPropagates(t *testing.T) {
 	}
 }
 
+// TestEncryptErrorPropagatesBatch confirms an Encrypt failure aborts EnqueueBatch
+// before any task is committed, so the atomic path never stores plaintext.
+func TestEncryptErrorPropagatesBatch(t *testing.T) {
+	inner := memory.New(clock.System())
+	t.Cleanup(func() { _ = inner.Close() })
+
+	sentinel := errors.New("kms unreachable")
+	decorated := New(inner, errEncryptor{fail: sentinel})
+
+	tasks := []*conveyorv1.TaskEnvelope{
+		{Id: "01J000000000000000000BATCH", Queue: "default", Type: "test:task", Payload: []byte("never stored")},
+	}
+
+	err := decorated.EnqueueBatch(context.Background(), tasks)
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("EnqueueBatch error = %v, want %v", err, sentinel)
+	}
+
+	if _, _, err := inner.GetTask(context.Background(), tasks[0].GetId()); !errors.Is(err, broker.ErrTaskNotFound) {
+		t.Fatalf("task was stored despite encryption failure: %v", err)
+	}
+}
+
 // TestDecryptErrorPropagates confirms a Decrypt failure surfaces from a read
 // path rather than returning corrupt bytes. A non-empty payload is stored
 // through the bare broker, then read back through a failing decryptor.

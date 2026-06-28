@@ -482,6 +482,8 @@ a different-origin UI, and `api.grafana_url` for the metrics link. See the
   runtime, queue grains, broker, dispatch, and clustering, for contributors.
 - [Operations guide](docs/operations.md): deployment modes, configuration,
   scaling, broker sizing, security, observability, and upgrades.
+- [CLI reference](docs/cli.md): every `conveyor` command, its flags, and the
+  global address/token/encryption settings, for producing and operating.
 - [High availability](docs/high-availability.md): a complete clustered deployment
   that ties the server, Postgres, and worker tiers together.
 - [Task dependencies](docs/workflows.md): order work with chains and

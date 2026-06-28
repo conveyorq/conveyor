@@ -367,7 +367,7 @@ func newGroupConfigSetCommand(conn *connection) *cobra.Command {
 				return err
 			}
 
-			fmt.Fprintf(cmd.OutOrStdout(), "queue %s group %q set to max-size %d, max-delay %s, grace %s\n",
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "queue %s group %q set to max-size %d, max-delay %s, grace %s\n",
 				args[0], group, maxSize, maxDelay, gracePeriod)
 
 			return nil

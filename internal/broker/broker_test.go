@@ -34,6 +34,16 @@ func TestSentinelErrorsSurviveWrapping(t *testing.T) {
 	require.NotErrorIs(t, wrapped, ErrDuplicateTask)
 }
 
+func TestBatchError(t *testing.T) {
+	err := &BatchError{Index: 2, TaskID: "task-7", Err: ErrDuplicateTask}
+
+	require.ErrorIs(t, err, ErrDuplicateTask)
+	require.Equal(t, ErrDuplicateTask, err.Unwrap())
+	require.Contains(t, err.Error(), "task 2")
+	require.Contains(t, err.Error(), "task-7")
+	require.Contains(t, err.Error(), "duplicate task")
+}
+
 func TestListLimitsAreSane(t *testing.T) {
 	require.Positive(t, DefaultListLimit)
 	require.Greater(t, MaxListLimit, DefaultListLimit)

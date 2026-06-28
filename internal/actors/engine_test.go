@@ -166,6 +166,8 @@ func TestEngineEnqueueBatchAtomic(t *testing.T) {
 	engine := startEngine(t, taskLog)
 	ctx := context.Background()
 
+	require.NoError(t, engine.EnqueueBatch(ctx, nil), "an empty batch is a no-op")
+
 	idless := newTask("", "default", "test:a", 4)
 	tasks := []*conveyorv1.TaskEnvelope{
 		idless,

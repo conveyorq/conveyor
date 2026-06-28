@@ -55,11 +55,16 @@ func (stubTaskService) Enqueue(context.Context, *connect.Request[conveyorv1.Enqu
 	}), nil
 }
 
-// EnqueueTx echoes one task per request, preserving id and type.
+// EnqueueTx echoes one task per request, or fails when any task type is
+// "boom" so the error path can be exercised.
 func (stubTaskService) EnqueueTx(_ context.Context, request *connect.Request[conveyorv1.EnqueueTxRequest]) (*connect.Response[conveyorv1.EnqueueTxResponse], error) {
 	infos := make([]*conveyorv1.TaskInfo, len(request.Msg.GetTasks()))
 
 	for i, task := range request.Msg.GetTasks() {
+		if task.GetType() == "boom" {
+			return nil, connect.NewError(connect.CodeAlreadyExists, errors.New("duplicate"))
+		}
+
 		infos[i] = &conveyorv1.TaskInfo{Id: task.GetTaskId(), Type: task.GetType()}
 	}
 
@@ -186,4 +191,14 @@ func TestClientEnqueueTxReturnsTasksInOrder(t *testing.T) {
 	require.Len(t, infos, 2)
 	require.Equal(t, "tx-1", infos[0].GetId())
 	require.Equal(t, "tx-2", infos[1].GetId())
+}
+
+func TestClientEnqueueTxPassesThroughErrors(t *testing.T) {
+	baseURL, _ := startStubServer(t)
+	client := New(baseURL, "")
+
+	_, err := client.EnqueueTx(context.Background(), []*conveyorv1.EnqueueRequest{
+		{TaskId: "tx-1", Type: "boom"},
+	})
+	require.Equal(t, connect.CodeAlreadyExists, connect.CodeOf(err))
 }

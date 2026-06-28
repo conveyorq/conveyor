@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/pashagolub/pgxmock/v4"
 	"github.com/stretchr/testify/require"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -570,6 +571,138 @@ func TestTransactionBeginErrors(t *testing.T) {
 
 		_, err := b.ResolveDependents(ctx, "t")
 		require.ErrorIs(t, err, errBoom)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+// TestEnqueueCommitUniqueViolation covers the single-task transactional path's
+// commit-time unique-violation branch, which maps to ErrDuplicateTask.
+func TestEnqueueCommitUniqueViolation(t *testing.T) {
+	b, mock := newMockBroker(t)
+
+	task := &conveyorv1.TaskEnvelope{Id: "t", Queue: "q", Type: "demo", Options: &conveyorv1.TaskOptions{UniqueKey: "k"}}
+
+	mock.ExpectBegin()
+	mock.ExpectExec("").WithArgs(anyArgs(2)...).WillReturnResult(pgxmock.NewResult("UPDATE", 0))
+	mock.ExpectExec("").WithArgs(anyArgs(18)...).WillReturnResult(pgxmock.NewResult("INSERT", 1))
+	mock.ExpectCommit().WillReturnError(&pgconn.PgError{Code: uniqueViolationCode, ConstraintName: uniqueIndexName})
+	mock.ExpectRollback()
+
+	require.ErrorIs(t, b.Enqueue(context.Background(), task), broker.ErrDuplicateTask)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestEnqueueBatchMock covers the error and rollback branches of the atomic
+// EnqueueBatch path that the live-database conformance suite does not reach.
+func TestEnqueueBatchMock(t *testing.T) {
+	ctx := context.Background()
+
+	simple := func(id string) *conveyorv1.TaskEnvelope {
+		return &conveyorv1.TaskEnvelope{Id: id, Queue: "q", Type: "demo", Options: &conveyorv1.TaskOptions{}}
+	}
+
+	t.Run("empty batch is a no-op", func(t *testing.T) {
+		b, mock := newMockBroker(t)
+
+		require.NoError(t, b.EnqueueBatch(ctx, nil))
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("grouped schedule rejected before any write", func(t *testing.T) {
+		b, mock := newMockBroker(t)
+
+		task := simple("t")
+		task.Options.Group = "g"
+		task.Options.ProcessAt = timestamppb.New(mockStart.Add(time.Hour))
+
+		err := b.EnqueueBatch(ctx, []*conveyorv1.TaskEnvelope{task})
+		require.ErrorIs(t, err, broker.ErrGroupedSchedule)
+
+		var batchErr *broker.BatchError
+		require.ErrorAs(t, err, &batchErr)
+		require.Equal(t, 0, batchErr.Index)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("begin error", func(t *testing.T) {
+		b, mock := newMockBroker(t)
+		mock.ExpectBegin().WillReturnError(errBoom)
+
+		require.ErrorIs(t, b.EnqueueBatch(ctx, []*conveyorv1.TaskEnvelope{simple("t")}), errBoom)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("insert error rolls back the whole batch", func(t *testing.T) {
+		b, mock := newMockBroker(t)
+		mock.ExpectBegin()
+		mock.ExpectExec("").WithArgs(anyArgs(18)...).WillReturnError(errBoom)
+		mock.ExpectRollback()
+
+		err := b.EnqueueBatch(ctx, []*conveyorv1.TaskEnvelope{simple("a"), simple("b")})
+		require.ErrorIs(t, err, errBoom)
+
+		var batchErr *broker.BatchError
+		require.ErrorAs(t, err, &batchErr)
+		require.Equal(t, 0, batchErr.Index)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("commit error", func(t *testing.T) {
+		b, mock := newMockBroker(t)
+		mock.ExpectBegin()
+		mock.ExpectExec("").WithArgs(anyArgs(18)...).WillReturnResult(pgxmock.NewResult("INSERT", 1))
+		mock.ExpectCommit().WillReturnError(errBoom)
+		mock.ExpectRollback()
+
+		require.ErrorIs(t, b.EnqueueBatch(ctx, []*conveyorv1.TaskEnvelope{simple("a")}), errBoom)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	unique := func(id string) *conveyorv1.TaskEnvelope {
+		task := simple(id)
+		task.Options.UniqueKey = "claimed"
+
+		return task
+	}
+
+	t.Run("release lapsed unique claim error", func(t *testing.T) {
+		b, mock := newMockBroker(t)
+		mock.ExpectBegin()
+		mock.ExpectExec("").WithArgs(anyArgs(2)...).WillReturnError(errBoom)
+		mock.ExpectRollback()
+
+		require.ErrorIs(t, b.EnqueueBatch(ctx, []*conveyorv1.TaskEnvelope{unique("a")}), errBoom)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("unique violation maps to duplicate", func(t *testing.T) {
+		b, mock := newMockBroker(t)
+		mock.ExpectBegin()
+		mock.ExpectExec("").WithArgs(anyArgs(2)...).WillReturnResult(pgxmock.NewResult("UPDATE", 0))
+		mock.ExpectExec("").WithArgs(anyArgs(18)...).WillReturnError(
+			&pgconn.PgError{Code: uniqueViolationCode, ConstraintName: uniqueIndexName})
+		mock.ExpectRollback()
+
+		err := b.EnqueueBatch(ctx, []*conveyorv1.TaskEnvelope{unique("a")})
+		require.ErrorIs(t, err, broker.ErrDuplicateTask)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("dependency edge insert error rolls back", func(t *testing.T) {
+		b, mock := newMockBroker(t)
+
+		task := simple("a")
+		task.Options.DependsOn = []*conveyorv1.TaskDependency{{TaskId: "dep"}}
+
+		mock.ExpectBegin()
+		// Unknown dependency: the states query returns no rows, so the task is
+		// committed blocked and an edge is recorded.
+		mock.ExpectQuery("").WithArgs(anyArgs(1)...).WillReturnRows(pgxmock.NewRows([]string{"id", "state"}))
+		mock.ExpectExec("").WithArgs(anyArgs(18)...).WillReturnResult(pgxmock.NewResult("INSERT", 1))
+		mock.ExpectExec("").WithArgs(anyArgs(3)...).WillReturnError(errBoom)
+		mock.ExpectRollback()
+
+		require.ErrorIs(t, b.EnqueueBatch(ctx, []*conveyorv1.TaskEnvelope{task}), errBoom)
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 }

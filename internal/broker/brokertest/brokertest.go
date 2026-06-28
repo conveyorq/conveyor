@@ -54,6 +54,7 @@ func Run(t *testing.T, factory Factory) {
 		{"EnqueueBatchAtomicOnFailure", testEnqueueBatchAtomicOnFailure},
 		{"EnqueueBatchIntraBatchUniqueCollision", testEnqueueBatchIntraBatchUniqueCollision},
 		{"EnqueueBatchIdempotentID", testEnqueueBatchIdempotentID},
+		{"EnqueueBatchDuplicateIDInBatch", testEnqueueBatchDuplicateIDInBatch},
 		{"EnqueueBatchEmpty", testEnqueueBatchEmpty},
 		{"GetTaskNotFound", testGetTaskNotFound},
 		{"LeaseOrdersByPriorityThenFIFO", testLeaseOrdersByPriorityThenFIFO},
@@ -425,6 +426,28 @@ func testEnqueueBatchIdempotentID(t *testing.T, b broker.Broker, _ *clock.Fake) 
 
 	mustState(t, b, "batch-001", conveyorv1.TaskState_TASK_STATE_PENDING)
 	mustState(t, b, "batch-002", conveyorv1.TaskState_TASK_STATE_PENDING)
+}
+
+// testEnqueueBatchDuplicateIDInBatch asserts a repeated id within one batch is a
+// no-op for the duplicate: exactly one row is committed and the batch succeeds.
+func testEnqueueBatchDuplicateIDInBatch(t *testing.T, b broker.Broker, _ *clock.Fake) {
+	tasks := []*conveyorv1.TaskEnvelope{
+		newTask("batch-001"),
+		newTask("batch-001", withQueue("other")),
+	}
+
+	if err := b.EnqueueBatch(context.Background(), tasks); err != nil {
+		t.Fatalf("EnqueueBatch: %v", err)
+	}
+
+	all, err := b.ListTasks(context.Background(), broker.TaskQuery{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(all) != 1 {
+		t.Fatalf("duplicate id in batch produced %d rows, want 1", len(all))
+	}
 }
 
 // testEnqueueBatchEmpty asserts an empty batch is an accepted no-op.

@@ -88,6 +88,22 @@ func eventEnvelope(id string) *conveyorv1.TaskEnvelope {
 	return &conveyorv1.TaskEnvelope{Id: id, Queue: "default", Type: "demo", Options: &conveyorv1.TaskOptions{MaxRetry: 3}}
 }
 
+// TestEnqueueBatchEmitsEvents asserts the atomic batch path emits one enqueued
+// event per committed task after the transaction commits.
+func TestEnqueueBatchEmitsEvents(t *testing.T) {
+	broker, sink := newEventBroker(t)
+
+	require.NoError(t, broker.EnqueueBatch(context.Background(), []*conveyorv1.TaskEnvelope{
+		eventEnvelope("be-1"),
+		eventEnvelope("be-2"),
+	}))
+
+	assert.Equal(t, []conveyorv1.TaskEventType{
+		conveyorv1.TaskEventType_TASK_EVENT_TYPE_ENQUEUED,
+		conveyorv1.TaskEventType_TASK_EVENT_TYPE_ENQUEUED,
+	}, sink.types())
+}
+
 func TestPostgresEmitsLeaseCompleteSequence(t *testing.T) {
 	broker, sink := newEventBroker(t)
 	ctx := context.Background()

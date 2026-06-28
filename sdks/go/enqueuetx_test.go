@@ -6,10 +6,12 @@ package conveyor
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
@@ -35,6 +37,10 @@ func (s *recordingTaskService) EnqueueTx(_ context.Context, request *connect.Req
 	infos := make([]*conveyorv1.TaskInfo, len(request.Msg.GetTasks()))
 
 	for i, task := range request.Msg.GetTasks() {
+		if task.GetType() == "boom" {
+			return nil, connect.NewError(connect.CodeAlreadyExists, errors.New("duplicate"))
+		}
+
 		infos[i] = &conveyorv1.TaskInfo{Id: task.GetTaskId(), Type: task.GetType(), Queue: task.GetQueue()}
 	}
 
@@ -100,4 +106,55 @@ func TestClientEnqueueTxCommitsAllWithPerTaskOptions(t *testing.T) {
 	require.Equal(t, "billing", service.lastTx.GetTasks()[0].GetQueue())
 	require.Equal(t, "mail", service.lastTx.GetTasks()[1].GetQueue())
 	require.Equal(t, "test:a", service.lastTx.GetTasks()[0].GetType())
+}
+
+func TestClientEnqueueTxMapsEveryOption(t *testing.T) {
+	baseURL, service := startRecordingServer(t)
+
+	client, err := NewClient(baseURL)
+	require.NoError(t, err)
+
+	_, err = client.EnqueueTx(context.Background(), []TxTask{
+		Tx(NewTask("test:a", JSON("one")),
+			TaskID("tx-1"),
+			Queue("billing"),
+			Priority(7),
+			MaxRetry(5),
+			ProcessIn(time.Minute),
+			ExpiresIn(time.Hour),
+			Retention(24*time.Hour),
+			Unique(time.Hour),
+			Timeout(30*time.Second),
+			Deadline(time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)),
+			ConcurrencyKey("customer:42"),
+			RetryPolicy(RetryFixed, time.Second, time.Minute),
+		),
+		Tx(NewTask("test:b", JSON("two")), DependsOn("tx-1")),
+	})
+	require.NoError(t, err)
+
+	service.mu.Lock()
+	defer service.mu.Unlock()
+
+	request := service.lastTx.GetTasks()[0]
+	require.Equal(t, int32(7), request.GetPriority())
+	require.Equal(t, int32(5), request.GetMaxRetry())
+	require.Equal(t, "customer:42", request.GetConcurrencyKey())
+	require.NotNil(t, request.GetProcessIn())
+	require.NotNil(t, request.GetExpiresIn())
+	require.NotNil(t, request.GetRetention())
+	require.NotNil(t, request.GetUniqueTtl())
+	require.NotNil(t, request.GetTimeout())
+	require.NotNil(t, request.GetDeadline())
+	require.NotNil(t, request.GetRetryPolicy())
+}
+
+func TestClientEnqueueTxMapsServerError(t *testing.T) {
+	baseURL, _ := startRecordingServer(t)
+
+	client, err := NewClient(baseURL)
+	require.NoError(t, err)
+
+	_, err = client.EnqueueTx(context.Background(), []TxTask{Tx(NewTask("boom", JSON("x")))})
+	require.ErrorIs(t, err, ErrDuplicateTask)
 }
