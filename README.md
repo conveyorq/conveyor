@@ -24,10 +24,10 @@ and priorities, backed by Postgres or an in-memory broker, with **no Redis and n
 
 - [Features](#features)
 - [How it compares](#how-it-compares)
+- [Use cases](#use-cases)
 - [Examples](#examples)
 - [How it works](#how-it-works)
-- [Writing a worker](#writing-a-worker)
-- [Enqueueing work](#enqueueing-work)
+- [Usage](#usage)
 - [SDKs](#sdks)
 - [Embedded mode](#embedded-mode)
 - [Dashboard](#dashboard)
@@ -53,7 +53,7 @@ and priorities, backed by Postgres or an in-memory broker, with **no Redis and n
   server hands a queue's tasks to the workers serving it in proportion to those
   weights, so a higher-weighted worker draws proportionally more of the work.
 - **Atomic multi-task enqueue**: commit many tasks in one `EnqueueTx` call that
-  is all-or-nothing — every task lands or none do — so a set of related tasks is
+  is all-or-nothing (every task lands or none do), so a set of related tasks is
   never left with an orphaned or missing member. The same guarantee holds on any
   broker. Available in the Go, TypeScript, and Python SDKs.
 - **Unique tasks**, **dead-letter/archive**, **retention**, per-queue
@@ -117,7 +117,7 @@ process.
 | Dispatch                      |                                                                        Push (streaming)                                                                        |             Poll             |      Poll plus `LISTEN`/`NOTIFY`       |
 | HA / failover                 | Built-in clustering; a lost node's work re-activates elsewhere. Kubernetes discovery out of the box, or a pluggable provider (static, DNS, NATS, Consul, etcd) | Via Redis (Sentinel/Cluster) | Postgres advisory-lock leader election |
 | Transactional enqueue         |                                                                               ✗                                                                                |              ✗               |                  ✓ ¹                   |
-| Atomic multi-task enqueue     |                                                                          ✓ (`EnqueueTx`)                                                                       |              ✗               |             ✓ (`InsertMany`)           |
+| Atomic multi-task enqueue     |                                                                        ✓ (`EnqueueTx`)                                                                         |              ✗               |            ✓ (`InsertMany`)            |
 | SDK languages                 |                                                                     Go, TypeScript, Python                                                                     |              Go              |                   Go                   |
 | Weighted queues               |                                                                               ✓                                                                                |              ✓               |                   ✗                    |
 | Per-task priority             |                                                                           ✓ (1 to 9)                                                                           |      ✗ (queue weights)       |                   ✓                    |
@@ -154,6 +154,50 @@ three are actively developed, so check upstream for changes (corrections welcome
 via a PR). For durable, long-running *business* workflows (sagas, multi-day
 orchestrations), a workflow engine such as Temporal or Cadence is a different and
 complementary category: Conveyor is a task queue, not a workflow engine.
+
+## Use cases
+
+Conveyor fits any work you want to run outside the request path, durably and at
+scale. A few shapes it suits especially well, each leaning on the features noted:
+
+- **Transactional email and notifications.** Send the welcome email, receipt, or
+  push notification after the request returns. Push dispatch keeps latency low,
+  retries with backoff and the dead-letter queue absorb provider outages, and
+  per-key concurrency caps in-flight sends per customer. This is exactly the
+  [Postmark example](examples/postmark).
+- **Webhook and API fan-out.** Deliver outbound webhooks or call rate-limited
+  third-party APIs. Per-queue rate limiting respects a vendor's quota, the
+  per-task-type circuit breaker sheds load when an endpoint starts failing, and
+  lifecycle events give you a delivery audit trail.
+- **Media and document pipelines.** Transcode video, resize images, or render
+  PDFs as multi-step jobs. Task dependencies model "extract, then transform, then
+  publish" with fan-out/fan-in, weighted queues keep heavy jobs off the fast
+  lane, and progress reporting tells a slow job from a stuck one.
+- **AI model calls and inference jobs.** Run LLM completions, embeddings,
+  transcription, or image generation as background tasks against a paid,
+  rate-limited provider. Per-queue rate limiting holds dispatch under the
+  provider's per-second quota (over-rate tasks wait, no retry spent), per-key
+  concurrency caps simultaneous calls per API key or tenant, retries with backoff
+  ride out `429` and transient `5xx` responses, per-task timeouts/deadlines bound
+  a slow generation, and progress reporting surfaces how far a long job has run.
+- **RAG ingestion and embedding pipelines.** Index a corpus as a dependency
+  graph: fan out per document, chain "chunk, then embed, then upsert", and
+  coalesce many chunks into one batched embeddings call with group aggregation.
+  End-to-end encryption keeps source documents as ciphertext in the queue.
+- **Scheduled and recurring work.** Nightly reports, billing runs, retention
+  sweeps, and cache warming. Server-persisted cron survives restarts and
+  failover, and delayed/scheduled tasks handle one-off future work.
+- **Batch and digest processing.** Coalesce a burst of events into one unit of
+  work: hourly digest emails, debounced search reindexing, or bulk writes. Group
+  aggregation fires a single batch handler on size, delay, or grace period, tuned
+  per group.
+- **Polyglot background jobs.** Enqueue from a Go API and process on Python or
+  TypeScript workers (or any mix). One wire protocol means a task enqueued in one
+  language runs on a worker written in another, which suits ML inference,
+  scraping, or data sync split across teams and runtimes.
+- **Privacy-sensitive workloads.** Process PII, health, or financial payloads
+  where the queue must not see plaintext. End-to-end encryption seals payloads in
+  the SDK or CLI so the server stores ciphertext only and holds no keys.
 
 ## Examples
 
@@ -237,18 +281,15 @@ queues, scheduling, and lease recovery rebalance automatically when a node is
 lost, and no task is dropped. Scale by adding nodes; the broker is the only
 stateful dependency.
 
-## Writing a worker
+## Usage
 
-A worker registers a handler per task type, then runs. The shape is the same in every SDK.
-
-### Go
+The two halves of using Conveyor, a **worker** that registers a handler per task
+type and a **client** that enqueues tasks, have the same shape in every SDK. The
+[usage guide](docs/usage.md) has the full worker and enqueue snippets for Go,
+TypeScript, Python, and the CLI. In Go it is as small as:
 
 ```go
-w, _ := conveyor.NewWorker("http://localhost:8080",
-    conveyor.WithQueues(map[string]int{"critical": 6, "default": 3}),
-    conveyor.WithConcurrency(20),
-)
-
+// Worker: register a handler, then run.
 mux := conveyor.NewMux()
 mux.HandleFunc("email:welcome", func(ctx context.Context, t *conveyor.Task) error {
     var p WelcomeEmail
@@ -258,80 +299,9 @@ mux.HandleFunc("email:welcome", func(ctx context.Context, t *conveyor.Task) erro
 
     return sendEmail(ctx, p)
 })
-
 _ = w.Run(ctx, mux) // blocks; reconnects with jitter; drains on ctx cancel
-```
 
-### TypeScript
-
-The shape of [`examples/typescript`](examples/typescript/src/worker.ts):
-
-```ts
-import { Mux, skipRetry, type Task, Worker } from "@conveyorq/conveyor";
-
-const mux = new Mux().handle("email:welcome", async (task: Task, { signal }) => {
-  const email = task.json<{ to: string; name: string }>();
-  if (!email.to) throw skipRetry("missing recipient");          // permanent → dead-letter
-  await sendEmail(email.to, `Welcome, ${email.name}!`, signal); // any other throw → retried
-});
-
-const stop = new AbortController();
-for (const sig of ["SIGTERM", "SIGINT"] as const) process.on(sig, () => stop.abort());
-
-const worker = new Worker("http://localhost:8080", {
-  queues: { email: 1 },
-  concurrency: 8,
-  token: process.env.CONVEYOR_TOKEN,
-});
-
-await worker.run(mux, stop.signal); // blocks; reconnects with jitter; drains on abort
-```
-
-### Python
-
-The shape of [`examples/python`](examples/python/worker.py); a synchronous `SyncWorker` exists too:
-
-```python
-import asyncio
-import os
-
-from conveyorq import Mux, SkipRetry, Worker
-
-
-async def main() -> None:
-    mux = Mux()
-
-    @mux.handler("email:welcome")
-    async def send_welcome(task, ctx) -> None:
-        email = task.json()
-        if not email.get("to"):
-            raise SkipRetry("missing recipient")             # permanent → dead-letter
-        await send_email(email["to"], f"Welcome, {email['name']}!")  # else retried
-
-
-    worker = Worker(
-        "http://localhost:8080",
-        queues={"email": 1},
-        concurrency=8,
-        token=os.environ.get("CONVEYOR_TOKEN") or None,
-    )
-    await worker.run(mux)  # drains gracefully on SIGTERM/SIGINT
-
-
-asyncio.run(main())
-```
-
-Handlers must be idempotent and should honor cancellation (`ctx.Done()` in Go,
-the abort signal in TypeScript and Python). A handler that panics or throws is
-recovered and reported as a retryable failure, and it never kills the worker.
-
-## Enqueueing work
-
-### Go
-
-```go
-client, _ := conveyor.NewClient("http://localhost:8080")
-
+// Client: enqueue a task.
 info, _ := client.Enqueue(ctx,
     conveyor.NewTask("email:welcome", conveyor.JSON(WelcomeEmail{UserID: 42})),
     conveyor.Queue("critical"),
@@ -340,52 +310,9 @@ info, _ := client.Enqueue(ctx,
 )
 ```
 
-### TypeScript
-
-The shape of [`examples/typescript`](examples/typescript/src/producer.ts), where durations are milliseconds:
-
-```ts
-import { Client, json, newTask } from "@conveyorq/conveyor";
-
-const client = new Client("http://localhost:8080", { token: process.env.CONVEYOR_TOKEN });
-
-const info = await client.enqueue(newTask("email:welcome", json({ to: "ada@example.com", name: "Ada" })), {
-  queue: "email",
-  processIn: 5 * 60_000, // milliseconds
-  maxRetry: 10,
-});
-```
-
-### Python
-
-The shape of [`examples/python`](examples/python/client.py), where durations are `timedelta`:
-
-```python
-import asyncio
-from datetime import timedelta
-
-from conveyorq import Client, json, new_task
-
-
-async def main() -> None:
-    async with Client("http://localhost:8080") as client:
-        info = await client.enqueue(
-            new_task("email:welcome", json({"to": "ada@example.com", "name": "Ada"})),
-            queue="email",
-            process_in=timedelta(minutes=5),
-            max_retry=10,
-        )
-        print(info.id, info.state.value)
-
-
-asyncio.run(main())
-```
-
-### Command line
-
-```sh
-go run ./cmd/conveyor enqueue email:welcome --queue critical --json '{"user_id":42}' --in 5m
-```
+Handlers must be idempotent and should honor cancellation (`ctx.Done()` in Go,
+the abort signal in TypeScript and Python). A handler that panics or throws is
+recovered and reported as a retryable failure, and it never kills the worker.
 
 ## SDKs
 
@@ -478,6 +405,8 @@ a different-origin UI, and `api.grafana_url` for the metrics link. See the
 
 - [Concepts](docs/concepts.md): the core vocabulary in plain terms: task,
   queue, client, server, worker, and broker, and how they fit together. Start here.
+- [Usage guide](docs/usage.md): the full worker and enqueue snippets for Go,
+  TypeScript, Python, and the CLI.
 - [Architecture](docs/architecture.md): how the system works inside: the actor
   runtime, queue grains, broker, dispatch, and clustering, for contributors.
 - [Operations guide](docs/operations.md): deployment modes, configuration,
