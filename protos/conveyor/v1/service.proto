@@ -16,6 +16,13 @@ service TaskService {
   rpc Enqueue(EnqueueRequest) returns (EnqueueResponse) {}
   // EnqueueBatch commits many tasks in one call; results are per-item.
   rpc EnqueueBatch(EnqueueBatchRequest) returns (EnqueueBatchResponse) {}
+  // EnqueueTx commits many tasks atomically: either every task in the request
+  // is enqueued, or none is. Any failure (a duplicate unique key, a unique-key
+  // collision between two tasks in the same request, or an invalid task) commits
+  // nothing and returns an error identifying the offending task. Re-committing an
+  // existing id is a no-op and does not abort the request. Unlike EnqueueBatch,
+  // there are no per-item results: success returns the committed tasks in order.
+  rpc EnqueueTx(EnqueueTxRequest) returns (EnqueueTxResponse) {}
   // GetTask returns the current state of one task.
   rpc GetTask(GetTaskRequest) returns (GetTaskResponse) {}
 }
@@ -155,6 +162,21 @@ message EnqueueResult {
   TaskInfo task = 1;
   // error is non-empty when this item failed (e.g. duplicate task).
   string error = 2;
+}
+
+// EnqueueTxRequest carries the tasks to commit atomically. The set is capped at
+// the same limit as EnqueueBatch.
+message EnqueueTxRequest {
+  // tasks are committed all-or-nothing, in order.
+  repeated EnqueueRequest tasks = 1;
+}
+
+// EnqueueTxResponse returns the committed tasks, in request order. It is only
+// produced on success; any failure surfaces as an RPC error rather than a
+// per-item result.
+message EnqueueTxResponse {
+  // tasks are the committed tasks, in the order they were requested.
+  repeated TaskInfo tasks = 1;
 }
 
 message GetTaskRequest {

@@ -15,6 +15,7 @@
 //	               [--at RFC3339] [--expires-in DUR] [--expires-at RFC3339]
 //	               [--max-retry N] [--priority N] [--retention DUR]
 //	               [--unique DUR] [--unique-key KEY] [--encryption-key ID:SECRET]
+//	enqueue-tx --file PATH [--encryption-key ID:SECRET]
 //	stats
 //	queues pause|resume <name>
 //	ratelimit set <queue> --rate N [--burst N] | rm <queue> | ls
@@ -138,6 +139,7 @@ CONVEYOR_ADDR/CONVEYOR_TOKEN environment variables; flags win.`,
 
 	root.AddCommand(
 		newEnqueueCommand(conn),
+		newEnqueueTxCommand(conn),
 		newTasksCommand(conn),
 		newStatsCommand(conn),
 		newQueuesCommand(conn),
@@ -244,6 +246,177 @@ func newEnqueueCommand(conn *connection) *cobra.Command {
 	flags.DurationVar(&retryMax, "retry-max", 0, "overall retry delay cap (server default when 0)")
 
 	return command
+}
+
+// txTaskSpec is one task in an enqueue-tx input file. Its fields mirror the
+// enqueue flags; duration fields ("in", "expires_in", "retention", "unique")
+// accept Go duration strings such as "5m", and time fields ("at", "expires_at")
+// accept RFC3339 timestamps.
+type txTaskSpec struct {
+	// Type is the handler routing key; required.
+	Type string `json:"type"`
+	// Queue routes the task; empty selects the server default.
+	Queue string `json:"queue"`
+	// JSON is the task's JSON payload; omitted for an empty payload.
+	JSON json.RawMessage `json:"json"`
+	// ID is an optional client-assigned id for idempotent retries.
+	ID string `json:"id"`
+	// In delays execution by a duration, e.g. "5m".
+	In string `json:"in"`
+	// At delays execution until an RFC3339 time.
+	At string `json:"at"`
+	// ExpiresIn archives the task if not dispatched within this duration.
+	ExpiresIn string `json:"expires_in"`
+	// ExpiresAt archives the task if not dispatched by this RFC3339 time.
+	ExpiresAt string `json:"expires_at"`
+	// MaxRetry is the retry budget; 0 selects the server default.
+	MaxRetry int `json:"max_retry"`
+	// Priority is the dispatch priority 1..9; 0 selects the server default.
+	Priority int `json:"priority"`
+	// Retention keeps the completed task visible for this duration.
+	Retention string `json:"retention"`
+	// Unique rejects duplicates of this task for the given TTL.
+	Unique string `json:"unique"`
+	// UniqueKey is an explicit uniqueness key.
+	UniqueKey string `json:"unique_key"`
+}
+
+// newEnqueueTxCommand builds the transactional (atomic) enqueue command. It
+// reads a JSON array of task specs from a file and commits them all-or-nothing:
+// every task is enqueued or none is.
+func newEnqueueTxCommand(conn *connection) *cobra.Command {
+	var (
+		file          string
+		encryptionKey string
+	)
+
+	command := &cobra.Command{
+		Use:   "enqueue-tx --file <path>",
+		Short: "Commit many tasks atomically (all-or-nothing)",
+		Example: `  conveyor enqueue-tx --file tasks.json
+
+  where tasks.json is a JSON array:
+  [
+    {"type": "order:charge",  "queue": "billing", "json": {"id": "order-42"}, "priority": 7},
+    {"type": "email:receipt", "queue": "mail",    "json": {"id": "order-42"}},
+    {"type": "ledger:post",                        "json": {"id": "order-42"}}
+  ]`,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			tasks, err := readTxTasks(file)
+			if err != nil {
+				return err
+			}
+
+			encryptor, err := buildEncryptor(encryptionKey)
+			if err != nil {
+				return err
+			}
+
+			client, err := conn.client(conveyor.WithEncryption(encryptor))
+			if err != nil {
+				return err
+			}
+
+			infos, err := client.EnqueueTx(context.Background(), tasks)
+			if err != nil {
+				return err
+			}
+
+			for _, info := range infos {
+				fmt.Fprintf(cmd.OutOrStdout(), "enqueued %s (queue=%s, state=%s)\n", info.ID, info.Queue, info.State)
+			}
+
+			return nil
+		},
+	}
+
+	flags := command.Flags()
+	flags.StringVar(&file, "file", "", "path to a JSON array of task specs (required)")
+	flags.StringVar(&encryptionKey, "encryption-key", "", `encrypt every payload with AES-256-GCM, as "<id>:<base64-secret>" (default $CONVEYOR_ENCRYPTION_KEY)`)
+	_ = command.MarkFlagRequired("file")
+
+	return command
+}
+
+// readTxTasks reads and validates the enqueue-tx input file into TxTask values,
+// mapping each spec through the same task and option builders the single-task
+// enqueue command uses.
+func readTxTasks(file string) ([]conveyor.TxTask, error) {
+	if file == "" {
+		return nil, errors.New("enqueue-tx: --file is required")
+	}
+
+	raw, err := os.ReadFile(file)
+	if err != nil {
+		return nil, fmt.Errorf("enqueue-tx: reading %s: %w", file, err)
+	}
+
+	var specs []txTaskSpec
+	if err := json.Unmarshal(raw, &specs); err != nil {
+		return nil, fmt.Errorf("enqueue-tx: %s is not a JSON array of task specs: %w", file, err)
+	}
+
+	if len(specs) == 0 {
+		return nil, errors.New("enqueue-tx: the task list is empty")
+	}
+
+	tasks := make([]conveyor.TxTask, len(specs))
+
+	for index, spec := range specs {
+		if spec.Type == "" {
+			return nil, fmt.Errorf("enqueue-tx: task %d: a type is required", index)
+		}
+
+		task, err := buildTask(spec.Type, string(spec.JSON))
+		if err != nil {
+			return nil, fmt.Errorf("enqueue-tx: task %d: %w", index, err)
+		}
+
+		processIn, err := parseSpecDuration(index, "in", spec.In)
+		if err != nil {
+			return nil, err
+		}
+
+		expiresIn, err := parseSpecDuration(index, "expires_in", spec.ExpiresIn)
+		if err != nil {
+			return nil, err
+		}
+
+		retention, err := parseSpecDuration(index, "retention", spec.Retention)
+		if err != nil {
+			return nil, err
+		}
+
+		unique, err := parseSpecDuration(index, "unique", spec.Unique)
+		if err != nil {
+			return nil, err
+		}
+
+		options, err := buildEnqueueOptions(spec.Queue, spec.ID, spec.At, spec.ExpiresAt, spec.UniqueKey,
+			processIn, expiresIn, retention, unique, spec.MaxRetry, spec.Priority)
+		if err != nil {
+			return nil, fmt.Errorf("enqueue-tx: task %d: %w", index, err)
+		}
+
+		tasks[index] = conveyor.Tx(task, options...)
+	}
+
+	return tasks, nil
+}
+
+// parseSpecDuration parses an optional duration field of one task spec, reporting
+// the offending task and field on a malformed value. An empty value is zero.
+func parseSpecDuration(index int, field, value string) (time.Duration, error) {
+	if value == "" {
+		return 0, nil
+	}
+
+	parsed, err := time.ParseDuration(value)
+	if err != nil {
+		return 0, fmt.Errorf("enqueue-tx: task %d: parsing %q: %w", index, field, err)
+	}
+
+	return parsed, nil
 }
 
 // buildRetryPolicy turns the retry flags into an enqueue option, or nil when no

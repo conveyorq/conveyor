@@ -136,6 +136,57 @@ func (s *TaskService) EnqueueBatch(ctx context.Context, request *connect.Request
 	return connect.NewResponse(&conveyorv1.EnqueueBatchResponse{Results: results}), nil
 }
 
+// EnqueueTx commits every task atomically: either all are enqueued or none are.
+// A validation failure on any task rejects the whole request before the broker
+// is touched; a broker failure rolls the whole set back. On success it returns
+// the committed tasks in request order.
+func (s *TaskService) EnqueueTx(ctx context.Context, request *connect.Request[conveyorv1.EnqueueTxRequest]) (*connect.Response[conveyorv1.EnqueueTxResponse], error) {
+	items := request.Msg.GetTasks()
+	if len(items) == 0 {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("batch must contain at least one task"))
+	}
+
+	if len(items) > maxBatchTasks {
+		return nil, connect.NewError(connect.CodeInvalidArgument,
+			fmt.Errorf("batch holds %d tasks, the maximum is %d; split it into smaller batches", len(items), maxBatchTasks))
+	}
+
+	ctx, span := otel.Tracer(tracerName).Start(ctx, "conveyor.enqueue_tx", trace.WithSpanKind(trace.SpanKindProducer))
+	defer span.End()
+
+	envelopes := make([]*conveyorv1.TaskEnvelope, len(items))
+
+	for index, item := range items {
+		envelope, err := s.envelopeFromRequest(item)
+		if err != nil {
+			span.RecordError(err)
+
+			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("task %d: %w", index, err))
+		}
+
+		// Stamp the enqueue trace into each envelope before it is persisted so
+		// each worker's execution span links back to this span.
+		injectTaskTrace(ctx, envelope)
+		envelopes[index] = envelope
+	}
+
+	if err := s.engine.EnqueueBatch(ctx, envelopes); err != nil {
+		span.RecordError(err)
+
+		return nil, enqueueError(err)
+	}
+
+	span.SetAttributes(attribute.Int("conveyor.task.count", len(envelopes)))
+
+	infos := make([]*conveyorv1.TaskInfo, len(envelopes))
+
+	for index, envelope := range envelopes {
+		infos[index] = taskInfo(envelope, s.initialState(envelope))
+	}
+
+	return connect.NewResponse(&conveyorv1.EnqueueTxResponse{Tasks: infos}), nil
+}
+
 // GetTask returns the current state of one task.
 func (s *TaskService) GetTask(ctx context.Context, request *connect.Request[conveyorv1.GetTaskRequest]) (*connect.Response[conveyorv1.GetTaskResponse], error) {
 	if request.Msg.GetId() == "" {

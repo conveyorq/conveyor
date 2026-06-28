@@ -8,6 +8,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -114,6 +116,68 @@ func TestEnqueueAndGetAgainstEmbeddedServer(t *testing.T) {
 	require.Contains(t, getOut.String(), "queue:       critical")
 	require.Contains(t, getOut.String(), "type:        email:welcome")
 	require.Contains(t, getOut.String(), "priority:    7")
+}
+
+func TestReadTxTasksValidation(t *testing.T) {
+	_, err := readTxTasks("")
+	require.ErrorContains(t, err, "--file is required")
+
+	dir := t.TempDir()
+
+	badJSON := filepath.Join(dir, "bad.json")
+	require.NoError(t, os.WriteFile(badJSON, []byte("{nope"), 0o600))
+	_, err = readTxTasks(badJSON)
+	require.ErrorContains(t, err, "JSON array")
+
+	empty := filepath.Join(dir, "empty.json")
+	require.NoError(t, os.WriteFile(empty, []byte("[]"), 0o600))
+	_, err = readTxTasks(empty)
+	require.ErrorContains(t, err, "task list is empty")
+
+	noType := filepath.Join(dir, "notype.json")
+	require.NoError(t, os.WriteFile(noType, []byte(`[{"json":{"a":1}}]`), 0o600))
+	_, err = readTxTasks(noType)
+	require.ErrorContains(t, err, "task 0: a type is required")
+
+	badDur := filepath.Join(dir, "baddur.json")
+	require.NoError(t, os.WriteFile(badDur, []byte(`[{"type":"t","in":"soon"}]`), 0o600))
+	_, err = readTxTasks(badDur)
+	require.ErrorContains(t, err, `task 0: parsing "in"`)
+
+	ok := filepath.Join(dir, "ok.json")
+	require.NoError(t, os.WriteFile(ok, []byte(`[{"type":"a","queue":"q1"},{"type":"b","priority":7}]`), 0o600))
+	tasks, err := readTxTasks(ok)
+	require.NoError(t, err)
+	require.Len(t, tasks, 2)
+}
+
+func TestEnqueueTxAgainstEmbeddedServer(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
+	defer cancel()
+
+	system, err := embedded.Start(ctx, embedded.Config{})
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		stopCtx, stopCancel := context.WithTimeout(context.Background(), testTimeout)
+		defer stopCancel()
+
+		require.NoError(t, system.Stop(stopCtx))
+	})
+
+	file := filepath.Join(t.TempDir(), "tasks.json")
+	require.NoError(t, os.WriteFile(file, []byte(`[
+		{"type": "order:charge", "queue": "billing", "json": {"id": "order-42"}, "priority": 7},
+		{"type": "email:receipt", "queue": "mail", "json": {"id": "order-42"}}
+	]`), 0o600))
+
+	var out bytes.Buffer
+
+	err = run([]string{"--addr", "http://" + system.Addr(), "enqueue-tx", "--file", file}, &out)
+	require.NoError(t, err)
+	require.Equal(t, 2, strings.Count(out.String(), "enqueued "))
+	require.Contains(t, out.String(), "queue=billing")
+	require.Contains(t, out.String(), "queue=mail")
 }
 
 func TestTasksGetUnknownIDFails(t *testing.T) {

@@ -113,6 +113,22 @@ class EnqueueResult(_message.Message):
     def __init__(self, task: _Optional[_Union[TaskInfo, _Mapping]]=..., error: _Optional[str]=...) -> None:
         ...
 
+class EnqueueTxRequest(_message.Message):
+    __slots__ = ('tasks',)
+    TASKS_FIELD_NUMBER: _ClassVar[int]
+    tasks: _containers.RepeatedCompositeFieldContainer[EnqueueRequest]
+
+    def __init__(self, tasks: _Optional[_Iterable[_Union[EnqueueRequest, _Mapping]]]=...) -> None:
+        ...
+
+class EnqueueTxResponse(_message.Message):
+    __slots__ = ('tasks',)
+    TASKS_FIELD_NUMBER: _ClassVar[int]
+    tasks: _containers.RepeatedCompositeFieldContainer[TaskInfo]
+
+    def __init__(self, tasks: _Optional[_Iterable[_Union[TaskInfo, _Mapping]]]=...) -> None:
+        ...
+
 class GetTaskRequest(_message.Message):
     __slots__ = ('id',)
     ID_FIELD_NUMBER: _ClassVar[int]
@@ -516,6 +532,74 @@ class DeleteQueueConcurrencyLimitRequest(_message.Message):
         ...
 
 class DeleteQueueConcurrencyLimitResponse(_message.Message):
+    __slots__ = ()
+
+    def __init__(self) -> None:
+        ...
+
+class GroupConfigInfo(_message.Message):
+    __slots__ = ('queue', 'group', 'max_size', 'max_delay', 'grace_period')
+    QUEUE_FIELD_NUMBER: _ClassVar[int]
+    GROUP_FIELD_NUMBER: _ClassVar[int]
+    MAX_SIZE_FIELD_NUMBER: _ClassVar[int]
+    MAX_DELAY_FIELD_NUMBER: _ClassVar[int]
+    GRACE_PERIOD_FIELD_NUMBER: _ClassVar[int]
+    queue: str
+    group: str
+    max_size: int
+    max_delay: _duration_pb2.Duration
+    grace_period: _duration_pb2.Duration
+
+    def __init__(self, queue: _Optional[str]=..., group: _Optional[str]=..., max_size: _Optional[int]=..., max_delay: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., grace_period: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=...) -> None:
+        ...
+
+class ListGroupConfigsRequest(_message.Message):
+    __slots__ = ()
+
+    def __init__(self) -> None:
+        ...
+
+class ListGroupConfigsResponse(_message.Message):
+    __slots__ = ('configs',)
+    CONFIGS_FIELD_NUMBER: _ClassVar[int]
+    configs: _containers.RepeatedCompositeFieldContainer[GroupConfigInfo]
+
+    def __init__(self, configs: _Optional[_Iterable[_Union[GroupConfigInfo, _Mapping]]]=...) -> None:
+        ...
+
+class SetGroupConfigRequest(_message.Message):
+    __slots__ = ('queue', 'group', 'max_size', 'max_delay', 'grace_period')
+    QUEUE_FIELD_NUMBER: _ClassVar[int]
+    GROUP_FIELD_NUMBER: _ClassVar[int]
+    MAX_SIZE_FIELD_NUMBER: _ClassVar[int]
+    MAX_DELAY_FIELD_NUMBER: _ClassVar[int]
+    GRACE_PERIOD_FIELD_NUMBER: _ClassVar[int]
+    queue: str
+    group: str
+    max_size: int
+    max_delay: _duration_pb2.Duration
+    grace_period: _duration_pb2.Duration
+
+    def __init__(self, queue: _Optional[str]=..., group: _Optional[str]=..., max_size: _Optional[int]=..., max_delay: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., grace_period: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=...) -> None:
+        ...
+
+class SetGroupConfigResponse(_message.Message):
+    __slots__ = ()
+
+    def __init__(self) -> None:
+        ...
+
+class DeleteGroupConfigRequest(_message.Message):
+    __slots__ = ('queue', 'group')
+    QUEUE_FIELD_NUMBER: _ClassVar[int]
+    GROUP_FIELD_NUMBER: _ClassVar[int]
+    queue: str
+    group: str
+
+    def __init__(self, queue: _Optional[str]=..., group: _Optional[str]=...) -> None:
+        ...
+
+class DeleteGroupConfigResponse(_message.Message):
     __slots__ = ()
 
     def __init__(self) -> None:

@@ -540,9 +540,115 @@ func New(ctx context.Context, dsn string, timeSource clock.Clock) (*Broker, erro
 	return &Broker{pool: pool, clock: timeSource}, nil
 }
 
+// preparedEnqueue holds a task's derived insert values, computed before any
+// statement runs so a batch can validate every member up front. buildArguments
+// produces the insert arguments for a resolved state, deferring the state to the
+// dependency resolution that happens inside the transaction.
+type preparedEnqueue struct {
+	// task is the envelope being committed.
+	task *conveyorv1.TaskEnvelope
+	// state is the initial state before dependency resolution.
+	state int16
+	// uniqueKey is the task's unique key, or nil when it carries none.
+	uniqueKey *string
+	// edges are the task's dependency edges.
+	edges []*conveyorv1.TaskDependency
+	// buildArguments builds the insert-statement arguments for a resolved state.
+	buildArguments func(state int16) []any
+	// now is the enqueue instant shared across the batch.
+	now time.Time
+}
+
 // Enqueue durably commits a task; see broker.Broker.
 func (b *Broker) Enqueue(ctx context.Context, task *conveyorv1.TaskEnvelope) (err error) {
 	now := b.clock.Now()
+
+	prepared, err := b.prepareEnqueue(task, now)
+	if err != nil {
+		return err
+	}
+
+	if prepared.uniqueKey == nil && len(prepared.edges) == 0 {
+		// Common path: one round trip. The lapsed-claim release is only
+		// needed when a unique key may collide with an expired claim.
+		tag, execErr := b.pool.Exec(ctx, insertTaskQuery, prepared.buildArguments(prepared.state)...)
+		if execErr != nil {
+			return fmt.Errorf("postgres: insert task: %w", execErr)
+		}
+
+		// A conflict on the id is an idempotent retry (DO NOTHING): no event.
+		if tag.RowsAffected() > 0 {
+			b.emit(conveyorv1.TaskState_TASK_STATE_UNSPECIFIED, conveyorv1.TaskState(prepared.state),
+				task.GetId(), task.GetQueue(), task.GetType(), task.GetLastError(), task.GetRetried(), now)
+		}
+
+		return nil
+	}
+
+	return b.enqueueWithEdges(ctx, prepared)
+}
+
+// EnqueueBatch atomically commits every task or none; see broker.Broker. It
+// prepares every task first, then inserts them all inside one transaction so a
+// failure on any task (a duplicate unique key, a collision between two tasks in
+// the same batch, or an invalid task) rolls back the whole set.
+func (b *Broker) EnqueueBatch(ctx context.Context, tasks []*conveyorv1.TaskEnvelope) (err error) {
+	if len(tasks) == 0 {
+		return nil
+	}
+
+	now := b.clock.Now()
+	prepared := make([]*preparedEnqueue, len(tasks))
+
+	for index, task := range tasks {
+		entry, prepareErr := b.prepareEnqueue(task, now)
+		if prepareErr != nil {
+			return &broker.BatchError{Index: index, TaskID: task.GetId(), Err: prepareErr}
+		}
+
+		prepared[index] = entry
+	}
+
+	transaction, err := b.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("postgres: begin enqueue batch: %w", err)
+	}
+
+	defer func() {
+		err = rollback(ctx, transaction, err)
+	}()
+
+	committedEvents := make([]*conveyorv1.TaskEvent, 0, len(prepared))
+
+	for index, entry := range prepared {
+		event, oneErr := b.enqueueOneTx(ctx, transaction, entry)
+		if oneErr != nil {
+			return &broker.BatchError{Index: index, TaskID: entry.task.GetId(), Err: oneErr}
+		}
+
+		if event != nil {
+			committedEvents = append(committedEvents, event)
+		}
+	}
+
+	if err = transaction.Commit(ctx); err != nil {
+		if isUniqueViolation(err) {
+			return broker.ErrDuplicateTask
+		}
+
+		return fmt.Errorf("postgres: commit enqueue batch: %w", err)
+	}
+
+	for _, event := range committedEvents {
+		b.emitEvent(event)
+	}
+
+	return nil
+}
+
+// prepareEnqueue derives a task's insert values without running any statement,
+// returning ErrGroupedSchedule when a grouped task is also scheduled.
+func (b *Broker) prepareEnqueue(task *conveyorv1.TaskEnvelope, now time.Time) (*preparedEnqueue, error) {
 	options := task.GetOptions()
 
 	processAt := now
@@ -552,7 +658,7 @@ func (b *Broker) Enqueue(ctx context.Context, task *conveyorv1.TaskEnvelope) (er
 
 	group := options.GetGroup()
 	if group != "" && processAt.After(now) {
-		return broker.ErrGroupedSchedule
+		return nil, broker.ErrGroupedSchedule
 	}
 
 	state := statePending
@@ -582,7 +688,7 @@ func (b *Broker) Enqueue(ctx context.Context, task *conveyorv1.TaskEnvelope) (er
 
 	payload, err := proto.Marshal(task)
 	if err != nil {
-		return fmt.Errorf("postgres: marshal envelope: %w", err)
+		return nil, fmt.Errorf("postgres: marshal envelope: %w", err)
 	}
 
 	buildArguments := func(state int16) []any {
@@ -595,34 +701,21 @@ func (b *Broker) Enqueue(ctx context.Context, task *conveyorv1.TaskEnvelope) (er
 		}
 	}
 
-	edges := options.GetDependsOn()
-
-	if uniqueKey == nil && len(edges) == 0 {
-		// Common path: one round trip. The lapsed-claim release is only
-		// needed when a unique key may collide with an expired claim.
-		tag, execErr := b.pool.Exec(ctx, insertTaskQuery, buildArguments(state)...)
-		if execErr != nil {
-			return fmt.Errorf("postgres: insert task: %w", execErr)
-		}
-
-		// A conflict on the id is an idempotent retry (DO NOTHING): no event.
-		if tag.RowsAffected() > 0 {
-			b.emit(conveyorv1.TaskState_TASK_STATE_UNSPECIFIED, conveyorv1.TaskState(state),
-				task.GetId(), task.GetQueue(), task.GetType(), task.GetLastError(), task.GetRetried(), now)
-		}
-
-		return nil
-	}
-
-	return b.enqueueWithEdges(ctx, task, state, buildArguments, uniqueKey, edges, now)
+	return &preparedEnqueue{
+		task:           task,
+		state:          state,
+		uniqueKey:      uniqueKey,
+		edges:          options.GetDependsOn(),
+		buildArguments: buildArguments,
+		now:            now,
+	}, nil
 }
 
 // enqueueWithEdges commits a task that carries a unique key and/or dependency
-// edges inside one transaction: it releases any lapsed unique claim, resolves
-// the initial dependency state, inserts the task in its resulting state, records
-// its edges, and emits the lifecycle event after commit. It backs Enqueue's
-// uncommon path, keeping the dispatch-common path a single round trip.
-func (b *Broker) enqueueWithEdges(ctx context.Context, task *conveyorv1.TaskEnvelope, state int16, buildArguments func(int16) []any, uniqueKey *string, edges []*conveyorv1.TaskDependency, now time.Time) (err error) {
+// edges inside one transaction and emits its lifecycle event after commit. It
+// backs Enqueue's uncommon path, keeping the dispatch-common path a single round
+// trip.
+func (b *Broker) enqueueWithEdges(ctx context.Context, prepared *preparedEnqueue) (err error) {
 	transaction, err := b.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("postgres: begin enqueue: %w", err)
@@ -632,54 +725,9 @@ func (b *Broker) enqueueWithEdges(ctx context.Context, task *conveyorv1.TaskEnve
 		err = rollback(ctx, transaction, err)
 	}()
 
-	if uniqueKey != nil {
-		if _, err = transaction.Exec(ctx, releaseLapsedUniqueQuery, *uniqueKey, now); err != nil {
-			return fmt.Errorf("postgres: release lapsed unique claim: %w", err)
-		}
-	}
-
-	deps, cancel, err := b.resolveInitialDeps(ctx, transaction, task.GetId(), edges)
+	event, err := b.enqueueOneTx(ctx, transaction, prepared)
 	if err != nil {
 		return err
-	}
-
-	switch {
-	case cancel:
-		state = stateCanceled
-	case len(deps) > 0:
-		state = stateBlocked
-	}
-
-	tag, err := transaction.Exec(ctx, insertTaskQuery, buildArguments(state)...)
-	if err != nil {
-		if isUniqueViolation(err) {
-			return broker.ErrDuplicateTask
-		}
-
-		return fmt.Errorf("postgres: insert task: %w", err)
-	}
-
-	// A conflict on the id means the task is already committed: this is an
-	// idempotent client retry, so leave its existing dependency edges untouched
-	// rather than re-inserting edges a prior resolution may already have drained.
-	if tag.RowsAffected() == 0 {
-		if err = transaction.Commit(ctx); err != nil {
-			return fmt.Errorf("postgres: commit enqueue: %w", err)
-		}
-
-		return nil
-	}
-
-	if state == stateCanceled {
-		if _, err = transaction.Exec(ctx, stampCanceledQuery, task.GetId(), now); err != nil {
-			return fmt.Errorf("postgres: stamp canceled task: %w", err)
-		}
-	}
-
-	for depID, policy := range deps {
-		if _, err = transaction.Exec(ctx, insertEdgeQuery, task.GetId(), depID, policy); err != nil {
-			return fmt.Errorf("postgres: insert dependency edge: %w", err)
-		}
 	}
 
 	if err = transaction.Commit(ctx); err != nil {
@@ -690,10 +738,76 @@ func (b *Broker) enqueueWithEdges(ctx context.Context, task *conveyorv1.TaskEnve
 		return fmt.Errorf("postgres: commit enqueue: %w", err)
 	}
 
-	b.emit(conveyorv1.TaskState_TASK_STATE_UNSPECIFIED, conveyorv1.TaskState(state),
-		task.GetId(), task.GetQueue(), task.GetType(), task.GetLastError(), task.GetRetried(), now)
+	b.emitEvent(event)
 
 	return nil
+}
+
+// enqueueOneTx releases any lapsed unique claim, resolves the initial dependency
+// state, inserts the task in its resulting state, and records its edges, all on
+// the given transaction. It returns the lifecycle event for the caller to emit
+// after commit, or nil when the insert was an idempotent no-op (the id already
+// existed) or when no event sink is wired. It never commits.
+func (b *Broker) enqueueOneTx(ctx context.Context, transaction pgx.Tx, prepared *preparedEnqueue) (*conveyorv1.TaskEvent, error) {
+	task := prepared.task
+	now := prepared.now
+	state := prepared.state
+
+	if prepared.uniqueKey != nil {
+		if _, err := transaction.Exec(ctx, releaseLapsedUniqueQuery, *prepared.uniqueKey, now); err != nil {
+			return nil, fmt.Errorf("postgres: release lapsed unique claim: %w", err)
+		}
+	}
+
+	deps, cancel, err := b.resolveInitialDeps(ctx, transaction, task.GetId(), prepared.edges)
+	if err != nil {
+		return nil, err
+	}
+
+	switch {
+	case cancel:
+		state = stateCanceled
+	case len(deps) > 0:
+		state = stateBlocked
+	}
+
+	tag, err := transaction.Exec(ctx, insertTaskQuery, prepared.buildArguments(state)...)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return nil, broker.ErrDuplicateTask
+		}
+
+		return nil, fmt.Errorf("postgres: insert task: %w", err)
+	}
+
+	// A conflict on the id means the task is already committed: this is an
+	// idempotent client retry, so leave its existing dependency edges untouched
+	// rather than re-inserting edges a prior resolution may already have drained.
+	if tag.RowsAffected() == 0 {
+		return nil, nil
+	}
+
+	if state == stateCanceled {
+		if _, err = transaction.Exec(ctx, stampCanceledQuery, task.GetId(), now); err != nil {
+			return nil, fmt.Errorf("postgres: stamp canceled task: %w", err)
+		}
+	}
+
+	for depID, policy := range deps {
+		if _, err = transaction.Exec(ctx, insertEdgeQuery, task.GetId(), depID, policy); err != nil {
+			return nil, fmt.Errorf("postgres: insert dependency edge: %w", err)
+		}
+	}
+
+	// Build the event inside the transaction but only when a sink is wired, so a
+	// broker with events disabled does no per-task allocation. The caller emits
+	// it after the transaction commits.
+	if b.eventSink() == nil {
+		return nil, nil
+	}
+
+	return events.Derive(conveyorv1.TaskState_TASK_STATE_UNSPECIFIED, conveyorv1.TaskState(state),
+		task.GetId(), task.GetQueue(), task.GetType(), task.GetLastError(), task.GetRetried(), now), nil
 }
 
 // Lease atomically claims up to limit due tasks; see broker.Broker.

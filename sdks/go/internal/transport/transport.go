@@ -54,6 +54,17 @@ func (c *Client) Enqueue(ctx context.Context, request *conveyorv1.EnqueueRequest
 	return response.Msg.GetTask(), nil
 }
 
+// EnqueueTx commits every task atomically and returns the committed tasks in
+// request order.
+func (c *Client) EnqueueTx(ctx context.Context, requests []*conveyorv1.EnqueueRequest) ([]*conveyorv1.TaskInfo, error) {
+	response, err := c.tasks.EnqueueTx(ctx, connect.NewRequest(&conveyorv1.EnqueueTxRequest{Tasks: requests}))
+	if err != nil {
+		return nil, err
+	}
+
+	return response.Msg.GetTasks(), nil
+}
+
 // GetTask fetches the current server-side view of one task.
 func (c *Client) GetTask(ctx context.Context, id string) (*conveyorv1.TaskInfo, error) {
 	response, err := c.tasks.GetTask(ctx, connect.NewRequest(&conveyorv1.GetTaskRequest{Id: id}))

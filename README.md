@@ -52,6 +52,10 @@ and priorities, backed by Postgres or an in-memory broker, with **no Redis and n
 - **Weighted queues**: a worker declares a relative weight per queue, and the
   server hands a queue's tasks to the workers serving it in proportion to those
   weights, so a higher-weighted worker draws proportionally more of the work.
+- **Atomic multi-task enqueue**: commit many tasks in one `EnqueueTx` call that
+  is all-or-nothing — every task lands or none do — so a set of related tasks is
+  never left with an orphaned or missing member. The same guarantee holds on any
+  broker. Available in the Go, TypeScript, and Python SDKs.
 - **Unique tasks**, **dead-letter/archive**, **retention**, per-queue
   **pause/resume**, and a per-task-type **circuit breaker**.
 - **Expiring tasks**: a pre-dispatch TTL (`ExpiresIn`/`ExpiresAt`): a task not
@@ -113,6 +117,7 @@ process.
 | Dispatch                      |                                                                        Push (streaming)                                                                        |             Poll             |      Poll plus `LISTEN`/`NOTIFY`       |
 | HA / failover                 | Built-in clustering; a lost node's work re-activates elsewhere. Kubernetes discovery out of the box, or a pluggable provider (static, DNS, NATS, Consul, etcd) | Via Redis (Sentinel/Cluster) | Postgres advisory-lock leader election |
 | Transactional enqueue         |                                                                               ✗                                                                                |              ✗               |                  ✓ ¹                   |
+| Atomic multi-task enqueue     |                                                                          ✓ (`EnqueueTx`)                                                                       |              ✗               |             ✓ (`InsertMany`)           |
 | SDK languages                 |                                                                     Go, TypeScript, Python                                                                     |              Go              |                   Go                   |
 | Weighted queues               |                                                                               ✓                                                                                |              ✓               |                   ✗                    |
 | Per-task priority             |                                                                           ✓ (1 to 9)                                                                           |      ✗ (queue weights)       |                   ✓                    |
@@ -477,6 +482,8 @@ a different-origin UI, and `api.grafana_url` for the metrics link. See the
   runtime, queue grains, broker, dispatch, and clustering, for contributors.
 - [Operations guide](docs/operations.md): deployment modes, configuration,
   scaling, broker sizing, security, observability, and upgrades.
+- [CLI reference](docs/cli.md): every `conveyor` command, its flags, and the
+  global address/token/encryption settings, for producing and operating.
 - [High availability](docs/high-availability.md): a complete clustered deployment
   that ties the server, Postgres, and worker tiers together.
 - [Task dependencies](docs/workflows.md): order work with chains and

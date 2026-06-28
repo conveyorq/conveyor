@@ -7,7 +7,8 @@
 from __future__ import annotations
 
 import hashlib
-from typing import Optional, Sequence
+from dataclasses import dataclass, field
+from typing import Mapping, Optional, Sequence
 
 import grpc
 
@@ -53,6 +54,19 @@ _RETRY_STRATEGIES = {
     RetryStrategy.LINEAR: task_pb2.RETRY_STRATEGY_LINEAR,
     RetryStrategy.FIXED: task_pb2.RETRY_STRATEGY_FIXED,
 }
+
+
+@dataclass
+class TxTask:
+    """Pairs a task with its per-task enqueue options for :meth:`Client.enqueue_tx`.
+
+    ``options`` accepts the same keyword fields as :meth:`Client.enqueue`, e.g.
+    ``TxTask(new_task("a", json(1)), {"queue": "billing"})``. A single atomic
+    enqueue may therefore span queues, priorities, and schedules.
+    """
+
+    task: "Task"
+    options: Mapping[str, object] = field(default_factory=dict)
 
 
 class Client:
@@ -117,19 +131,7 @@ class Client:
         is still incomplete.
         """
         options = EnqueueOptions(**kwargs)  # type: ignore[arg-type]
-
-        if options.process_at is not None and options.process_in is not None:
-            raise ConveyorError("conveyor: process_at and process_in are mutually exclusive")
-
-        if options.expires_at is not None and options.expires_in is not None:
-            raise ConveyorError("conveyor: expires_at and expires_in are mutually exclusive")
-
-        # Derive the uniqueness key over the plaintext payload, before
-        # encryption, so identical work still collides under uniqueness while
-        # the server only ever sees ciphertext.
-        unique_key = options.unique_key or ""
-        if unique_key == "" and options.unique is not None:
-            unique_key = _derived_unique_key(task.type, task.payload)
+        unique_key = _resolve_unique_key(task, options)
 
         enqueue: EnqueueFn = lambda decorated, settings: self._commit(decorated, settings, unique_key)
 
@@ -137,6 +139,39 @@ class Client:
             enqueue = middleware(enqueue)
 
         return await enqueue(task, options)
+
+    async def enqueue_tx(self, tasks: "Sequence[TxTask]") -> "list[TaskInfo]":
+        """Commit every task atomically: either all are enqueued or none are.
+
+        If any task fails (a duplicate unique key, a unique-key collision between
+        two tasks in the call, or an invalid task), no task is committed and the
+        offending task's error is raised. On success it returns the committed
+        tasks in the order given. Re-committing an existing task id is a no-op
+        success that does not abort the call.
+
+        Unlike :meth:`enqueue`, it does not run the enqueue middleware: the
+        middleware decorates a single-task commit, which the all-or-nothing path
+        does not model.
+        """
+        if not tasks:
+            raise ConveyorError("conveyor: at least one task is required")
+
+        stub = self._connect()
+        requests = []
+
+        for item in tasks:
+            options = EnqueueOptions(**item.options)  # type: ignore[arg-type]
+            unique_key = _resolve_unique_key(item.task, options)
+            requests.append(self._build_request(item.task, options, unique_key))
+
+        request = service_pb2.EnqueueTxRequest(tasks=requests)
+
+        try:
+            response = await stub.EnqueueTx(request, metadata=self._metadata)
+        except grpc.aio.AioRpcError as error:
+            raise _map_client_error(error) from error
+
+        return [_task_info_from_proto(task) for task in response.tasks]
 
     async def get_task(self, task_id: str) -> TaskInfo:
         """Return the current state of one task, or raise if the id is unknown."""
@@ -155,6 +190,22 @@ class Client:
 
     async def _commit(self, task: "Task", options: EnqueueOptions, unique_key: str) -> TaskInfo:
         stub = self._connect()
+        request = self._build_request(task, options, unique_key)
+
+        try:
+            response = await stub.Enqueue(request, metadata=self._metadata)
+        except grpc.aio.AioRpcError as error:
+            raise _map_client_error(error) from error
+
+        return _task_info_from_proto(response.task)
+
+    def _build_request(
+        self, task: "Task", options: EnqueueOptions, unique_key: str
+    ) -> "service_pb2.EnqueueRequest":
+        """Build the wire request from a task and its resolved options, sealing
+        the payload when encryption is configured. It is the single source of
+        truth shared by :meth:`enqueue` and :meth:`enqueue_tx`.
+        """
         payload = task.payload
         metadata = {**task.metadata, **options.metadata}
 
@@ -215,12 +266,26 @@ class Client:
             if policy.max is not None:
                 request.retry_policy.max.CopyFrom(_time.duration_proto(policy.max))
 
-        try:
-            response = await stub.Enqueue(request, metadata=self._metadata)
-        except grpc.aio.AioRpcError as error:
-            raise _map_client_error(error) from error
+        return request
 
-        return _task_info_from_proto(response.task)
+
+def _resolve_unique_key(task: "Task", options: EnqueueOptions) -> str:
+    """Validate an enqueue's mutually exclusive options and return the effective
+    unique key, derived over the plaintext payload (before any encryption) so
+    identical work still collides under uniqueness while the server only ever
+    sees ciphertext.
+    """
+    if options.process_at is not None and options.process_in is not None:
+        raise ConveyorError("conveyor: process_at and process_in are mutually exclusive")
+
+    if options.expires_at is not None and options.expires_in is not None:
+        raise ConveyorError("conveyor: expires_at and expires_in are mutually exclusive")
+
+    unique_key = options.unique_key or ""
+    if unique_key == "" and options.unique is not None:
+        unique_key = _derived_unique_key(task.type, task.payload)
+
+    return unique_key
 
 
 def _derived_unique_key(task_type: str, payload: bytes) -> str:

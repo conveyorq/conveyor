@@ -83,6 +83,23 @@ client.Enqueue(ctx, conveyor.NewTask("email:welcome", conveyor.JSON(WelcomeEmail
     conveyor.ProcessAt(time.Now().Add(5*time.Minute)))
 ```
 
+### Atomic multi-task enqueue
+
+River's `InsertMany` commits a set of jobs atomically. Conveyor has the direct
+equivalent in `EnqueueTx`: it commits every task in the call all-or-nothing, so a
+set of related tasks is never left with an orphaned or missing member. Any
+failure (a duplicate unique key, a collision between two tasks in the same call,
+or an invalid task) rolls the whole set back. This is separate from `InsertTx`
+(see the top of this page): `EnqueueTx` is atomic *across the tasks in the call*,
+not atomic *with your database transaction*.
+
+```go
+client.EnqueueTx(ctx, []conveyor.TxTask{
+    conveyor.Tx(conveyor.NewTask("order:charge", conveyor.JSON(charge)), conveyor.Queue("billing")),
+    conveyor.Tx(conveyor.NewTask("email:receipt", conveyor.JSON(receipt)), conveyor.Queue("mail")),
+})
+```
+
 ### Option mapping
 
 | River `InsertOpts`  | Conveyor                                         | Notes                                                                                                        |
@@ -135,8 +152,9 @@ several things people assume differ actually don't.
   River is a Go library.
 
 **Roughly equal (don't switch for these):** retries/backoff, scheduling, unique
-jobs, priorities, multiple queues, and dead-lettering (River's `discarded` vs
-Conveyor's archived) are all present in both OSS.
+jobs, priorities, multiple queues, atomic multi-task enqueue (River's
+`InsertMany` vs Conveyor's `EnqueueTx`), and dead-lettering (River's `discarded`
+vs Conveyor's archived) are all present in both OSS.
 
 **Give up:**
 

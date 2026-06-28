@@ -283,6 +283,41 @@ func (e *Engine) Enqueue(ctx context.Context, task *conveyorv1.TaskEnvelope) err
 	return nil
 }
 
+// EnqueueBatch atomically commits every task or none, then wakes each distinct
+// affected queue grain. Tasks are assigned a fresh ULID when they carry none.
+// On failure no task is committed and the broker's *broker.BatchError is
+// returned unchanged. The wake-ups are best-effort hints recovered by the
+// reaper sweep if lost.
+func (e *Engine) EnqueueBatch(ctx context.Context, tasks []*conveyorv1.TaskEnvelope) error {
+	if len(tasks) == 0 {
+		return nil
+	}
+
+	for _, task := range tasks {
+		if task.GetId() == "" {
+			task.Id = e.runtime.NewID()
+		}
+	}
+
+	if err := e.runtime.Broker().EnqueueBatch(ctx, tasks); err != nil {
+		return err
+	}
+
+	e.runtime.Counters().Enqueued.Add(int64(len(tasks)))
+
+	queues := make(map[string]struct{}, len(tasks))
+
+	for _, task := range tasks {
+		queues[task.GetQueue()] = struct{}{}
+	}
+
+	for queue := range queues {
+		e.wake(queue)
+	}
+
+	return nil
+}
+
 // wake schedules a coalesced, asynchronous wake-up for a queue's grain. It
 // never blocks the caller: GoAkt's TellGrain waits for the grain to process
 // the hint, so waking per enqueue would serialize a burst on the grain's
