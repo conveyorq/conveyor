@@ -178,21 +178,105 @@ func (b *Broker) removeDependent(dependencyID, dependentID string) {
 	}
 }
 
+// stagedTask is a validated, ready-to-insert task held before it is applied to
+// the store, so a batch can validate every member before mutating any state.
+type stagedTask struct {
+	// id is the task id.
+	id string
+	// queue is the task's queue, used when emitting its lifecycle event.
+	queue string
+	// taskType is the task's type, used when emitting its lifecycle event.
+	taskType string
+	// state is the initial lifecycle state the task lands in.
+	state conveyorv1.TaskState
+	// row is the constructed store row.
+	row *taskRow
+}
+
 // Enqueue durably commits a task; see broker.Broker.
 func (b *Broker) Enqueue(_ context.Context, task *conveyorv1.TaskEnvelope) error {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 
-	if _, exists := b.tasks[task.GetId()]; exists {
+	now := b.clock.Now()
+
+	staged, skip, err := b.stageEnqueue(task, now, nil, nil)
+	if err != nil {
+		return err
+	}
+
+	if skip {
 		return nil
 	}
 
+	b.applyStaged(staged, now)
+
+	return nil
+}
+
+// EnqueueBatch atomically commits every task or none; see broker.Broker.
+func (b *Broker) EnqueueBatch(_ context.Context, tasks []*conveyorv1.TaskEnvelope) error {
+	if len(tasks) == 0 {
+		return nil
+	}
+
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
 	now := b.clock.Now()
+
+	// batchIDs and batchKeys track ids and unique keys already staged in this
+	// batch so an intra-batch duplicate or unique-key collision is caught before
+	// any task is applied.
+	batchIDs := make(map[string]bool, len(tasks))
+	batchKeys := make(map[string]bool)
+	staged := make([]*stagedTask, 0, len(tasks))
+
+	for index, task := range tasks {
+		entry, skip, err := b.stageEnqueue(task, now, batchIDs, batchKeys)
+		if err != nil {
+			return &broker.BatchError{Index: index, TaskID: task.GetId(), Err: err}
+		}
+
+		if skip {
+			continue
+		}
+
+		batchIDs[entry.id] = true
+		if entry.row.uniqueKey != "" {
+			batchKeys[entry.row.uniqueKey] = true
+		}
+
+		staged = append(staged, entry)
+	}
+
+	for _, entry := range staged {
+		b.applyStaged(entry, now)
+	}
+
+	return nil
+}
+
+// stageEnqueue validates one task and builds its store row without mutating any
+// state. It reports skip=true when the id is already committed (or already
+// staged in this batch), so re-committing an id is a no-op. batchIDs and
+// batchKeys, when non-nil, carry the ids and unique keys staged earlier in the
+// same batch. Callers must hold the mutex.
+func (b *Broker) stageEnqueue(task *conveyorv1.TaskEnvelope, now time.Time, batchIDs, batchKeys map[string]bool) (*stagedTask, bool, error) {
+	id := task.GetId()
+	if _, exists := b.tasks[id]; exists {
+		return nil, true, nil
+	}
+
+	if batchIDs[id] {
+		return nil, true, nil
+	}
+
 	options := task.GetOptions()
 	uniqueKey := options.GetUniqueKey()
 
-	if uniqueKey != "" && b.uniqueKeyClaimed(uniqueKey, now) {
-		return broker.ErrDuplicateTask
+	if uniqueKey != "" && (b.uniqueKeyClaimed(uniqueKey, now) || batchKeys[uniqueKey]) {
+		return nil, false, broker.ErrDuplicateTask
 	}
 
 	processAt := now
@@ -202,7 +286,7 @@ func (b *Broker) Enqueue(_ context.Context, task *conveyorv1.TaskEnvelope) error
 
 	group := options.GetGroup()
 	if group != "" && processAt.After(now) {
-		return broker.ErrGroupedSchedule
+		return nil, false, broker.ErrGroupedSchedule
 	}
 
 	enqueuedAt := now
@@ -219,7 +303,7 @@ func (b *Broker) Enqueue(_ context.Context, task *conveyorv1.TaskEnvelope) error
 		state = conveyorv1.TaskState_TASK_STATE_SCHEDULED
 	}
 
-	deps, cancel := b.resolveInitialDeps(task.GetId(), options.GetDependsOn())
+	deps, cancel := b.resolveInitialDeps(id, options.GetDependsOn())
 
 	switch {
 	case cancel:
@@ -259,16 +343,20 @@ func (b *Broker) Enqueue(_ context.Context, task *conveyorv1.TaskEnvelope) error
 		row.completedAt = now
 	}
 
-	for dependencyID := range deps {
-		b.addDependent(dependencyID, task.GetId())
+	return &stagedTask{id: id, queue: task.GetQueue(), taskType: task.GetType(), state: state, row: row}, false, nil
+}
+
+// applyStaged inserts a staged task into the store, records its dependency
+// edges, and emits its lifecycle event. Callers must hold the mutex.
+func (b *Broker) applyStaged(staged *stagedTask, now time.Time) {
+	for dependencyID := range staged.row.deps {
+		b.addDependent(dependencyID, staged.id)
 	}
 
-	b.tasks[task.GetId()] = row
+	b.tasks[staged.id] = staged.row
 
-	b.emit(conveyorv1.TaskState_TASK_STATE_UNSPECIFIED, state,
-		task.GetId(), task.GetQueue(), task.GetType(), row.lastError, row.retried, now)
-
-	return nil
+	b.emit(conveyorv1.TaskState_TASK_STATE_UNSPECIFIED, staged.state,
+		staged.id, staged.queue, staged.taskType, staged.row.lastError, staged.row.retried, now)
 }
 
 // resolveInitialDeps computes the unsatisfied dependencies of a task being

@@ -18,7 +18,7 @@ code that is not itself async.
 
 from __future__ import annotations
 
-from .client import Client
+from .client import Client, TxTask
 from .codec import ContentType, Payload, binary, decode_json, decode_text, json, text
 from .encryption import (
     AESGCM,
@@ -90,6 +90,7 @@ __all__ = [
     "Task",
     "TaskInfo",
     "TaskState",
+    "TxTask",
     "UnknownKeyIdError",
     "Worker",
     "__version__",

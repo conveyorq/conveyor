@@ -14,6 +14,7 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/conveyorq/conveyor/internal/broker"
 	"github.com/conveyorq/conveyor/internal/clock"
 	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 )
@@ -226,6 +227,60 @@ func TestEnqueueBatch(t *testing.T) {
 	require.Nil(t, results[1].GetTask())
 	require.Contains(t, results[1].GetError(), "task type is required")
 	require.NotNil(t, results[2].GetTask())
+}
+
+func TestEnqueueTx(t *testing.T) {
+	service := newTestTaskService(t)
+	ctx := context.Background()
+
+	_, err := service.EnqueueTx(ctx, connect.NewRequest(&conveyorv1.EnqueueTxRequest{}))
+	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+
+	oversized := &conveyorv1.EnqueueTxRequest{Tasks: make([]*conveyorv1.EnqueueRequest, maxBatchTasks+1)}
+	_, err = service.EnqueueTx(ctx, connect.NewRequest(oversized))
+	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.ErrorContains(t, err, "split it into smaller batches")
+
+	// A validation failure on any task rejects the whole request and commits
+	// nothing.
+	_, err = service.EnqueueTx(ctx, connect.NewRequest(&conveyorv1.EnqueueTxRequest{
+		Tasks: []*conveyorv1.EnqueueRequest{
+			{TaskId: "tx-bad-1", Type: "test:ok"},
+			{TaskId: "tx-bad-2"}, // missing type
+		},
+	}))
+	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.ErrorContains(t, err, "task 1")
+
+	_, _, getErr := service.taskLog.GetTask(ctx, "tx-bad-1")
+	require.ErrorIs(t, getErr, broker.ErrTaskNotFound)
+
+	// All-or-nothing success across queues.
+	response, err := service.EnqueueTx(ctx, connect.NewRequest(&conveyorv1.EnqueueTxRequest{
+		Tasks: []*conveyorv1.EnqueueRequest{
+			{TaskId: "tx-001", Type: "test:a", Queue: "billing"},
+			{TaskId: "tx-002", Type: "test:b", Queue: "mail"},
+		},
+	}))
+	require.NoError(t, err)
+	require.Len(t, response.Msg.GetTasks(), 2)
+	require.Equal(t, "tx-001", response.Msg.GetTasks()[0].GetId())
+	require.Equal(t, "tx-002", response.Msg.GetTasks()[1].GetId())
+
+	_, _, getErr = service.taskLog.GetTask(ctx, "tx-001")
+	require.NoError(t, getErr)
+
+	// A duplicate unique key rolls the whole batch back.
+	_, err = service.EnqueueTx(ctx, connect.NewRequest(&conveyorv1.EnqueueTxRequest{
+		Tasks: []*conveyorv1.EnqueueRequest{
+			{TaskId: "tx-003", Type: "test:c", UniqueKey: "shared", UniqueTtl: durationpb.New(time.Hour)},
+			{TaskId: "tx-004", Type: "test:c", UniqueKey: "shared", UniqueTtl: durationpb.New(time.Hour)},
+		},
+	}))
+	require.Equal(t, connect.CodeAlreadyExists, connect.CodeOf(err))
+
+	_, _, getErr = service.taskLog.GetTask(ctx, "tx-003")
+	require.ErrorIs(t, getErr, broker.ErrTaskNotFound)
 }
 
 func TestGetTask(t *testing.T) {

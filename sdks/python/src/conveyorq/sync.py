@@ -18,7 +18,7 @@ import threading
 from concurrent.futures import Future
 from typing import Awaitable, Mapping, Optional, Sequence, TypeVar
 
-from .client import Client
+from .client import Client, TxTask
 from .encryption import Encryptor
 from .mux import Mux
 from .options import EnqueueMiddleware, TaskInfo
@@ -68,6 +68,10 @@ class SyncClient:
     def enqueue(self, task: Task, **kwargs: object) -> TaskInfo:
         """Commit one task and return its info; see :meth:`Client.enqueue`."""
         return self._submit(self._client.enqueue(task, **kwargs))
+
+    def enqueue_tx(self, tasks: "Sequence[TxTask]") -> "list[TaskInfo]":
+        """Commit every task atomically; see :meth:`Client.enqueue_tx`."""
+        return self._submit(self._client.enqueue_tx(tasks))
 
     def get_task(self, task_id: str) -> TaskInfo:
         """Return the current state of one task; see :meth:`Client.get_task`."""

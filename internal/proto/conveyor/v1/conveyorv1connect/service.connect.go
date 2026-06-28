@@ -42,6 +42,8 @@ const (
 	// TaskServiceEnqueueBatchProcedure is the fully-qualified name of the TaskService's EnqueueBatch
 	// RPC.
 	TaskServiceEnqueueBatchProcedure = "/conveyor.v1.TaskService/EnqueueBatch"
+	// TaskServiceEnqueueTxProcedure is the fully-qualified name of the TaskService's EnqueueTx RPC.
+	TaskServiceEnqueueTxProcedure = "/conveyor.v1.TaskService/EnqueueTx"
 	// TaskServiceGetTaskProcedure is the fully-qualified name of the TaskService's GetTask RPC.
 	TaskServiceGetTaskProcedure = "/conveyor.v1.TaskService/GetTask"
 	// WorkerServiceSessionProcedure is the fully-qualified name of the WorkerService's Session RPC.
@@ -135,6 +137,13 @@ type TaskServiceClient interface {
 	Enqueue(context.Context, *connect.Request[v1.EnqueueRequest]) (*connect.Response[v1.EnqueueResponse], error)
 	// EnqueueBatch commits many tasks in one call; results are per-item.
 	EnqueueBatch(context.Context, *connect.Request[v1.EnqueueBatchRequest]) (*connect.Response[v1.EnqueueBatchResponse], error)
+	// EnqueueTx commits many tasks atomically: either every task in the request
+	// is enqueued, or none is. Any failure (a duplicate unique key, a unique-key
+	// collision between two tasks in the same request, or an invalid task) commits
+	// nothing and returns an error identifying the offending task. Re-committing an
+	// existing id is a no-op and does not abort the request. Unlike EnqueueBatch,
+	// there are no per-item results: success returns the committed tasks in order.
+	EnqueueTx(context.Context, *connect.Request[v1.EnqueueTxRequest]) (*connect.Response[v1.EnqueueTxResponse], error)
 	// GetTask returns the current state of one task.
 	GetTask(context.Context, *connect.Request[v1.GetTaskRequest]) (*connect.Response[v1.GetTaskResponse], error)
 }
@@ -162,6 +171,12 @@ func NewTaskServiceClient(httpClient connect.HTTPClient, baseURL string, opts ..
 			connect.WithSchema(taskServiceMethods.ByName("EnqueueBatch")),
 			connect.WithClientOptions(opts...),
 		),
+		enqueueTx: connect.NewClient[v1.EnqueueTxRequest, v1.EnqueueTxResponse](
+			httpClient,
+			baseURL+TaskServiceEnqueueTxProcedure,
+			connect.WithSchema(taskServiceMethods.ByName("EnqueueTx")),
+			connect.WithClientOptions(opts...),
+		),
 		getTask: connect.NewClient[v1.GetTaskRequest, v1.GetTaskResponse](
 			httpClient,
 			baseURL+TaskServiceGetTaskProcedure,
@@ -175,6 +190,7 @@ func NewTaskServiceClient(httpClient connect.HTTPClient, baseURL string, opts ..
 type taskServiceClient struct {
 	enqueue      *connect.Client[v1.EnqueueRequest, v1.EnqueueResponse]
 	enqueueBatch *connect.Client[v1.EnqueueBatchRequest, v1.EnqueueBatchResponse]
+	enqueueTx    *connect.Client[v1.EnqueueTxRequest, v1.EnqueueTxResponse]
 	getTask      *connect.Client[v1.GetTaskRequest, v1.GetTaskResponse]
 }
 
@@ -188,6 +204,11 @@ func (c *taskServiceClient) EnqueueBatch(ctx context.Context, req *connect.Reque
 	return c.enqueueBatch.CallUnary(ctx, req)
 }
 
+// EnqueueTx calls conveyor.v1.TaskService.EnqueueTx.
+func (c *taskServiceClient) EnqueueTx(ctx context.Context, req *connect.Request[v1.EnqueueTxRequest]) (*connect.Response[v1.EnqueueTxResponse], error) {
+	return c.enqueueTx.CallUnary(ctx, req)
+}
+
 // GetTask calls conveyor.v1.TaskService.GetTask.
 func (c *taskServiceClient) GetTask(ctx context.Context, req *connect.Request[v1.GetTaskRequest]) (*connect.Response[v1.GetTaskResponse], error) {
 	return c.getTask.CallUnary(ctx, req)
@@ -199,6 +220,13 @@ type TaskServiceHandler interface {
 	Enqueue(context.Context, *connect.Request[v1.EnqueueRequest]) (*connect.Response[v1.EnqueueResponse], error)
 	// EnqueueBatch commits many tasks in one call; results are per-item.
 	EnqueueBatch(context.Context, *connect.Request[v1.EnqueueBatchRequest]) (*connect.Response[v1.EnqueueBatchResponse], error)
+	// EnqueueTx commits many tasks atomically: either every task in the request
+	// is enqueued, or none is. Any failure (a duplicate unique key, a unique-key
+	// collision between two tasks in the same request, or an invalid task) commits
+	// nothing and returns an error identifying the offending task. Re-committing an
+	// existing id is a no-op and does not abort the request. Unlike EnqueueBatch,
+	// there are no per-item results: success returns the committed tasks in order.
+	EnqueueTx(context.Context, *connect.Request[v1.EnqueueTxRequest]) (*connect.Response[v1.EnqueueTxResponse], error)
 	// GetTask returns the current state of one task.
 	GetTask(context.Context, *connect.Request[v1.GetTaskRequest]) (*connect.Response[v1.GetTaskResponse], error)
 }
@@ -222,6 +250,12 @@ func NewTaskServiceHandler(svc TaskServiceHandler, opts ...connect.HandlerOption
 		connect.WithSchema(taskServiceMethods.ByName("EnqueueBatch")),
 		connect.WithHandlerOptions(opts...),
 	)
+	taskServiceEnqueueTxHandler := connect.NewUnaryHandler(
+		TaskServiceEnqueueTxProcedure,
+		svc.EnqueueTx,
+		connect.WithSchema(taskServiceMethods.ByName("EnqueueTx")),
+		connect.WithHandlerOptions(opts...),
+	)
 	taskServiceGetTaskHandler := connect.NewUnaryHandler(
 		TaskServiceGetTaskProcedure,
 		svc.GetTask,
@@ -234,6 +268,8 @@ func NewTaskServiceHandler(svc TaskServiceHandler, opts ...connect.HandlerOption
 			taskServiceEnqueueHandler.ServeHTTP(w, r)
 		case TaskServiceEnqueueBatchProcedure:
 			taskServiceEnqueueBatchHandler.ServeHTTP(w, r)
+		case TaskServiceEnqueueTxProcedure:
+			taskServiceEnqueueTxHandler.ServeHTTP(w, r)
 		case TaskServiceGetTaskProcedure:
 			taskServiceGetTaskHandler.ServeHTTP(w, r)
 		default:
@@ -251,6 +287,10 @@ func (UnimplementedTaskServiceHandler) Enqueue(context.Context, *connect.Request
 
 func (UnimplementedTaskServiceHandler) EnqueueBatch(context.Context, *connect.Request[v1.EnqueueBatchRequest]) (*connect.Response[v1.EnqueueBatchResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("conveyor.v1.TaskService.EnqueueBatch is not implemented"))
+}
+
+func (UnimplementedTaskServiceHandler) EnqueueTx(context.Context, *connect.Request[v1.EnqueueTxRequest]) (*connect.Response[v1.EnqueueTxResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("conveyor.v1.TaskService.EnqueueTx is not implemented"))
 }
 
 func (UnimplementedTaskServiceHandler) GetTask(context.Context, *connect.Request[v1.GetTaskRequest]) (*connect.Response[v1.GetTaskResponse], error) {

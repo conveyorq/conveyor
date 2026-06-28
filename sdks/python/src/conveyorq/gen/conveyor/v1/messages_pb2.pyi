@@ -79,15 +79,17 @@ class ExecuteBatch(_message.Message):
         ...
 
 class FireGroup(_message.Message):
-    __slots__ = ('queue', 'group', 'type')
+    __slots__ = ('queue', 'group', 'type', 'limit')
     QUEUE_FIELD_NUMBER: _ClassVar[int]
     GROUP_FIELD_NUMBER: _ClassVar[int]
     TYPE_FIELD_NUMBER: _ClassVar[int]
+    LIMIT_FIELD_NUMBER: _ClassVar[int]
     queue: str
     group: str
     type: str
+    limit: int
 
-    def __init__(self, queue: _Optional[str]=..., group: _Optional[str]=..., type: _Optional[str]=...) -> None:
+    def __init__(self, queue: _Optional[str]=..., group: _Optional[str]=..., type: _Optional[str]=..., limit: _Optional[int]=...) -> None:
         ...
 
 class GroupLeaseCompleted(_message.Message):

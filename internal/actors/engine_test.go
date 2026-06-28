@@ -158,6 +158,50 @@ func TestEngineRespectsPriorities(t *testing.T) {
 		"high-priority mean position must come before the low-priority mean")
 }
 
+// TestEngineEnqueueBatchAtomic verifies the engine commits a batch all-or-nothing,
+// assigns ids to id-less tasks, and rejects the whole batch on a unique-key
+// collision without committing any member.
+func TestEngineEnqueueBatchAtomic(t *testing.T) {
+	taskLog := memory.New(clock.System())
+	engine := startEngine(t, taskLog)
+	ctx := context.Background()
+
+	idless := newTask("", "default", "test:a", 4)
+	tasks := []*conveyorv1.TaskEnvelope{
+		idless,
+		newTask("batch-002", "mail", "test:b", 4),
+	}
+
+	require.NoError(t, engine.EnqueueBatch(ctx, tasks))
+	require.NotEmpty(t, idless.GetId(), "an id-less task must be assigned a ULID")
+
+	_, _, err := taskLog.GetTask(ctx, idless.GetId())
+	require.NoError(t, err)
+	_, _, err = taskLog.GetTask(ctx, "batch-002")
+	require.NoError(t, err)
+
+	collide := []*conveyorv1.TaskEnvelope{
+		uniqueTask("batch-003", "shared"),
+		uniqueTask("batch-004", "shared"),
+	}
+
+	err = engine.EnqueueBatch(ctx, collide)
+	require.ErrorIs(t, err, broker.ErrDuplicateTask)
+
+	_, _, err = taskLog.GetTask(ctx, "batch-003")
+	require.ErrorIs(t, err, broker.ErrTaskNotFound)
+	_, _, err = taskLog.GetTask(ctx, "batch-004")
+	require.ErrorIs(t, err, broker.ErrTaskNotFound)
+}
+
+// uniqueTask builds a task carrying a unique key that never lapses.
+func uniqueTask(id, key string) *conveyorv1.TaskEnvelope {
+	task := newTask(id, "default", "test:c", 4)
+	task.Options.UniqueKey = key
+
+	return task
+}
+
 // TestQueueGrainDispatchThroughput is the Phase 2 performance gate: one
 // queue grain must sustain at least 5k dispatches per second on the memory
 // broker. The grain is a per-queue serialization point; this proves it is

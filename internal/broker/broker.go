@@ -11,6 +11,7 @@ package broker
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/conveyorq/conveyor/internal/events"
@@ -40,6 +41,28 @@ var (
 	// exclusive in v1.
 	ErrGroupedSchedule = errors.New("broker: a grouped task cannot be scheduled")
 )
+
+// BatchError reports which task in an EnqueueBatch caused the whole batch to be
+// rejected. It wraps the underlying cause, so errors.Is against the sentinels
+// above (e.g. ErrDuplicateTask) still works.
+type BatchError struct {
+	// Index is the position of the offending task in the batch.
+	Index int
+	// TaskID is the id of the offending task, when it carries one.
+	TaskID string
+	// Err is the underlying failure for the offending task.
+	Err error
+}
+
+// Error implements the error interface.
+func (e *BatchError) Error() string {
+	return fmt.Sprintf("broker: task %d (%s): %v", e.Index, e.TaskID, e.Err)
+}
+
+// Unwrap exposes the underlying cause for errors.Is and errors.As.
+func (e *BatchError) Unwrap() error {
+	return e.Err
+}
 
 // ListTasks pagination bounds.
 const (
@@ -274,6 +297,15 @@ type Broker interface {
 	// incomplete task (scheduled, pending, active, or retry) holds the
 	// same key and the key's TTL has not lapsed.
 	Enqueue(ctx context.Context, task *conveyorv1.TaskEnvelope) error
+
+	// EnqueueBatch atomically commits every task or none of them. Each task is
+	// committed with the same semantics as Enqueue, but the whole set is one
+	// unit of work: if any task fails (a duplicate unique key, a unique-key
+	// collision between two tasks in the same batch, or an invalid task), no
+	// task in the batch is committed. Re-committing an already-stored id is a
+	// no-op and does not abort the batch. On failure the returned error is a
+	// *BatchError naming the offending task. An empty batch is a no-op.
+	EnqueueBatch(ctx context.Context, tasks []*conveyorv1.TaskEnvelope) error
 
 	// Lease atomically claims up to limit due tasks (pending or retry,
 	// process_at reached) from the queue, ordered by priority descending,

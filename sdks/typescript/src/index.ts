@@ -11,6 +11,7 @@
  */
 
 export { Client } from "./client.js";
+export type { EnqueueTxItem } from "./client.js";
 export { Worker } from "./worker.js";
 export { Mux, BatchError } from "./mux.js";
 export type { Handler, BatchHandler, HandlerContext, Middleware, BatchMiddleware } from "./mux.js";

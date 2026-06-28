@@ -56,19 +56,49 @@ func New(inner broker.Broker, encryptor encryption.Encryptor) broker.Broker {
 // Enqueue encrypts the task payload, then commits the task. An empty payload
 // is committed as-is, so a task with no payload stays one.
 func (e *encryptedBroker) Enqueue(ctx context.Context, task *conveyorv1.TaskEnvelope) error {
+	sealed, err := e.sealEnvelope(ctx, task)
+	if err != nil {
+		return err
+	}
+
+	return e.inner.Enqueue(ctx, sealed)
+}
+
+// EnqueueBatch encrypts every task payload, then commits the batch atomically.
+// Each empty payload is committed as-is. The all-or-nothing guarantee is the
+// wrapped broker's; this decorator only seals payloads on the way in.
+func (e *encryptedBroker) EnqueueBatch(ctx context.Context, tasks []*conveyorv1.TaskEnvelope) error {
+	sealed := make([]*conveyorv1.TaskEnvelope, len(tasks))
+
+	for i, task := range tasks {
+		clone, err := e.sealEnvelope(ctx, task)
+		if err != nil {
+			return err
+		}
+
+		sealed[i] = clone
+	}
+
+	return e.inner.EnqueueBatch(ctx, sealed)
+}
+
+// sealEnvelope returns task with its payload encrypted, on a clone so the
+// caller's envelope is never mutated. A task with no payload is returned
+// unchanged.
+func (e *encryptedBroker) sealEnvelope(ctx context.Context, task *conveyorv1.TaskEnvelope) (*conveyorv1.TaskEnvelope, error) {
 	if len(task.GetPayload()) == 0 {
-		return e.inner.Enqueue(ctx, task)
+		return task, nil
 	}
 
 	sealed, err := e.encryptor.Encrypt(ctx, task.GetPayload())
 	if err != nil {
-		return fmt.Errorf("broker/encrypted: encrypting payload: %w", err)
+		return nil, fmt.Errorf("broker/encrypted: encrypting payload: %w", err)
 	}
 
 	clone := proto.Clone(task).(*conveyorv1.TaskEnvelope)
 	clone.Payload = sealed
 
-	return e.inner.Enqueue(ctx, clone)
+	return clone, nil
 }
 
 // Lease decrypts the payload of every leased task.

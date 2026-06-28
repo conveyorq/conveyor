@@ -10,6 +10,7 @@ import { type Client as ConnectClient, Code, ConnectError, createClient } from "
 import { ConveyorError, DuplicateTaskError } from "./errors.js";
 import { ENCRYPTION_MARKER_KEY, ENCRYPTION_MARKER_VALUE, type Encryptor } from "./encryption.js";
 import {
+  type EnqueueRequest,
   EnqueueRequestSchema,
   GetTaskRequestSchema,
   type TaskInfo as ProtoTaskInfo,
@@ -36,6 +37,17 @@ import type {
 import type { Task } from "./task.js";
 import { dateFromTimestamp, durationFromMs, timestampFromDate } from "./time.js";
 import { createTransport } from "./transport.js";
+
+/**
+ * EnqueueTxItem pairs a task with its per-task options for {@link Client.enqueueTx},
+ * so a single atomic enqueue may span queues, priorities, and schedules.
+ */
+export interface EnqueueTxItem {
+  /** task is the task to commit. */
+  task: Task;
+  /** options are the per-task enqueue options applied to {@link EnqueueTxItem.task}. */
+  options?: EnqueueOptions;
+}
 
 /**
  * Client is the producer side of Conveyor: it commits tasks to the server.
@@ -66,21 +78,7 @@ export class Client {
    * still incomplete.
    */
   async enqueue(task: Task, options: EnqueueOptions = {}): Promise<TaskInfo> {
-    if (options.processAt !== undefined && options.processIn !== undefined) {
-      throw new ConveyorError("conveyor: processAt and processIn are mutually exclusive");
-    }
-
-    if (options.expiresAt !== undefined && options.expiresIn !== undefined) {
-      throw new ConveyorError("conveyor: expiresAt and expiresIn are mutually exclusive");
-    }
-
-    // Derive the uniqueness key over the plaintext payload, before encryption,
-    // so identical work still collides under `unique` while the server only
-    // ever sees ciphertext.
-    let uniqueKey = options.uniqueKey ?? "";
-    if (uniqueKey === "" && (options.unique ?? 0) > 0) {
-      uniqueKey = derivedUniqueKey(task.type, task.payload());
-    }
+    const uniqueKey = resolveUniqueKey(task, options);
 
     let enqueue: EnqueueFn = (decorated, settings) => this.commit(decorated, settings, uniqueKey);
 
@@ -89,6 +87,40 @@ export class Client {
     }
 
     return enqueue(task, options);
+  }
+
+  /**
+   * enqueueTx commits every task atomically: either all are enqueued or none
+   * are. If any task fails (a duplicate unique key, a unique-key collision
+   * between two tasks in the call, or an invalid task), no task is committed and
+   * it rejects with the offending task's error. On success it returns the
+   * committed tasks in the order given.
+   *
+   * Unlike {@link Client.enqueue}, it does not run the enqueue middleware: the
+   * middleware decorates a single-task commit, which the all-or-nothing path
+   * does not model.
+   */
+  async enqueueTx(items: EnqueueTxItem[]): Promise<TaskInfo[]> {
+    if (items.length === 0) {
+      throw new ConveyorError("conveyor: at least one task is required");
+    }
+
+    const requests = await Promise.all(
+      items.map((item) => {
+        const options = item.options ?? {};
+        const uniqueKey = resolveUniqueKey(item.task, options);
+
+        return this.buildRequest(item.task, options, uniqueKey);
+      }),
+    );
+
+    try {
+      const response = await this.rpc.enqueueTx({ tasks: requests });
+
+      return response.tasks.map(taskInfoFromProto);
+    } catch (error) {
+      throw mapClientError(error);
+    }
   }
 
   /** getTask returns the current state of one task, or rejects if unknown. */
@@ -108,8 +140,25 @@ export class Client {
     }
   }
 
-  /** commit builds the wire request, sealing the payload when encryption is on. */
+  /** commit builds the wire request and enqueues one task. */
   private async commit(task: Task, options: EnqueueOptions, uniqueKey: string): Promise<TaskInfo> {
+    const request = await this.buildRequest(task, options, uniqueKey);
+
+    try {
+      const response = await this.rpc.enqueue(request);
+
+      return taskInfoFromProto(response.task);
+    } catch (error) {
+      throw mapClientError(error);
+    }
+  }
+
+  /**
+   * buildRequest builds the wire request from a task and its resolved options,
+   * sealing the payload when encryption is on. It is the single source of truth
+   * shared by {@link Client.enqueue} and {@link Client.enqueueTx}.
+   */
+  private async buildRequest(task: Task, options: EnqueueOptions, uniqueKey: string): Promise<EnqueueRequest> {
     let payload = task.payload();
     const metadata = { ...task.metadata };
 
@@ -118,7 +167,7 @@ export class Client {
       metadata[ENCRYPTION_MARKER_KEY] = ENCRYPTION_MARKER_VALUE;
     }
 
-    const request = create(EnqueueRequestSchema, {
+    return create(EnqueueRequestSchema, {
       taskId: options.taskId ?? "",
       queue: options.queue ?? "",
       type: task.type,
@@ -141,15 +190,29 @@ export class Client {
       ...(options.dependsOn !== undefined ? { dependsOn: options.dependsOn.map(dependencyToProto) } : {}),
       ...(options.retryPolicy !== undefined ? { retryPolicy: retryPolicyToProto(options.retryPolicy) } : {}),
     });
-
-    try {
-      const response = await this.rpc.enqueue(request);
-
-      return taskInfoFromProto(response.task);
-    } catch (error) {
-      throw mapClientError(error);
-    }
   }
+}
+
+/**
+ * resolveUniqueKey validates an enqueue's mutually exclusive options and returns
+ * the effective unique key, derived over the plaintext payload (before any
+ * encryption) so identical work still collides under `unique`.
+ */
+function resolveUniqueKey(task: Task, options: EnqueueOptions): string {
+  if (options.processAt !== undefined && options.processIn !== undefined) {
+    throw new ConveyorError("conveyor: processAt and processIn are mutually exclusive");
+  }
+
+  if (options.expiresAt !== undefined && options.expiresIn !== undefined) {
+    throw new ConveyorError("conveyor: expiresAt and expiresIn are mutually exclusive");
+  }
+
+  let uniqueKey = options.uniqueKey ?? "";
+  if (uniqueKey === "" && (options.unique ?? 0) > 0) {
+    uniqueKey = derivedUniqueKey(task.type, task.payload());
+  }
+
+  return uniqueKey;
 }
 
 /**
