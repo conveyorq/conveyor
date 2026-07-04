@@ -6,6 +6,7 @@
 [![codecov](https://codecov.io/gh/conveyorq/conveyor/graph/badge.svg?token=UD2KFGYOZS)](https://codecov.io/gh/conveyorq/conveyor)
 [![Go Reference](https://pkg.go.dev/badge/github.com/conveyorq/conveyor.svg)](https://pkg.go.dev/github.com/conveyorq/conveyor)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Open Source AI Manifesto](https://human-oss.dev/badge.svg)](https://human-oss.dev)
 
 **A distributed, push-based task queue with Go, TypeScript, and Python SDKs.**
 
