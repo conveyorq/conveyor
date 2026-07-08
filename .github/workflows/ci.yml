@@ -130,7 +130,7 @@ jobs:
       - uses: pnpm/action-setup@v4
         name: Setup pnpm
         with:
-          version: 10
+          version: 11
       - uses: actions/setup-node@v4
         name: Setup Node
         with:
@@ -182,7 +182,7 @@ jobs:
       - uses: pnpm/action-setup@v4
         name: Setup pnpm
         with:
-          version: 10
+          version: 11
       - uses: actions/setup-node@v4
         name: Setup Node
         with:
