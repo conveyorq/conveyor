@@ -19,7 +19,7 @@ jobs:
       deploy: ${{ steps.filter.outputs.deploy }}
       ts_py: ${{ steps.filter.outputs.ts_py }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: dorny/paths-filter@v4
@@ -105,7 +105,7 @@ jobs:
       GOFLAGS: -mod=readonly  # fail on go.mod/go.sum drift
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         name: Checkout
       - uses: actions/setup-go@v6
         name: Setup Go
@@ -177,7 +177,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         name: Checkout
       - uses: pnpm/action-setup@v4
         name: Setup pnpm
@@ -209,7 +209,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         name: Checkout
       - uses: actions/setup-go@v6
         name: Setup Go
