@@ -22,18 +22,12 @@ import (
 // reference lets the entry be canceled or replaced rather than duplicated.
 const promoteScheduleRef = "conveyor-scheduler-promote"
 
-// queueGrainFactory creates an empty QueueGrain shell; all state is
-// rebuilt from the broker in OnActivate.
-func queueGrainFactory(_ context.Context) (goakt.Grain, error) {
-	return new(QueueGrain), nil
-}
-
 // wakeQueue tells a queue grain that due work exists. Resolving the
 // identity activates the grain if it is not live anywhere in the cluster.
 // Wake-ups are best-effort hints (the reaper sweep backstops lost ones),
 // so failures are logged, never propagated.
 func wakeQueue(ctx context.Context, system goakt.ActorSystem, runtime *Runtime, queue string, hint int64) {
-	identity, err := system.GrainIdentity(ctx, QueueGrainName(queue), queueGrainFactory,
+	identity, err := goakt.GrainOf[*QueueGrain](ctx, system, QueueGrainName(queue),
 		goakt.WithGrainDeactivateAfter(runtime.Settings().PassivateAfter))
 	if err != nil {
 		runtime.Logger().Warn("resolving queue grain failed", "queue", queue, "error", err)

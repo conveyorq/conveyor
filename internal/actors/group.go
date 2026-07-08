@@ -198,7 +198,7 @@ func groupDue(stat broker.GroupStat, maxSize int, maxDelay, gracePeriod time.Dur
 // grain if it is not live. Firing is best-effort like wakeQueue: the next sweep
 // retries a missed group.
 func fireGroup(ctx context.Context, system goakt.ActorSystem, runtime *Runtime, queue, group, taskType string, limit int) {
-	identity, err := system.GrainIdentity(ctx, QueueGrainName(queue), queueGrainFactory,
+	identity, err := goakt.GrainOf[*QueueGrain](ctx, system, QueueGrainName(queue),
 		goakt.WithGrainDeactivateAfter(runtime.Settings().PassivateAfter))
 	if err != nil {
 		runtime.Logger().Warn("resolving queue grain failed", "queue", queue, "error", err)

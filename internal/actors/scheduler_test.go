@@ -24,52 +24,75 @@ import (
 	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 )
 
-// stubGrainSystem embeds goakt.ActorSystem and overrides only the two methods
-// wakeQueue calls, so its resolve-failure and tell-failure branches are
-// deterministically reachable without a live cluster. The embedded interface is
-// nil: any other method call would panic, which is the intended guard since
-// wakeQueue must only touch these two.
-type stubGrainSystem struct {
+// tellFailSystem embeds a live actor system so GrainOf resolves the queue grain
+// through the real grain engine, then forces the wake-up tell to fail. It
+// isolates wakeQueue's tell-failure branch, which a healthy system never reaches
+// on its own.
+type tellFailSystem struct {
 	goakt.ActorSystem
 
-	// identityErr, when set, fails grain-identity resolution.
-	identityErr error
-	// tellErr, when set, fails the wake-up tell after a successful resolve.
-	tellErr error
+	// err is returned by every TellGrain call.
+	err error
 }
 
-func (s stubGrainSystem) GrainIdentity(context.Context, string, goakt.GrainFactory, ...goakt.GrainOption) (*goakt.GrainIdentity, error) {
-	if s.identityErr != nil {
-		return nil, s.identityErr
-	}
-
-	return &goakt.GrainIdentity{}, nil
+// TellGrain fails deterministically so wakeQueue's best-effort tell branch runs.
+func (s tellFailSystem) TellGrain(context.Context, *goakt.GrainIdentity, any) error {
+	return s.err
 }
 
-func (s stubGrainSystem) TellGrain(context.Context, *goakt.GrainIdentity, any) error {
-	return s.tellErr
-}
-
-// TestWakeQueueLogsResolveAndTellFailures covers wakeQueue's two best-effort
-// error branches: a failed grain-identity resolve and a failed wake-up tell are
-// each logged and swallowed rather than propagated.
-func TestWakeQueueLogsResolveAndTellFailures(t *testing.T) {
-	ctx := context.Background()
-
-	var logs bytes.Buffer
+// newBufferRuntime builds a runtime whose logger writes to the returned buffer,
+// so wakeQueue's swallowed warnings can be asserted on.
+func newBufferRuntime(t *testing.T) (*bytes.Buffer, *Runtime) {
+	t.Helper()
 
 	taskLog := memory.New(clock.System())
 	t.Cleanup(func() { _ = taskLog.Close() })
 
-	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn}))
-	runtime := NewRuntime(taskLog, clock.System(), testSettings, logger)
+	logs := new(bytes.Buffer)
+	logger := slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
-	wakeQueue(ctx, stubGrainSystem{identityErr: errors.New("resolve down")}, runtime, "q", 0)
-	wakeQueue(ctx, stubGrainSystem{tellErr: errors.New("tell down")}, runtime, "q", 0)
+	return logs, NewRuntime(taskLog, clock.System(), testSettings, logger)
+}
 
-	output := logs.String()
-	require.Contains(t, output, "resolving queue grain failed")
-	require.Contains(t, output, "waking queue grain failed")
+// startWakeSystem starts a live single-node actor system carrying the runtime
+// extension, so GrainOf can activate the queue grain locally.
+func startWakeSystem(t *testing.T, runtime *Runtime) goakt.ActorSystem {
+	t.Helper()
+
+	ctx := context.Background()
+
+	system, err := goakt.NewActorSystem("wake-live-system",
+		goakt.WithLogger(goaktlog.DiscardLogger), goakt.WithExtensions(runtime))
+	require.NoError(t, err)
+	require.NoError(t, system.Start(ctx))
+
+	t.Cleanup(func() { _ = system.Stop(ctx) })
+
+	return system
+}
+
+// TestWakeQueueLogsResolveAndTellFailures covers wakeQueue's two best-effort
+// error branches: a failed grain resolve and a failed wake-up tell are each
+// logged and swallowed rather than propagated.
+func TestWakeQueueLogsResolveAndTellFailures(t *testing.T) {
+	ctx := context.Background()
+
+	// Resolve-failure branch: an unstarted system fails grain activation.
+	resolveLogs, resolveRuntime := newBufferRuntime(t)
+
+	unstarted, err := goakt.NewActorSystem("wake-unstarted-system", goakt.WithLogger(goaktlog.DiscardLogger))
+	require.NoError(t, err)
+
+	wakeQueue(ctx, unstarted, resolveRuntime, "q", 0)
+	require.Contains(t, resolveLogs.String(), "resolving queue grain failed")
+
+	// Tell-failure branch: resolution succeeds against a live system, but the
+	// wake-up tell fails.
+	tellLogs, tellRuntime := newBufferRuntime(t)
+	system := startWakeSystem(t, tellRuntime)
+
+	wakeQueue(ctx, tellFailSystem{ActorSystem: system, err: errors.New("tell down")}, tellRuntime, "q", 0)
+	require.Contains(t, tellLogs.String(), "waking queue grain failed")
 }
 
 func TestSchedulerIgnoresUnknownMessage(t *testing.T) {

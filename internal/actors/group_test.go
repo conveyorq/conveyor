@@ -5,10 +5,8 @@
 package actors
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"log/slog"
 	"testing"
 	"time"
 
@@ -30,20 +28,22 @@ import (
 func TestFireGroupLogsResolveAndTellFailures(t *testing.T) {
 	ctx := context.Background()
 
-	var logs bytes.Buffer
+	// Resolve-failure branch: an unstarted system fails grain activation.
+	resolveLogs, resolveRuntime := newBufferRuntime(t)
 
-	taskLog := memory.New(clock.System())
-	t.Cleanup(func() { _ = taskLog.Close() })
+	unstarted, err := goakt.NewActorSystem("fire-unstarted-system", goakt.WithLogger(goaktlog.DiscardLogger))
+	require.NoError(t, err)
 
-	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn}))
-	runtime := NewRuntime(taskLog, clock.System(), testSettings, logger)
+	fireGroup(ctx, unstarted, resolveRuntime, "q", "g", "t", 0)
+	require.Contains(t, resolveLogs.String(), "resolving queue grain failed")
 
-	fireGroup(ctx, stubGrainSystem{identityErr: errors.New("resolve down")}, runtime, "q", "g", "t", 0)
-	fireGroup(ctx, stubGrainSystem{tellErr: errors.New("tell down")}, runtime, "q", "g", "t", 0)
+	// Tell-failure branch: resolution succeeds against a live system, but the
+	// fire tell fails.
+	tellLogs, tellRuntime := newBufferRuntime(t)
+	system := startWakeSystem(t, tellRuntime)
 
-	output := logs.String()
-	require.Contains(t, output, "resolving queue grain failed")
-	require.Contains(t, output, "firing group failed")
+	fireGroup(ctx, tellFailSystem{ActorSystem: system, err: errors.New("tell down")}, tellRuntime, "q", "g", "t", 0)
+	require.Contains(t, tellLogs.String(), "firing group failed")
 }
 
 func TestGroupSweeperPreStartRequiresRuntimeExtension(t *testing.T) {

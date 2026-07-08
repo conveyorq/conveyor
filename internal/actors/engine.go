@@ -368,7 +368,7 @@ func (e *Engine) drainWaker(queue string, waker *queueWaker) {
 
 // TellQueue sends a message to a queue's grain, activating it if needed.
 func (e *Engine) TellQueue(ctx context.Context, queue string, message proto.Message) error {
-	identity, err := e.system.GrainIdentity(ctx, QueueGrainName(queue), queueGrainFactory,
+	identity, err := goakt.GrainOf[*QueueGrain](ctx, e.system, QueueGrainName(queue),
 		goakt.WithGrainDeactivateAfter(e.config.Settings.PassivateAfter))
 	if err != nil {
 		return fmt.Errorf("resolving queue grain %s: %w", queue, err)

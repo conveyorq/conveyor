@@ -287,7 +287,7 @@ func (g *Gateway) register(ctx *goakt.ReceiveContext) {
 	system := ctx.ActorSystem()
 
 	for _, queue := range g.session.Queues {
-		identity, err := system.GrainIdentity(goCtx, QueueGrainName(queue), queueGrainFactory,
+		identity, err := goakt.GrainOf[*QueueGrain](goCtx, system, QueueGrainName(queue),
 			goakt.WithGrainDeactivateAfter(g.runtime.Settings().PassivateAfter))
 		if err != nil {
 			g.runtime.Logger().Warn("resolving queue grain failed; next tick retries", "queue", queue, "error", err)

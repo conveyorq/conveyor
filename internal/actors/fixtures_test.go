@@ -383,7 +383,7 @@ func (m *mockGateway) register(ctx *goakt.ReceiveContext) {
 	background := context.Background()
 	system := ctx.ActorSystem()
 
-	identity, err := system.GrainIdentity(background, QueueGrainName(m.queue), queueGrainFactory,
+	identity, err := goakt.GrainOf[*QueueGrain](background, system, QueueGrainName(m.queue),
 		goakt.WithGrainDeactivateAfter(m.runtime.Settings().PassivateAfter))
 	if err != nil {
 		ctx.Err(fmt.Errorf("resolving queue grain: %w", err))

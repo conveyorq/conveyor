@@ -381,7 +381,7 @@ func TestGrainRelocatesOnNodeLoss(t *testing.T) {
 
 	// Pin the queue grain to the node that will die, so the kill always
 	// exercises relocation rather than passing trivially.
-	_, err := doomed.System().GrainIdentity(ctx, QueueGrainName(smokeQueue), queueGrainFactory,
+	_, err := goakt.GrainOf[*QueueGrain](ctx, doomed.System(), QueueGrainName(smokeQueue),
 		goakt.WithGrainDeactivateAfter(recoverySettings.PassivateAfter),
 		goakt.WithActivationStrategy(goakt.LocalActivation))
 	require.NoError(t, err)
@@ -593,7 +593,7 @@ func TestThreeNodeChaosLosesNothing(t *testing.T) {
 
 	// Pin the queue grain to the node that will die, so the kill always
 	// exercises relocation rather than passing trivially.
-	_, err := grainHost.System().GrainIdentity(ctx, QueueGrainName(chaosQueue), queueGrainFactory,
+	_, err := goakt.GrainOf[*QueueGrain](ctx, grainHost.System(), QueueGrainName(chaosQueue),
 		goakt.WithGrainDeactivateAfter(recoverySettings.PassivateAfter),
 		goakt.WithActivationStrategy(goakt.LocalActivation))
 	require.NoError(t, err)

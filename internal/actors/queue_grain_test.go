@@ -31,7 +31,7 @@ func TestQueueGrainActivationRequiresRuntimeExtension(t *testing.T) {
 
 	// Resolving the grain identity activates it, running OnActivate against a
 	// system with no engine runtime registered.
-	_, err = system.GrainIdentity(ctx, QueueGrainName("q"), queueGrainFactory)
+	_, err = goakt.GrainOf[*QueueGrain](ctx, system, QueueGrainName("q"))
 	require.ErrorContains(t, err, "is not registered")
 }
 
