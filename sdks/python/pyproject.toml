@@ -26,7 +26,7 @@ classifiers = [
 ]
 dependencies = [
   "grpcio>=1.82",
-  "protobuf>=5.29,<6",
+  "protobuf>=7.35,<8",
   "cryptography>=49",
 ]
 
