@@ -148,7 +148,7 @@ jobs:
       - uses: actions/checkout@v6
         name: Checkout
 
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
         name: Setup Helm
 
       # Two separate credential stores are needed: `helm push` reads Helm's

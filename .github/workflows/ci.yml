@@ -224,7 +224,7 @@ jobs:
           curl -sSLo ./kind https://kind.sigs.k8s.io/dl/v0.24.0/kind-linux-amd64
           chmod +x ./kind
           sudo mv ./kind /usr/local/bin/kind
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
         name: Setup Helm
       - name: Kind e2e
         run: make e2e
