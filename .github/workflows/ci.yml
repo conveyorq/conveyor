@@ -127,7 +127,7 @@ jobs:
       - name: Download dependencies
         run: |
           go mod download
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         name: Setup pnpm
         with:
           version: 10
@@ -179,7 +179,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         name: Checkout
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         name: Setup pnpm
         with:
           version: 10
