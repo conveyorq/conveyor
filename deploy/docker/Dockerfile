@@ -9,7 +9,7 @@
 
 # The dashboard's built bundle is not committed; build it here so conveyord can
 # embed it. Runs on the native build platform (static assets are arch-neutral).
-FROM --platform=$BUILDPLATFORM node:22-alpine AS web
+FROM --platform=$BUILDPLATFORM node:24-alpine AS web
 
 WORKDIR /web
 

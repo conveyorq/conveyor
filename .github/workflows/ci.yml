@@ -134,7 +134,7 @@ jobs:
       - uses: actions/setup-node@v4
         name: Setup Node
         with:
-          node-version: "22"
+          node-version: "24"
       - name: Build dashboard
         # dist/ is not committed; build it so the embedded UI is real for the
         # lint typecheck and the dashboard tests.
@@ -186,7 +186,7 @@ jobs:
       - uses: actions/setup-node@v4
         name: Setup Node
         with:
-          node-version: "22"
+          node-version: "24"
       - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         name: Setup uv
         with:
