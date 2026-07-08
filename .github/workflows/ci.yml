@@ -131,7 +131,7 @@ jobs:
         name: Setup pnpm
         with:
           version: 10
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         name: Setup Node
         with:
           node-version: "22"
@@ -183,7 +183,7 @@ jobs:
         name: Setup pnpm
         with:
           version: 10
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         name: Setup Node
         with:
           node-version: "22"
