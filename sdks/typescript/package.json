@@ -33,7 +33,7 @@
   "devDependencies": {
     "@bufbuild/protoc-gen-es": "^2.12.1",
     "@types/node": "^26.1.0",
-    "typescript": "^6.0.3",
+    "typescript": "^7.0.0",
     "vitest": "^4.1.10"
   }
 }
