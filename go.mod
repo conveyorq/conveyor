@@ -13,6 +13,7 @@ require (
 	github.com/knadh/koanf/v2 v2.3.5
 	github.com/oklog/ulid/v2 v2.1.1
 	github.com/pashagolub/pgxmock/v4 v4.9.0
+	github.com/pashagolub/pgxmock/v5 v5.1.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/reugn/go-quartz v0.15.2
 	github.com/spf13/cobra v1.10.2
