@@ -5,7 +5,7 @@
     // Append a "Signed-off-by" trailer to every commit so the DCO check passes.
     ":gitSignOff",
     // Use Conventional Commit messages (e.g. "chore(deps): ...") so commitlint passes.
-    ":semanticCommitsEnabled",
+    ':semanticCommitTypeAll(chore)',
   ],
 
   // Check once a week, early Wednesday, so updates land in one predictable batch.
