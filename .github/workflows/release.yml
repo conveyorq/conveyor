@@ -110,7 +110,7 @@ jobs:
 
       - id: meta
         name: Derive image tags
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.IMAGE }}
           # main  -> a single tag: the 7-char short commit SHA (no "sha-" prefix)
