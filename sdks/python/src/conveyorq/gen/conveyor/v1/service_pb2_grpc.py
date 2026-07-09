@@ -3,7 +3,7 @@ import grpc
 from ...conveyor.v1 import service_pb2 as conveyor_dot_v1_dot_service__pb2
 from ...conveyor.v1 import task_pb2 as conveyor_dot_v1_dot_task__pb2
 
-class TaskServiceStub(object):
+class TaskServiceStub:
     """Public wire contract. One ConnectRPC port serves gRPC, gRPC-Web, and
     HTTP/JSON. SDKs, the CLI, and the dashboard all consume these services;
     after v1.0 changes must be additive only.
@@ -22,7 +22,7 @@ class TaskServiceStub(object):
         self.EnqueueTx = channel.unary_unary('/conveyor.v1.TaskService/EnqueueTx', request_serializer=conveyor_dot_v1_dot_service__pb2.EnqueueTxRequest.SerializeToString, response_deserializer=conveyor_dot_v1_dot_service__pb2.EnqueueTxResponse.FromString, _registered_method=True)
         self.GetTask = channel.unary_unary('/conveyor.v1.TaskService/GetTask', request_serializer=conveyor_dot_v1_dot_service__pb2.GetTaskRequest.SerializeToString, response_deserializer=conveyor_dot_v1_dot_service__pb2.GetTaskResponse.FromString, _registered_method=True)
 
-class TaskServiceServicer(object):
+class TaskServiceServicer:
     """Public wire contract. One ConnectRPC port serves gRPC, gRPC-Web, and
     HTTP/JSON. SDKs, the CLI, and the dashboard all consume these services;
     after v1.0 changes must be additive only.
@@ -69,7 +69,7 @@ def add_TaskServiceServicer_to_server(servicer, server):
     server.add_generic_rpc_handlers((generic_handler,))
     server.add_registered_method_handlers('conveyor.v1.TaskService', rpc_method_handlers)
 
-class TaskService(object):
+class TaskService:
     """Public wire contract. One ConnectRPC port serves gRPC, gRPC-Web, and
     HTTP/JSON. SDKs, the CLI, and the dashboard all consume these services;
     after v1.0 changes must be additive only.
@@ -93,7 +93,7 @@ class TaskService(object):
     def GetTask(request, target, options=(), channel_credentials=None, call_credentials=None, insecure=False, compression=None, wait_for_ready=None, timeout=None, metadata=None):
         return grpc.experimental.unary_unary(request, target, '/conveyor.v1.TaskService/GetTask', conveyor_dot_v1_dot_service__pb2.GetTaskRequest.SerializeToString, conveyor_dot_v1_dot_service__pb2.GetTaskResponse.FromString, options, channel_credentials, insecure, call_credentials, compression, wait_for_ready, timeout, metadata, _registered_method=True)
 
-class WorkerServiceStub(object):
+class WorkerServiceStub:
     """WorkerService carries worker sessions.
     """
 
@@ -105,7 +105,7 @@ class WorkerServiceStub(object):
         """
         self.Session = channel.stream_stream('/conveyor.v1.WorkerService/Session', request_serializer=conveyor_dot_v1_dot_service__pb2.WorkerMessage.SerializeToString, response_deserializer=conveyor_dot_v1_dot_service__pb2.ServerMessage.FromString, _registered_method=True)
 
-class WorkerServiceServicer(object):
+class WorkerServiceServicer:
     """WorkerService carries worker sessions.
     """
 
@@ -122,7 +122,7 @@ def add_WorkerServiceServicer_to_server(servicer, server):
     server.add_generic_rpc_handlers((generic_handler,))
     server.add_registered_method_handlers('conveyor.v1.WorkerService', rpc_method_handlers)
 
-class WorkerService(object):
+class WorkerService:
     """WorkerService carries worker sessions.
     """
 
@@ -130,7 +130,7 @@ class WorkerService(object):
     def Session(request_iterator, target, options=(), channel_credentials=None, call_credentials=None, insecure=False, compression=None, wait_for_ready=None, timeout=None, metadata=None):
         return grpc.experimental.stream_stream(request_iterator, target, '/conveyor.v1.WorkerService/Session', conveyor_dot_v1_dot_service__pb2.WorkerMessage.SerializeToString, conveyor_dot_v1_dot_service__pb2.ServerMessage.FromString, options, channel_credentials, insecure, call_credentials, compression, wait_for_ready, timeout, metadata, _registered_method=True)
 
-class AdminServiceStub(object):
+class AdminServiceStub:
     """AdminService is the inspection and operations API.
     """
 
@@ -172,7 +172,7 @@ class AdminServiceStub(object):
         self.BrokerInfo = channel.unary_unary('/conveyor.v1.AdminService/BrokerInfo', request_serializer=conveyor_dot_v1_dot_service__pb2.BrokerInfoRequest.SerializeToString, response_deserializer=conveyor_dot_v1_dot_service__pb2.BrokerInfoResponse.FromString, _registered_method=True)
         self.WatchEvents = channel.unary_stream('/conveyor.v1.AdminService/WatchEvents', request_serializer=conveyor_dot_v1_dot_service__pb2.WatchEventsRequest.SerializeToString, response_deserializer=conveyor_dot_v1_dot_task__pb2.TaskEvent.FromString, _registered_method=True)
 
-class AdminServiceServicer(object):
+class AdminServiceServicer:
     """AdminService is the inspection and operations API.
     """
 
@@ -394,7 +394,7 @@ def add_AdminServiceServicer_to_server(servicer, server):
     server.add_generic_rpc_handlers((generic_handler,))
     server.add_registered_method_handlers('conveyor.v1.AdminService', rpc_method_handlers)
 
-class AdminService(object):
+class AdminService:
     """AdminService is the inspection and operations API.
     """
 

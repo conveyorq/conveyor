@@ -1,10 +1,12 @@
+import datetime
 from google.protobuf import duration_pb2 as _duration_pb2
 from google.protobuf import timestamp_pb2 as _timestamp_pb2
 from google.protobuf.internal import containers as _containers
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
-from typing import ClassVar as _ClassVar, Iterable as _Iterable, Mapping as _Mapping, Optional as _Optional, Union as _Union
+from collections.abc import Iterable as _Iterable, Mapping as _Mapping
+from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 DESCRIPTOR: _descriptor.FileDescriptor
 
 class TaskState(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
@@ -92,7 +94,7 @@ class TaskEvent(_message.Message):
     attempt: int
     last_error: str
 
-    def __init__(self, id: _Optional[str]=..., queue: _Optional[str]=..., type: _Optional[str]=..., state: _Optional[_Union[TaskState, str]]=..., event_type: _Optional[_Union[TaskEventType, str]]=..., occurred_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., attempt: _Optional[int]=..., last_error: _Optional[str]=...) -> None:
+    def __init__(self, id: _Optional[str]=..., queue: _Optional[str]=..., type: _Optional[str]=..., state: _Optional[_Union[TaskState, str]]=..., event_type: _Optional[_Union[TaskEventType, str]]=..., occurred_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]]=..., attempt: _Optional[int]=..., last_error: _Optional[str]=...) -> None:
         ...
 
 class TaskDependency(_message.Message):
@@ -146,7 +148,7 @@ class TaskEnvelope(_message.Message):
     progress: int
     progress_message: str
 
-    def __init__(self, id: _Optional[str]=..., queue: _Optional[str]=..., type: _Optional[str]=..., payload: _Optional[bytes]=..., content_type: _Optional[str]=..., metadata: _Optional[_Mapping[str, str]]=..., options: _Optional[_Union[TaskOptions, _Mapping]]=..., retried: _Optional[int]=..., last_error: _Optional[str]=..., enqueued_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., started_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., completed_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., progress: _Optional[int]=..., progress_message: _Optional[str]=...) -> None:
+    def __init__(self, id: _Optional[str]=..., queue: _Optional[str]=..., type: _Optional[str]=..., payload: _Optional[bytes]=..., content_type: _Optional[str]=..., metadata: _Optional[_Mapping[str, str]]=..., options: _Optional[_Union[TaskOptions, _Mapping]]=..., retried: _Optional[int]=..., last_error: _Optional[str]=..., enqueued_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]]=..., started_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]]=..., completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]]=..., progress: _Optional[int]=..., progress_message: _Optional[str]=...) -> None:
         ...
 
 class TaskOptions(_message.Message):
@@ -178,7 +180,7 @@ class TaskOptions(_message.Message):
     concurrency_key: str
     retry_policy: RetryPolicy
 
-    def __init__(self, max_retry: _Optional[int]=..., timeout: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., deadline: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., process_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., unique_key: _Optional[str]=..., unique_ttl: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., retention: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., priority: _Optional[int]=..., group: _Optional[str]=..., expires_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., depends_on: _Optional[_Iterable[_Union[TaskDependency, _Mapping]]]=..., concurrency_key: _Optional[str]=..., retry_policy: _Optional[_Union[RetryPolicy, _Mapping]]=...) -> None:
+    def __init__(self, max_retry: _Optional[int]=..., timeout: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]]=..., deadline: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]]=..., process_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]]=..., unique_key: _Optional[str]=..., unique_ttl: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]]=..., retention: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]]=..., priority: _Optional[int]=..., group: _Optional[str]=..., expires_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]]=..., depends_on: _Optional[_Iterable[_Union[TaskDependency, _Mapping]]]=..., concurrency_key: _Optional[str]=..., retry_policy: _Optional[_Union[RetryPolicy, _Mapping]]=...) -> None:
         ...
 
 class RetryPolicy(_message.Message):
@@ -190,5 +192,5 @@ class RetryPolicy(_message.Message):
     base: _duration_pb2.Duration
     max: _duration_pb2.Duration
 
-    def __init__(self, strategy: _Optional[_Union[RetryStrategy, str]]=..., base: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., max: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=...) -> None:
+    def __init__(self, strategy: _Optional[_Union[RetryStrategy, str]]=..., base: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]]=..., max: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]]=...) -> None:
         ...

@@ -1,3 +1,4 @@
+import datetime
 from conveyor.v1 import task_pb2 as _task_pb2
 from google.protobuf import duration_pb2 as _duration_pb2
 from google.protobuf import timestamp_pb2 as _timestamp_pb2
@@ -5,7 +6,8 @@ from google.protobuf.internal import containers as _containers
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
-from typing import ClassVar as _ClassVar, Iterable as _Iterable, Mapping as _Mapping, Optional as _Optional, Union as _Union
+from collections.abc import Iterable as _Iterable, Mapping as _Mapping
+from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 DESCRIPTOR: _descriptor.FileDescriptor
 
 class TaskOutcome(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
@@ -76,7 +78,7 @@ class EnqueueRequest(_message.Message):
     concurrency_key: str
     retry_policy: _task_pb2.RetryPolicy
 
-    def __init__(self, task_id: _Optional[str]=..., queue: _Optional[str]=..., type: _Optional[str]=..., payload: _Optional[bytes]=..., content_type: _Optional[str]=..., metadata: _Optional[_Mapping[str, str]]=..., max_retry: _Optional[int]=..., timeout: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., deadline: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., process_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., process_in: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., unique_key: _Optional[str]=..., unique_ttl: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., priority: _Optional[int]=..., retention: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., group: _Optional[str]=..., expires_in: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., expires_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., depends_on: _Optional[_Iterable[_Union[_task_pb2.TaskDependency, _Mapping]]]=..., concurrency_key: _Optional[str]=..., retry_policy: _Optional[_Union[_task_pb2.RetryPolicy, _Mapping]]=...) -> None:
+    def __init__(self, task_id: _Optional[str]=..., queue: _Optional[str]=..., type: _Optional[str]=..., payload: _Optional[bytes]=..., content_type: _Optional[str]=..., metadata: _Optional[_Mapping[str, str]]=..., max_retry: _Optional[int]=..., timeout: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]]=..., deadline: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]]=..., process_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]]=..., process_in: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]]=..., unique_key: _Optional[str]=..., unique_ttl: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]]=..., priority: _Optional[int]=..., retention: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]]=..., group: _Optional[str]=..., expires_in: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]]=..., expires_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]]=..., depends_on: _Optional[_Iterable[_Union[_task_pb2.TaskDependency, _Mapping]]]=..., concurrency_key: _Optional[str]=..., retry_policy: _Optional[_Union[_task_pb2.RetryPolicy, _Mapping]]=...) -> None:
         ...
 
 class EnqueueResponse(_message.Message):
@@ -180,7 +182,7 @@ class TaskInfo(_message.Message):
     progress: int
     progress_message: str
 
-    def __init__(self, id: _Optional[str]=..., queue: _Optional[str]=..., type: _Optional[str]=..., state: _Optional[_Union[_task_pb2.TaskState, str]]=..., priority: _Optional[int]=..., retried: _Optional[int]=..., max_retry: _Optional[int]=..., last_error: _Optional[str]=..., enqueued_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., process_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., completed_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., payload: _Optional[bytes]=..., content_type: _Optional[str]=..., started_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., progress: _Optional[int]=..., progress_message: _Optional[str]=...) -> None:
+    def __init__(self, id: _Optional[str]=..., queue: _Optional[str]=..., type: _Optional[str]=..., state: _Optional[_Union[_task_pb2.TaskState, str]]=..., priority: _Optional[int]=..., retried: _Optional[int]=..., max_retry: _Optional[int]=..., last_error: _Optional[str]=..., enqueued_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]]=..., process_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]]=..., completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]]=..., payload: _Optional[bytes]=..., content_type: _Optional[str]=..., started_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]]=..., progress: _Optional[int]=..., progress_message: _Optional[str]=...) -> None:
         ...
 
 class WorkerMessage(_message.Message):
@@ -310,7 +312,7 @@ class Welcome(_message.Message):
     server_version: str
     min_sdk_version: str
 
-    def __init__(self, session_id: _Optional[str]=..., lease_ttl: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., heartbeat_interval: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., server_version: _Optional[str]=..., min_sdk_version: _Optional[str]=...) -> None:
+    def __init__(self, session_id: _Optional[str]=..., lease_ttl: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]]=..., heartbeat_interval: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]]=..., server_version: _Optional[str]=..., min_sdk_version: _Optional[str]=...) -> None:
         ...
 
 class Dispatch(_message.Message):
@@ -320,7 +322,7 @@ class Dispatch(_message.Message):
     task: _task_pb2.TaskEnvelope
     deadline: _timestamp_pb2.Timestamp
 
-    def __init__(self, task: _Optional[_Union[_task_pb2.TaskEnvelope, _Mapping]]=..., deadline: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=...) -> None:
+    def __init__(self, task: _Optional[_Union[_task_pb2.TaskEnvelope, _Mapping]]=..., deadline: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]]=...) -> None:
         ...
 
 class BatchDispatch(_message.Message):
@@ -332,7 +334,7 @@ class BatchDispatch(_message.Message):
     deadline: _timestamp_pb2.Timestamp
     group: str
 
-    def __init__(self, tasks: _Optional[_Iterable[_Union[_task_pb2.TaskEnvelope, _Mapping]]]=..., deadline: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., group: _Optional[str]=...) -> None:
+    def __init__(self, tasks: _Optional[_Iterable[_Union[_task_pb2.TaskEnvelope, _Mapping]]]=..., deadline: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]]=..., group: _Optional[str]=...) -> None:
         ...
 
 class BatchResult(_message.Message):
@@ -394,7 +396,7 @@ class QueueInfo(_message.Message):
     aggregating: int
     blocked: int
 
-    def __init__(self, name: _Optional[str]=..., paused: bool=..., scheduled: _Optional[int]=..., pending: _Optional[int]=..., active: _Optional[int]=..., retry: _Optional[int]=..., completed: _Optional[int]=..., archived: _Optional[int]=..., aggregating: _Optional[int]=..., blocked: _Optional[int]=...) -> None:
+    def __init__(self, name: _Optional[str]=..., paused: _Optional[bool]=..., scheduled: _Optional[int]=..., pending: _Optional[int]=..., active: _Optional[int]=..., retry: _Optional[int]=..., completed: _Optional[int]=..., archived: _Optional[int]=..., aggregating: _Optional[int]=..., blocked: _Optional[int]=...) -> None:
         ...
 
 class PauseQueueRequest(_message.Message):
@@ -550,7 +552,7 @@ class GroupConfigInfo(_message.Message):
     max_delay: _duration_pb2.Duration
     grace_period: _duration_pb2.Duration
 
-    def __init__(self, queue: _Optional[str]=..., group: _Optional[str]=..., max_size: _Optional[int]=..., max_delay: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., grace_period: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=...) -> None:
+    def __init__(self, queue: _Optional[str]=..., group: _Optional[str]=..., max_size: _Optional[int]=..., max_delay: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]]=..., grace_period: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]]=...) -> None:
         ...
 
 class ListGroupConfigsRequest(_message.Message):
@@ -580,7 +582,7 @@ class SetGroupConfigRequest(_message.Message):
     max_delay: _duration_pb2.Duration
     grace_period: _duration_pb2.Duration
 
-    def __init__(self, queue: _Optional[str]=..., group: _Optional[str]=..., max_size: _Optional[int]=..., max_delay: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=..., grace_period: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=...) -> None:
+    def __init__(self, queue: _Optional[str]=..., group: _Optional[str]=..., max_size: _Optional[int]=..., max_delay: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]]=..., grace_period: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]]=...) -> None:
         ...
 
 class SetGroupConfigResponse(_message.Message):
@@ -680,7 +682,7 @@ class RescheduleTaskRequest(_message.Message):
     process_at: _timestamp_pb2.Timestamp
     process_in: _duration_pb2.Duration
 
-    def __init__(self, id: _Optional[str]=..., process_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., process_in: _Optional[_Union[_duration_pb2.Duration, _Mapping]]=...) -> None:
+    def __init__(self, id: _Optional[str]=..., process_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]]=..., process_in: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]]=...) -> None:
         ...
 
 class RescheduleTaskResponse(_message.Message):
@@ -764,7 +766,7 @@ class CronEntry(_message.Message):
     paused: bool
     next_run_at: _timestamp_pb2.Timestamp
 
-    def __init__(self, id: _Optional[str]=..., spec: _Optional[str]=..., task_type: _Optional[str]=..., queue: _Optional[str]=..., payload: _Optional[bytes]=..., content_type: _Optional[str]=..., options: _Optional[_Union[_task_pb2.TaskOptions, _Mapping]]=..., paused: bool=..., next_run_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=...) -> None:
+    def __init__(self, id: _Optional[str]=..., spec: _Optional[str]=..., task_type: _Optional[str]=..., queue: _Optional[str]=..., payload: _Optional[bytes]=..., content_type: _Optional[str]=..., options: _Optional[_Union[_task_pb2.TaskOptions, _Mapping]]=..., paused: _Optional[bool]=..., next_run_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]]=...) -> None:
         ...
 
 class UpsertCronRequest(_message.Message):
@@ -844,7 +846,7 @@ class NodeInfo(_message.Message):
     address: str
     started_at: _timestamp_pb2.Timestamp
 
-    def __init__(self, address: _Optional[str]=..., started_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=...) -> None:
+    def __init__(self, address: _Optional[str]=..., started_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]]=...) -> None:
         ...
 
 class ListWorkerSessionsRequest(_message.Message):
@@ -874,7 +876,7 @@ class WorkerSession(_message.Message):
     sdk_version: str
     connected_at: _timestamp_pb2.Timestamp
 
-    def __init__(self, id: _Optional[str]=..., queues: _Optional[_Iterable[str]]=..., concurrency: _Optional[int]=..., sdk_version: _Optional[str]=..., connected_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=...) -> None:
+    def __init__(self, id: _Optional[str]=..., queues: _Optional[_Iterable[str]]=..., concurrency: _Optional[int]=..., sdk_version: _Optional[str]=..., connected_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]]=...) -> None:
         ...
 
 class BrokerInfoRequest(_message.Message):

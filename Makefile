@@ -211,14 +211,17 @@ sdk-ts-test: ## Run the TypeScript SDK unit tests (needs Node)
 
 sdk-gen: sdk-ts-gen sdk-py-gen ## Regenerate both SDKs' protobuf stubs from the protos
 
-# Generation runs buf with the protobuf-29-pinned remote plugins, then rewrites
+# Generation runs buf with the protobuf-35-pinned remote plugins, then rewrites
 # the generated cross-module imports to package-relative form (protoletariat) and
 # restores the gen tree's __init__.py package markers (buf's clean step drops
-# them). Needs Python + uv.
+# them). Needs Python + uv. Protoletariat caps protobuf at <6 while the SDK
+# runtime needs >=7.35, so it lives in its own venv instead of the dev extra;
+# it only rewrites imports in generated files, so the mismatch is harmless.
 sdk-py-gen: ## Regenerate the Python SDK's protobuf + gRPC stubs from the protos
-	cd $(SDK_PY_DIR) && { test -d .venv || uv venv .venv; } && uv pip install --python .venv -e ".[dev]"
+	cd $(SDK_PY_DIR) && { test -d .venv-codegen || uv venv .venv-codegen; } && \
+		uv pip install --python .venv-codegen "protoletariat>=3.3.10"
 	buf generate --template buf.gen.python.yaml
-	$(SDK_PY_DIR)/.venv/bin/python -m protoletariat --in-place \
+	$(SDK_PY_DIR)/.venv-codegen/bin/python -m protoletariat --in-place \
 		--python-out $(SDK_PY_DIR)/src/conveyorq/gen \
 		protoc --proto-path=protos \
 		conveyor/v1/task.proto conveyor/v1/service.proto conveyor/v1/messages.proto

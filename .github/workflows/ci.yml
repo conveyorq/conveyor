@@ -19,7 +19,7 @@ jobs:
       deploy: ${{ steps.filter.outputs.deploy }}
       ts_py: ${{ steps.filter.outputs.ts_py }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: dorny/paths-filter@v4
@@ -105,7 +105,7 @@ jobs:
       GOFLAGS: -mod=readonly  # fail on go.mod/go.sum drift
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         name: Checkout
       - uses: actions/setup-go@v6
         name: Setup Go
@@ -113,7 +113,7 @@ jobs:
           go-version-file: go.mod
           check-latest: false
           cache-dependency-path: "**/*.sum"
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         name: Cache Go build and modules
         with:
           path: |
@@ -127,14 +127,14 @@ jobs:
       - name: Download dependencies
         run: |
           go mod download
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         name: Setup pnpm
         with:
-          version: 10
-      - uses: actions/setup-node@v4
+          version: 11
+      - uses: actions/setup-node@v6
         name: Setup Node
         with:
-          node-version: "22"
+          node-version: "24"
       - name: Build dashboard
         # dist/ is not committed; build it so the embedded UI is real for the
         # lint typecheck and the dashboard tests.
@@ -177,17 +177,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         name: Checkout
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         name: Setup pnpm
         with:
-          version: 10
-      - uses: actions/setup-node@v4
+          version: 11
+      - uses: actions/setup-node@v6
         name: Setup Node
         with:
-          node-version: "22"
-      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+          node-version: "24"
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         name: Setup uv
         with:
           # Provide a deterministic interpreter so `uv venv` does not depend on
@@ -209,7 +209,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         name: Checkout
       - uses: actions/setup-go@v6
         name: Setup Go
@@ -224,7 +224,7 @@ jobs:
           curl -sSLo ./kind https://kind.sigs.k8s.io/dl/v0.24.0/kind-linux-amd64
           chmod +x ./kind
           sudo mv ./kind /usr/local/bin/kind
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
         name: Setup Helm
       - name: Kind e2e
         run: make e2e

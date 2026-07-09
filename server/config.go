@@ -18,7 +18,7 @@ import (
 
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/knadh/koanf/parsers/yaml"
-	"github.com/knadh/koanf/providers/env"
+	"github.com/knadh/koanf/providers/env/v2"
 	"github.com/knadh/koanf/providers/rawbytes"
 	"github.com/knadh/koanf/providers/structs"
 	"github.com/knadh/koanf/v2"
@@ -447,7 +447,12 @@ func loadConfig(base *Config, path string) (*Config, error) {
 		}
 	}
 
-	if err := k.Load(env.Provider(envPrefix, configKeyDelim, envKeyToConfigKey), nil); err != nil {
+	envOpt := env.Opt{
+		Prefix:        envPrefix,
+		TransformFunc: envKeyToConfigKey,
+	}
+
+	if err := k.Load(env.Provider(configKeyDelim, envOpt), nil); err != nil {
 		return nil, fmt.Errorf("loading environment overrides: %w", err)
 	}
 
@@ -478,12 +483,13 @@ func loadConfig(base *Config, path string) (*Config, error) {
 
 // envKeyToConfigKey maps CONVEYOR_BROKER__DSN to broker.dsn: strip the
 // prefix, lowercase, and treat "__" as the nesting separator so key names
-// containing "_" (e.g. auth_tokens) survive.
-func envKeyToConfigKey(envKey string) string {
+// containing "_" (e.g. auth_tokens) survive. The value passes through
+// unchanged.
+func envKeyToConfigKey(envKey string, value string) (string, any) {
 	key := strings.TrimPrefix(envKey, envPrefix)
 	key = strings.ToLower(key)
 
-	return strings.ReplaceAll(key, envLevelDelim, configKeyDelim)
+	return strings.ReplaceAll(key, envLevelDelim, configKeyDelim), value
 }
 
 // validateRateLimitDefault checks the global default dispatch-rate knobs: the

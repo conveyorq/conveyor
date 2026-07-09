@@ -7,7 +7,7 @@
 # Build from the repository root so the vendor tree is in context:
 #   docker build -f hack/e2e-load.Dockerfile -t conveyor-e2e-load:e2e .
 
-FROM golang:1.26.4-alpine AS build
+FROM golang:1.26.5-alpine AS build
 
 WORKDIR /src
 

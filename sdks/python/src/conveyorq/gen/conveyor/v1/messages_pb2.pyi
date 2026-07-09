@@ -1,9 +1,11 @@
+import datetime
 from conveyor.v1 import task_pb2 as _task_pb2
 from google.protobuf import timestamp_pb2 as _timestamp_pb2
 from google.protobuf.internal import containers as _containers
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
-from typing import ClassVar as _ClassVar, Iterable as _Iterable, Mapping as _Mapping, Optional as _Optional, Union as _Union
+from collections.abc import Iterable as _Iterable, Mapping as _Mapping
+from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 DESCRIPTOR: _descriptor.FileDescriptor
 
 class TaskEnqueued(_message.Message):
@@ -61,7 +63,7 @@ class ExecuteTask(_message.Message):
     lease_id: str
     lease_expires_at: _timestamp_pb2.Timestamp
 
-    def __init__(self, task: _Optional[_Union[_task_pb2.TaskEnvelope, _Mapping]]=..., lease_id: _Optional[str]=..., lease_expires_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=...) -> None:
+    def __init__(self, task: _Optional[_Union[_task_pb2.TaskEnvelope, _Mapping]]=..., lease_id: _Optional[str]=..., lease_expires_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]]=...) -> None:
         ...
 
 class ExecuteBatch(_message.Message):
@@ -75,7 +77,7 @@ class ExecuteBatch(_message.Message):
     lease_expires_at: _timestamp_pb2.Timestamp
     group: str
 
-    def __init__(self, tasks: _Optional[_Iterable[_Union[_task_pb2.TaskEnvelope, _Mapping]]]=..., lease_id: _Optional[str]=..., lease_expires_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., group: _Optional[str]=...) -> None:
+    def __init__(self, tasks: _Optional[_Iterable[_Union[_task_pb2.TaskEnvelope, _Mapping]]]=..., lease_id: _Optional[str]=..., lease_expires_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]]=..., group: _Optional[str]=...) -> None:
         ...
 
 class FireGroup(_message.Message):
@@ -107,7 +109,7 @@ class GroupLeaseCompleted(_message.Message):
     type: str
     error: str
 
-    def __init__(self, tasks: _Optional[_Iterable[_Union[_task_pb2.TaskEnvelope, _Mapping]]]=..., lease_id: _Optional[str]=..., lease_expires_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., group: _Optional[str]=..., type: _Optional[str]=..., error: _Optional[str]=...) -> None:
+    def __init__(self, tasks: _Optional[_Iterable[_Union[_task_pb2.TaskEnvelope, _Mapping]]]=..., lease_id: _Optional[str]=..., lease_expires_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]]=..., group: _Optional[str]=..., type: _Optional[str]=..., error: _Optional[str]=...) -> None:
         ...
 
 class TaskCompleted(_message.Message):
@@ -121,7 +123,7 @@ class TaskCompleted(_message.Message):
     success: bool
     gateway_name: str
 
-    def __init__(self, task_id: _Optional[str]=..., queue: _Optional[str]=..., success: bool=..., gateway_name: _Optional[str]=...) -> None:
+    def __init__(self, task_id: _Optional[str]=..., queue: _Optional[str]=..., success: _Optional[bool]=..., gateway_name: _Optional[str]=...) -> None:
         ...
 
 class BatchCompleted(_message.Message):
@@ -209,7 +211,7 @@ class LeaseCycleCompleted(_message.Message):
     lease_expires_at: _timestamp_pb2.Timestamp
     error: str
 
-    def __init__(self, tasks: _Optional[_Iterable[_Union[_task_pb2.TaskEnvelope, _Mapping]]]=..., lease_id: _Optional[str]=..., lease_expires_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]]=..., error: _Optional[str]=...) -> None:
+    def __init__(self, tasks: _Optional[_Iterable[_Union[_task_pb2.TaskEnvelope, _Mapping]]]=..., lease_id: _Optional[str]=..., lease_expires_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]]=..., error: _Optional[str]=...) -> None:
         ...
 
 class LeasedTasksReleased(_message.Message):

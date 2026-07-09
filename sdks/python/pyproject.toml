@@ -26,19 +26,18 @@ classifiers = [
 ]
 dependencies = [
   "grpcio>=1.82",
-  "protobuf>=5.29,<6",
+  "protobuf>=7.35,<8",
   "cryptography>=49",
 ]
 
 [project.optional-dependencies]
 dev = [
-  "grpcio-tools>=1.71.2,<1.72",
-  "protoletariat>=3.3.10",
+  "grpcio-tools>=1.82.1,<1.83",
   "pytest>=9",
   "pytest-asyncio>=1.4",
   "mypy>=2.2",
   "ruff>=0.15",
-  "types-protobuf>=5.29,<6",
+  "types-protobuf>=7.34,<8",
 ]
 
 [project.urls]

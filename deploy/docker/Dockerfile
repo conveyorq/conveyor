@@ -9,7 +9,7 @@
 
 # The dashboard's built bundle is not committed; build it here so conveyord can
 # embed it. Runs on the native build platform (static assets are arch-neutral).
-FROM --platform=$BUILDPLATFORM node:22-alpine AS web
+FROM --platform=$BUILDPLATFORM node:24-alpine AS web
 
 WORKDIR /web
 
@@ -24,7 +24,7 @@ RUN pnpm run build
 
 # The build stage runs on the native build platform and cross-compiles to the
 # target, so multi-arch images build without emulating the Go toolchain.
-FROM --platform=$BUILDPLATFORM golang:1.26.4-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.26.5-alpine AS build
 
 WORKDIR /src
 
