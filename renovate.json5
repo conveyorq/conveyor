@@ -21,6 +21,15 @@
   prHourlyLimit: 0,
   labels: ["dependencies"],
 
+  // Hold every update until the release is at least three days old, and keep a
+  // not-yet-aged update out of PRs entirely (internalChecksFilter: strict)
+  // rather than opening a pending one. pnpm 11 enforces a one-day
+  // minimumReleaseAge supply-chain policy on the lockfile, so a PR raised the
+  // moment a version publishes fails the frozen-lockfile lint; waiting past
+  // that window keeps dependency PRs green.
+  minimumReleaseAge: "3 days",
+  internalChecksFilter: "strict",
+
   // Keep go.mod/go.sum tidy after a Go module update.
   postUpdateOptions: ["gomodTidy"],
 

@@ -30,7 +30,8 @@ and priorities, backed by Postgres or an in-memory broker, with **no Redis and n
 - [How it works](#how-it-works)
 - [Usage](#usage)
 - [SDKs](#sdks)
-- [Enqueue from anywhere](#enqueue-from-anywhere)
+- [Enqueue over HTTP](#enqueue-over-http)
+- [Webhook workers](#webhook-workers)
 - [Embedded mode](#embedded-mode)
 - [Dashboard](#dashboard)
 - [Documentation](#documentation)
@@ -342,7 +343,7 @@ archive, pause and resume, rate and concurrency limits, cron) are driven by the
 `conveyor` CLI and the [dashboard](#dashboard), which keeps the application
 surface small and operator concerns out of app code.
 
-## Enqueue from anywhere
+## Enqueue over HTTP
 
 Producing does not require an SDK. The server speaks plain HTTP/JSON on the
 same port, so any language, cron job, or webhook can enqueue with a POST:
@@ -360,11 +361,25 @@ curl -sS http://localhost:8080/conveyor.v1.TaskService/Enqueue \
 ```
 
 The [HTTP API guide](docs/http-api.md) covers all the enqueue endpoints, the
-JSON encoding rules, and the sharp edges. Consuming needs no SDK either:
-register an HTTP endpoint as a [webhook worker](docs/webhook-workers.md) and
-Conveyor pushes each task to it as a signed JSON-RPC call, with the same
-retries, concurrency, and circuit breaking an SDK worker gets. It stays
-push-based, so there is still no queue to poll.
+JSON encoding rules, and the sharp edges.
+
+## Webhook workers
+
+Consuming does not require an SDK either, and it stays push-based. Register an
+HTTP endpoint as a **webhook worker** and Conveyor leases tasks to it and
+delivers each one as a signed JSON-RPC call, with the same retries,
+concurrency, and circuit breaking an SDK worker gets:
+
+```sh
+conveyor webhooks add billing-hooks https://hooks.example.com/tasks \
+  --queue billing=3 --secret "$WEBHOOK_SECRET" --concurrency 8
+```
+
+Your endpoint runs the task and answers with the outcome; long-running work
+accepts the delivery and reports back over a lease-authenticated callback.
+There is no queue to poll. The [webhook workers guide](docs/webhook-workers.md)
+covers the delivery protocol, signature verification, retries, and the circuit
+breaker.
 
 ## Embedded mode
 
