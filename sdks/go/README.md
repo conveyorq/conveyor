@@ -96,11 +96,11 @@ in-flight tasks finish before the stream closes.
 
 ## Outcome mapping
 
-| Handler returns                       | Outcome      | Server result                        |
-|---------------------------------------|--------------|--------------------------------------|
-| `nil`                                 | `SUCCESS`    | completed                            |
-| `conveyor.SkipRetry(err)`             | `SKIP_RETRY` | archived (dead-lettered) immediately |
-| any other non-nil error               | `RETRY`      | retried with backoff, then archived  |
+| Handler returns           | Outcome      | Server result                        |
+|---------------------------|--------------|--------------------------------------|
+| `nil`                     | `SUCCESS`    | completed                            |
+| `conveyor.SkipRetry(err)` | `SKIP_RETRY` | archived (dead-lettered) immediately |
+| any other non-nil error   | `RETRY`      | retried with backoff, then archived  |
 
 A wrapped `SkipRetry` is still detected, and `conveyor.IsSkipRetry(err)` reports
 whether an error carries the marker.

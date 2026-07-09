@@ -27,7 +27,7 @@ func newTestAdminService(t *testing.T) (*AdminService, *TaskService, broker.Brok
 	t.Helper()
 
 	engine, taskLog := startTestEngine(t)
-	admin := NewAdminService(engine, taskLog, clock.System(), stubSessions(nil))
+	admin := NewAdminService(engine, taskLog, clock.System(), stubSessions(nil), true)
 	tasks := NewTaskService(engine, taskLog, clock.System(), testDefaultMaxRetry)
 
 	return admin, tasks, taskLog
@@ -580,7 +580,7 @@ func TestListWorkerSessions(t *testing.T) {
 	connected := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
 	admin := NewAdminService(engine, taskLog, clock.System(), stubSessions{
 		{ID: "s1", Queues: []string{"default", "critical"}, Concurrency: 8, SDKVersion: "v1.2.3", ConnectedAt: connected},
-	})
+	}, true)
 
 	resp, err := admin.ListWorkerSessions(context.Background(), connect.NewRequest(&conveyorv1.ListWorkerSessionsRequest{}))
 	require.NoError(t, err)

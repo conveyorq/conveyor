@@ -147,6 +147,7 @@ CONVEYOR_ADDR/CONVEYOR_TOKEN environment variables; flags win.`,
 		newConcurrencyLimitCommand(conn),
 		newGroupConfigCommand(conn),
 		newCronCommand(conn),
+		newWebhooksCommand(conn),
 		newClusterCommand(conn),
 		newEventsCommand(conn),
 	)

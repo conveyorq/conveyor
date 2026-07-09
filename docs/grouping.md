@@ -1,13 +1,8 @@
 # Group aggregation (batch processing)
 
-Group aggregation lets you **coalesce many tasks into one batch** and process
-them together in a single handler call. It is the answer to "100 of these events
-arrived in a minute, handle them once" (debounce/digest) and to "process 1,000
-of these in one bulk API call" (batching).
+Group aggregation lets you **coalesce many tasks into one batch** and process them together in a single handler call. It is the answer to "100 of these events arrived in a minute, handle them once" (debounce/digest) and to "process 1,000 of these in one bulk API call" (batching).
 
-A producer tags tasks with a **group**; the server accumulates members of the
-same `(queue, group)` and, when the group *fires*, delivers the whole group to a
-worker as one batch.
+A producer tags tasks with a **group**; the server accumulates members of the same `(queue, group)` and, when the group *fires*, delivers the whole group to a worker as one batch.
 
 ## Enqueue grouped tasks
 
@@ -20,15 +15,11 @@ client.Enqueue(ctx,
 )
 ```
 
-A grouped task lands in the **`aggregating`** state instead of `pending`; it is
-not dispatched until its group fires. `Group` is mutually exclusive with
-`ProcessAt`/`ProcessIn`, and a group is **single-type**: every member shares the
-task's type.
+A grouped task lands in the **`aggregating`** state instead of `pending`; it is not dispatched until its group fires. `Group` is mutually exclusive with `ProcessAt`/`ProcessIn`, and a group is **single-type**: every member shares the task's type.
 
 ## Handle a batch
 
-Register a batch handler with `HandleBatch`; it receives all the group's members
-in one call:
+Register a batch handler with `HandleBatch`; it receives all the group's members in one call:
 
 ```go
 mux := conveyor.NewMux()
@@ -51,14 +42,11 @@ return &conveyor.BatchError{Errs: map[string]error{
 // members not listed succeed
 ```
 
-A batch handler also serves **single deliveries** of its type (a retried or
-released member is redelivered individually, as a batch of one), so you don't
-need a separate `HandleFunc` for the same type.
+A batch handler also serves **single deliveries** of its type (a retried or released member is redelivered individually, as a batch of one), so you don't need a separate `HandleFunc` for the same type.
 
 ## When a group fires
 
-A group fires when **any** threshold trips, configured server-side (engine
-config / `conveyor.yaml`):
+A group fires when **any** threshold trips, configured server-side (engine config / `conveyor.yaml`):
 
 | Setting | Meaning | Default |
 |---|---|---|
@@ -67,17 +55,11 @@ config / `conveyor.yaml`):
 | `group_grace_period` | fire this long after the **last** member (debounce) | 10s |
 | `group_sweep_interval` | how often the server evaluates firing | 1s |
 
-The grace period gives coalescing (it resets on each new member); the max-delay
-bounds worst-case latency; the max-size bounds batch size.
+The grace period gives coalescing (it resets on each new member); the max-delay bounds worst-case latency; the max-size bounds batch size.
 
 ## Per-group overrides
 
-The settings above are the server-wide defaults. When one group needs to batch
-differently from the rest, override its thresholds per `(queue, group)` without
-touching the global config. An override sets all three thresholds (max size, max
-delay, grace period); the sweeper resolves each group's effective values on every
-sweep, preferring its own override, then a queue-wide default, then the global
-config.
+The settings above are the server-wide defaults. When one group needs to batch differently from the rest, override its thresholds per `(queue, group)` without touching the global config. An override sets all three thresholds (max size, max delay, grace period); the sweeper resolves each group's effective values on every sweep, preferring its own override, then a queue-wide default, then the global config.
 
 ```console
 # Flush the "welcome" group on the email queue at 20 members or after 2 minutes.
@@ -90,27 +72,15 @@ $ conveyor group ls
 $ conveyor group rm email --group welcome
 ```
 
-The same operations are available on `AdminService` as `SetGroupConfig`,
-`ListGroupConfigs`, and `DeleteGroupConfig`, and in the dashboard's **Groups**
-tab. Overrides persist in the broker and apply on the next sweep, so a change
-takes effect with no restart. An empty `--group` is the queue-wide default. The
-resolved max size also caps the batch lease, so a larger per-group size is
-honored end to end.
+The same operations are available on `AdminService` as `SetGroupConfig`, `ListGroupConfigs`, and `DeleteGroupConfig`, and in the dashboard's **Groups** tab. Overrides persist in the broker and apply on the next sweep, so a change takes effect with no restart. An empty `--group` is the queue-wide default. The resolved max size also caps the batch lease, so a larger per-group size is honored end to end.
 
 ## Semantics & guarantees
 
-- **At-least-once, like everything else.** A batch shares one lease; heartbeats
-  keep it alive while the handler runs. If the worker dies, the whole batch
-  redelivers.
-- **One slot per batch.** A batch counts as one unit of the worker's
-  concurrency, regardless of how many members it carries.
-- **Per-member outcomes are individual.** A member that retries or is released
-  comes back on its own (not re-aggregated into a new group).
-- **Opt-in and back-compatible.** Workers that register no batch handlers never
-  receive a batch; ungrouped tasks are completely unaffected.
+- **At-least-once, like everything else.** A batch shares one lease; heartbeats keep it alive while the handler runs. If the worker dies, the whole batch redelivers.
+- **One slot per batch.** A batch counts as one unit of the worker's concurrency, regardless of how many members it carries.
+- **Per-member outcomes are individual.** A member that retries or is released comes back on its own (not re-aggregated into a new group).
+- **Opt-in and back-compatible.** Workers that register no batch handlers never receive a batch; ungrouped tasks are completely unaffected.
 
 ## Observability
 
-Grouped tasks show up as the **Aggregating** count per queue, both in the
-dashboard and in `AdminService.ListQueues`, so you can see a group filling up
-before it fires.
+Grouped tasks show up as the **Aggregating** count per queue, both in the dashboard and in `AdminService.ListQueues`, so you can see a group filling up before it fires.

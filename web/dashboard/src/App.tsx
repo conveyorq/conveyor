@@ -6,6 +6,7 @@ import { ConcurrencyLimits } from "./views/ConcurrencyLimits.tsx";
 import { GroupConfigs } from "./views/GroupConfigs.tsx";
 import { Tasks } from "./views/Tasks.tsx";
 import { Cron } from "./views/Cron.tsx";
+import { Webhooks } from "./views/Webhooks.tsx";
 import { Workers } from "./views/Workers.tsx";
 import { Metrics } from "./views/Metrics.tsx";
 import { Broker } from "./views/Broker.tsx";
@@ -31,6 +32,7 @@ import {
   IconQueues,
   IconSun,
   IconTasks,
+  IconWebhooks,
   IconWorkers,
 } from "./components/icons.tsx";
 
@@ -46,6 +48,7 @@ const tabs = [
   { id: "groups", label: "Groups", icon: <IconGroups />, render: () => <GroupConfigs /> },
   { id: "tasks", label: "Tasks", icon: <IconTasks />, render: () => <Tasks /> },
   { id: "cron", label: "Cron", icon: <IconCron />, render: () => <Cron /> },
+  { id: "webhooks", label: "Webhooks", icon: <IconWebhooks />, render: () => <Webhooks /> },
   { id: "workers", label: "Workers", icon: <IconWorkers />, render: () => <Workers /> },
   { id: "metrics", label: "Metrics", icon: <IconMetrics />, render: () => <Metrics /> },
   { id: "broker", label: "Broker", icon: <IconBroker />, render: () => <Broker /> },

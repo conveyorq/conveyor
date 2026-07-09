@@ -846,3 +846,41 @@ func TestRollingRestartKeepsProcessing(t *testing.T) {
 
 	requireDrained(t, taskLog)
 }
+
+// TestEngineEnqueueAssignsID proves an enqueue with no id mints one, driving
+// the id-assignment branch of Enqueue.
+func TestEngineEnqueueAssignsID(t *testing.T) {
+	ctx := context.Background()
+	taskLog := memory.New(clock.System())
+	engine := startEngine(t, taskLog)
+
+	task := newTask("", "q-assign-id", "email:send", 4)
+	task.Id = ""
+
+	require.NoError(t, engine.Enqueue(ctx, task))
+	require.NotEmpty(t, task.GetId(), "an id-less enqueue mints a fresh ULID")
+
+	_, _, err := taskLog.GetTask(ctx, task.GetId())
+	require.NoError(t, err, "the minted id names the committed task")
+}
+
+// TestEngineTellWebhookGatewayUnknownFails proves routing to a registration
+// whose gateway does not exist surfaces the resolution error.
+func TestEngineTellWebhookGatewayUnknownFails(t *testing.T) {
+	engine := startEngine(t, memory.New(clock.System()))
+
+	err := engine.TellWebhookGateway(context.Background(), "no-such-registration", new(conveyorv1.WebhookReconcile))
+	require.Error(t, err, "a message to an absent webhook gateway must fail to resolve")
+}
+
+// TestEngineReconcileWebhookWorkersAfterStopFails proves the reconcile nudge
+// surfaces an error once the actor system is stopped and the manager can no
+// longer be resolved.
+func TestEngineReconcileWebhookWorkersAfterStopFails(t *testing.T) {
+	ctx := context.Background()
+	engine := newNode(memory.New(clock.System()), testSettings, freePorts(t, 3), nil)
+	require.NoError(t, engine.Start(ctx))
+	require.NoError(t, engine.Stop(ctx))
+
+	require.Error(t, engine.ReconcileWebhookWorkers(ctx), "reconcile must fail once the system is stopped")
+}

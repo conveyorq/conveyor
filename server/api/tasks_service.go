@@ -124,7 +124,6 @@ func (s *TaskService) EnqueueBatch(ctx context.Context, request *connect.Request
 
 		if err != nil {
 			results = append(results, &conveyorv1.EnqueueResult{Error: err.Error()})
-
 			continue
 		}
 
@@ -160,7 +159,6 @@ func (s *TaskService) EnqueueTx(ctx context.Context, request *connect.Request[co
 		envelope, err := s.envelopeFromRequest(item)
 		if err != nil {
 			span.RecordError(err)
-
 			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("task %d: %w", index, err))
 		}
 
@@ -172,7 +170,6 @@ func (s *TaskService) EnqueueTx(ctx context.Context, request *connect.Request[co
 
 	if err := s.engine.EnqueueBatch(ctx, envelopes); err != nil {
 		span.RecordError(err)
-
 		return nil, enqueueError(err)
 	}
 

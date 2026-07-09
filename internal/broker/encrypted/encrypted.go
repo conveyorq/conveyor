@@ -398,6 +398,32 @@ func (e *encryptedBroker) DeleteCronEntry(ctx context.Context, id string) error 
 	return e.inner.DeleteCronEntry(ctx, id)
 }
 
+// UpsertWebhookWorker delegates to the wrapped broker. A registration carries
+// signing secrets, not a task payload, so there is nothing to encrypt.
+func (e *encryptedBroker) UpsertWebhookWorker(ctx context.Context, worker *broker.WebhookWorker) error {
+	return e.inner.UpsertWebhookWorker(ctx, worker)
+}
+
+// GetWebhookWorker delegates to the wrapped broker.
+func (e *encryptedBroker) GetWebhookWorker(ctx context.Context, name string) (*broker.WebhookWorker, error) {
+	return e.inner.GetWebhookWorker(ctx, name)
+}
+
+// ListWebhookWorkers delegates to the wrapped broker.
+func (e *encryptedBroker) ListWebhookWorkers(ctx context.Context) ([]*broker.WebhookWorker, error) {
+	return e.inner.ListWebhookWorkers(ctx)
+}
+
+// SetWebhookWorkerPaused delegates to the wrapped broker.
+func (e *encryptedBroker) SetWebhookWorkerPaused(ctx context.Context, name string, paused bool) error {
+	return e.inner.SetWebhookWorkerPaused(ctx, name, paused)
+}
+
+// DeleteWebhookWorker delegates to the wrapped broker.
+func (e *encryptedBroker) DeleteWebhookWorker(ctx context.Context, name string) error {
+	return e.inner.DeleteWebhookWorker(ctx, name)
+}
+
 // SetEventSink delegates to the wrapped broker. Lifecycle events carry no
 // payload or result bytes, so there is nothing to encrypt: the wrapped broker
 // emits the same events whether or not it is wrapped.

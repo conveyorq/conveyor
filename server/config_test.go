@@ -259,6 +259,44 @@ func TestValidateRejections(t *testing.T) {
 		{"bad webhook url", func(c *Config) { c.Events.Webhook.URL = "://nope" }, "events.webhook.url"},
 		{"non-http webhook url", func(c *Config) { c.Events.Webhook.URL = "ftp://example.com" }, "events.webhook.url"},
 		{"negative webhook retries", func(c *Config) { c.Events.Webhook.MaxRetries = -1 }, "events.webhook.max_retries"},
+		{"webhook worker bad name", func(c *Config) {
+			c.WebhookWorkers = []WebhookWorkerConfig{validWebhookWorker(func(w *WebhookWorkerConfig) { w.Name = "-bad" })}
+		}, "webhook_workers[0].name"},
+		{"webhook worker duplicate name", func(c *Config) {
+			c.WebhookWorkers = []WebhookWorkerConfig{validWebhookWorker(nil), validWebhookWorker(nil)}
+		}, "webhook_workers[1].name"},
+		{"webhook worker bad url", func(c *Config) {
+			c.WebhookWorkers = []WebhookWorkerConfig{validWebhookWorker(func(w *WebhookWorkerConfig) { w.URL = "ftp://example.com" })}
+		}, "webhook_workers[0].url"},
+		{"webhook worker no queues", func(c *Config) {
+			c.WebhookWorkers = []WebhookWorkerConfig{validWebhookWorker(func(w *WebhookWorkerConfig) { w.Queues = nil })}
+		}, "webhook_workers[0].queues"},
+		{"webhook worker bad queue name", func(c *Config) {
+			c.WebhookWorkers = []WebhookWorkerConfig{validWebhookWorker(func(w *WebhookWorkerConfig) { w.Queues = map[string]int32{"-bad": 1} })}
+		}, "webhook_workers[0].queues"},
+		{"webhook worker zero weight", func(c *Config) {
+			c.WebhookWorkers = []WebhookWorkerConfig{validWebhookWorker(func(w *WebhookWorkerConfig) { w.Queues = map[string]int32{"default": 0} })}
+		}, "webhook_workers[0].queues[default]"},
+		{"webhook worker zero concurrency", func(c *Config) {
+			c.WebhookWorkers = []WebhookWorkerConfig{validWebhookWorker(func(w *WebhookWorkerConfig) { w.Concurrency = 0 })}
+		}, "webhook_workers[0].concurrency"},
+		{"webhook worker no secrets", func(c *Config) {
+			c.WebhookWorkers = []WebhookWorkerConfig{validWebhookWorker(func(w *WebhookWorkerConfig) { w.Secrets = nil })}
+		}, "webhook_workers[0].secrets"},
+		{"webhook worker three secrets", func(c *Config) {
+			c.WebhookWorkers = []WebhookWorkerConfig{validWebhookWorker(func(w *WebhookWorkerConfig) { w.Secrets = []string{"a", "b", "c"} })}
+		}, "webhook_workers[0].secrets"},
+		{"webhook worker empty secret", func(c *Config) {
+			c.WebhookWorkers = []WebhookWorkerConfig{validWebhookWorker(func(w *WebhookWorkerConfig) { w.Secrets = []string{""} })}
+		}, "webhook_workers[0].secrets"},
+		{"webhook worker negative timeout", func(c *Config) {
+			c.WebhookWorkers = []WebhookWorkerConfig{validWebhookWorker(func(w *WebhookWorkerConfig) { w.RequestTimeout = -time.Second })}
+		}, "webhook_workers[0].request_timeout"},
+		{"webhook worker http outside dev", func(c *Config) {
+			c.API.AuthTokens = []string{"token"}
+			c.API.AllowUnauthenticated = false
+			c.WebhookWorkers = []WebhookWorkerConfig{validWebhookWorker(func(w *WebhookWorkerConfig) { w.URL = "http://example.com/tasks" })}
+		}, "webhook_workers[0].url"},
 	}
 
 	for _, tc := range cases {
@@ -271,6 +309,41 @@ func TestValidateRejections(t *testing.T) {
 				t.Fatalf("want error mentioning %q, got %v", tc.wantKey, err)
 			}
 		})
+	}
+}
+
+// validWebhookWorker builds a registration that passes validation, optionally
+// mutated to produce one specific violation.
+func validWebhookWorker(mutate func(*WebhookWorkerConfig)) WebhookWorkerConfig {
+	worker := WebhookWorkerConfig{
+		Name:        "hooks",
+		URL:         "https://example.com/tasks",
+		Queues:      map[string]int32{"default": 1},
+		Concurrency: 4,
+		Secrets:     []string{"secret"},
+	}
+
+	if mutate != nil {
+		mutate(&worker)
+	}
+
+	return worker
+}
+
+func TestValidateWebhookWorkersAcceptsValidEntries(t *testing.T) {
+	config := DevConfig()
+	config.WebhookWorkers = []WebhookWorkerConfig{
+		validWebhookWorker(nil),
+		validWebhookWorker(func(w *WebhookWorkerConfig) {
+			w.Name = "hooks-2"
+			w.URL = "http://localhost:9999/tasks"
+			w.RequestTimeout = 30 * time.Second
+			w.Paused = true
+		}),
+	}
+
+	if err := config.Validate(); err != nil {
+		t.Fatalf("valid webhook workers must validate: %v", err)
 	}
 }
 

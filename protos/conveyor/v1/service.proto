@@ -33,6 +33,21 @@ service WorkerService {
   rpc Session(stream WorkerMessage) returns (stream ServerMessage) {}
 }
 
+// WebhookService is the callback surface for webhook workers completing
+// tasks asynchronously. A delivery that answered "accepted" carries a lease
+// token; the endpoint heartbeats with it to keep its lease and reports the
+// final outcome when done, mirroring the worker stream's Heartbeat and
+// Result frames as unary calls. The token authenticates one delivery only;
+// no API bearer token is needed.
+service WebhookService {
+  // Heartbeat extends the delivery's lease. A missed heartbeat lets the
+  // lease expire and the task retry elsewhere, exactly like a crashed
+  // stream worker.
+  rpc Heartbeat(WebhookHeartbeatRequest) returns (WebhookHeartbeatResponse) {}
+  // ReportResult reports the delivery's final outcome and frees its slot.
+  rpc ReportResult(WebhookReportResultRequest) returns (WebhookReportResultResponse) {}
+}
+
 // AdminService is the inspection and operations API.
 service AdminService {
   rpc ListQueues(ListQueuesRequest) returns (ListQueuesResponse) {}
@@ -79,6 +94,19 @@ service AdminService {
   rpc ResumeCron(ResumeCronRequest) returns (ResumeCronResponse) {}
   rpc DeleteCron(DeleteCronRequest) returns (DeleteCronResponse) {}
   rpc ClusterInfo(ClusterInfoRequest) returns (ClusterInfoResponse) {}
+  // ListWebhookWorkers returns every webhook worker registration; signing
+  // secrets are redacted.
+  rpc ListWebhookWorkers(ListWebhookWorkersRequest) returns (ListWebhookWorkersResponse) {}
+  // UpsertWebhookWorker creates or replaces a webhook worker registration by
+  // name and applies it immediately.
+  rpc UpsertWebhookWorker(UpsertWebhookWorkerRequest) returns (UpsertWebhookWorkerResponse) {}
+  // PauseWebhookWorker suspends delivery to a registration without deleting it.
+  rpc PauseWebhookWorker(PauseWebhookWorkerRequest) returns (PauseWebhookWorkerResponse) {}
+  // ResumeWebhookWorker resumes delivery to a paused registration.
+  rpc ResumeWebhookWorker(ResumeWebhookWorkerRequest) returns (ResumeWebhookWorkerResponse) {}
+  // DeleteWebhookWorker removes a registration; its in-flight deliveries are
+  // released for redelivery elsewhere.
+  rpc DeleteWebhookWorker(DeleteWebhookWorkerRequest) returns (DeleteWebhookWorkerResponse) {}
   // ListWorkerSessions lists the worker sessions connected to the node serving
   // the request, for the operations dashboard's worker-topology view.
   rpc ListWorkerSessions(ListWorkerSessionsRequest) returns (ListWorkerSessionsResponse) {}
@@ -296,6 +324,35 @@ message Result {
 message Heartbeat {
   repeated string active_task_ids = 1;
 }
+
+// WebhookHeartbeatRequest extends one asynchronously completing webhook
+// delivery's lease.
+message WebhookHeartbeatRequest {
+  // lease_token is the token the delivery carried; it authenticates this
+  // delivery only.
+  string lease_token = 1;
+}
+
+// WebhookHeartbeatResponse acknowledges a webhook heartbeat.
+message WebhookHeartbeatResponse {}
+
+// WebhookReportResultRequest reports the final outcome of one
+// asynchronously completing webhook delivery.
+message WebhookReportResultRequest {
+  // lease_token is the token the delivery carried.
+  string lease_token = 1;
+  // outcome is the execution outcome: success, retry, or skip-retry.
+  TaskOutcome outcome = 2;
+  // error_msg describes a failed execution; it lands in the task's last
+  // error.
+  string error_msg = 3;
+  // result optionally carries the handler's result payload, stored with a
+  // successful task.
+  bytes result = 4;
+}
+
+// WebhookReportResultResponse acknowledges a reported result.
+message WebhookReportResultResponse {}
 
 // Progress reports how far a running task has advanced, for inspection while it
 // executes. It is advisory: the server records the latest value and never gates
@@ -677,3 +734,67 @@ message WatchEventsRequest {
   // transition.
   repeated TaskEventType event_types = 2;
 }
+
+// WebhookWorker is a webhook worker registration: an HTTP endpoint the
+// server pushes tasks to as JSON-RPC calls.
+message WebhookWorker {
+  // name uniquely identifies the registration.
+  string name = 1;
+  // url is the endpoint tasks are delivered to.
+  string url = 2;
+  // queues maps each served queue to its dispatch weight.
+  map<string, int32> queues = 3;
+  // concurrency caps in-flight tasks on this endpoint.
+  int32 concurrency = 4;
+  // secrets holds one or two delivery-signing secrets, newest first. It is
+  // write-only: list responses redact it.
+  repeated string secrets = 5;
+  // batch_types are the task types delivered as one batch when their
+  // aggregation group fires.
+  repeated string batch_types = 6;
+  // request_timeout bounds a synchronous delivery; unset selects the
+  // server default.
+  google.protobuf.Duration request_timeout = 7;
+  // paused suspends delivery without deleting the registration.
+  bool paused = 8;
+}
+
+// ListWebhookWorkersRequest asks for every registration.
+message ListWebhookWorkersRequest {}
+
+// ListWebhookWorkersResponse carries the registrations, secrets redacted.
+message ListWebhookWorkersResponse {
+  repeated WebhookWorker workers = 1;
+}
+
+// UpsertWebhookWorkerRequest creates or replaces one registration.
+message UpsertWebhookWorkerRequest {
+  WebhookWorker worker = 1;
+}
+
+// UpsertWebhookWorkerResponse acknowledges the upsert.
+message UpsertWebhookWorkerResponse {}
+
+// PauseWebhookWorkerRequest suspends one registration by name.
+message PauseWebhookWorkerRequest {
+  string name = 1;
+}
+
+// PauseWebhookWorkerResponse acknowledges the pause.
+message PauseWebhookWorkerResponse {}
+
+// ResumeWebhookWorkerRequest resumes one paused registration by name.
+message ResumeWebhookWorkerRequest {
+  string name = 1;
+}
+
+// ResumeWebhookWorkerResponse acknowledges the resume.
+message ResumeWebhookWorkerResponse {}
+
+// DeleteWebhookWorkerRequest removes one registration by name.
+message DeleteWebhookWorkerRequest {
+  string name = 1;
+}
+
+// DeleteWebhookWorkerResponse acknowledges the delete.
+message DeleteWebhookWorkerResponse {}

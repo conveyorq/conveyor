@@ -39,9 +39,10 @@ const eventDedupWindow = 30 * time.Second
 // rest no-op. Each singleton schedules its own recurring tick on start, so
 // the tick stream follows the singleton across failover.
 const (
-	schedulerActorName = "conveyor-scheduler"
-	reaperActorName    = "conveyor-reaper"
-	sweeperActorName   = "conveyor-group-sweeper"
+	schedulerActorName      = "conveyor-scheduler"
+	reaperActorName         = "conveyor-reaper"
+	sweeperActorName        = "conveyor-group-sweeper"
+	webhookManagerActorName = "conveyor-webhook-manager"
 )
 
 // Config wires one engine node. Clustering is always on: a node with no
@@ -128,7 +129,7 @@ func (e *Engine) Start(ctx context.Context) error {
 			WithPeersPort(e.config.PeersPort).
 			WithMinimumPeersQuorum(1).
 			WithReplicaCount(1).
-			WithKinds(NewScheduler(), NewReaper(), NewGroupSweeper()).
+			WithKinds(NewScheduler(), NewReaper(), NewGroupSweeper(), NewWebhookManager()).
 			WithGrains(new(QueueGrain))),
 		// Bound the cluster pub/sub dedup window used by the lifecycle event
 		// stream, so its memory stays flat under sustained publishing.
@@ -164,6 +165,10 @@ func (e *Engine) Start(ctx context.Context) error {
 
 	if err = spawnSingleton(ctx, system, sweeperActorName, NewGroupSweeper()); err != nil {
 		return fmt.Errorf("spawning group sweeper singleton: %w", err)
+	}
+
+	if err = spawnSingleton(ctx, system, webhookManagerActorName, NewWebhookManager()); err != nil {
+		return fmt.Errorf("spawning webhook manager singleton: %w", err)
 	}
 
 	// Per-node dependency-resolver pool: completion-time dependency resolution
@@ -375,4 +380,29 @@ func (e *Engine) TellQueue(ctx context.Context, queue string, message proto.Mess
 	}
 
 	return e.system.TellGrain(ctx, identity, message)
+}
+
+// TellWebhookGateway routes a message to one registration's webhook gateway
+// wherever it runs in the cluster; callbacks land on any API node while the
+// gateway lives on the webhook manager's node.
+func (e *Engine) TellWebhookGateway(ctx context.Context, registration string, message proto.Message) error {
+	pid, err := e.system.ActorOf(ctx, webhookGatewayPrefix+registration)
+	if err != nil {
+		return fmt.Errorf("resolving webhook gateway %s: %w", registration, err)
+	}
+
+	return goakt.Tell(ctx, pid, message)
+}
+
+// ReconcileWebhookWorkers nudges the webhook manager to reconcile its
+// gateways against the persisted registrations now, instead of on its next
+// tick. The admin surface calls it after changing a registration so the
+// change applies immediately.
+func (e *Engine) ReconcileWebhookWorkers(ctx context.Context) error {
+	pid, err := e.system.ActorOf(ctx, webhookManagerActorName)
+	if err != nil {
+		return fmt.Errorf("resolving webhook manager: %w", err)
+	}
+
+	return goakt.Tell(ctx, pid, new(conveyorv1.WebhookReconcile))
 }

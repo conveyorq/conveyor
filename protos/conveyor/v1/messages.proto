@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package conveyor.v1;
 
+import "conveyor/v1/service.proto";
 import "conveyor/v1/task.proto";
 import "google/protobuf/timestamp.proto";
 
@@ -207,3 +208,35 @@ message ResolveDependents {
   // task_id is the finished task whose dependents are to be reconciled.
   string task_id = 1;
 }
+
+// WebhookLeaseHeartbeat extends one asynchronously completing webhook
+// delivery's lease. The API callback handler verifies the delivery's lease
+// token, then routes this to the owning webhook gateway; the lease id pins
+// the extension to the delivery the token was minted for, so a stale token
+// from a superseded delivery cannot touch the current one.
+message WebhookLeaseHeartbeat {
+  // task_id is the delivered task.
+  string task_id = 1;
+  // lease_id is the delivery the token was minted for.
+  string lease_id = 2;
+}
+
+// WebhookLeaseResult reports the final outcome of one asynchronously
+// completing webhook delivery, routed like WebhookLeaseHeartbeat.
+message WebhookLeaseResult {
+  // task_id is the delivered task.
+  string task_id = 1;
+  // lease_id is the delivery the token was minted for.
+  string lease_id = 2;
+  // outcome is the execution outcome: success, retry, or skip-retry.
+  conveyor.v1.TaskOutcome outcome = 3;
+  // error_msg describes a failed execution.
+  string error_msg = 4;
+  // result optionally carries the handler's result payload.
+  bytes result = 5;
+}
+
+// WebhookReconcile asks the webhook manager to reconcile its gateways
+// against the persisted registrations now, instead of on its next tick; the
+// admin surface sends it after changing a registration.
+message WebhookReconcile {}

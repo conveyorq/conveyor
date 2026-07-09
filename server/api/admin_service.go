@@ -46,18 +46,22 @@ type AdminService struct {
 	timeSource clock.Clock
 	// sessions lists the worker sessions connected to this node.
 	sessions SessionLister
+	// allowInsecureWebhooks admits plaintext http webhook URLs; only an
+	// unauthenticated development server sets it.
+	allowInsecureWebhooks bool
 }
 
 // enforce interface compliance at compile time.
 var _ conveyorv1connect.AdminServiceHandler = (*AdminService)(nil)
 
 // NewAdminService assembles the admin API service.
-func NewAdminService(engine *actors.Engine, taskLog broker.Broker, timeSource clock.Clock, sessions SessionLister) *AdminService {
+func NewAdminService(engine *actors.Engine, taskLog broker.Broker, timeSource clock.Clock, sessions SessionLister, allowInsecureWebhooks bool) *AdminService {
 	return &AdminService{
-		engine:     engine,
-		taskLog:    taskLog,
-		timeSource: timeSource,
-		sessions:   sessions,
+		engine:                engine,
+		taskLog:               taskLog,
+		timeSource:            timeSource,
+		sessions:              sessions,
+		allowInsecureWebhooks: allowInsecureWebhooks,
 	}
 }
 

@@ -150,6 +150,16 @@ export function IconExternal(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+// IconWebhooks is an outgoing bolt into a node (webhook push delivery).
+export function IconWebhooks(props: SVGProps<SVGSVGElement>) {
+  return (
+    <Svg {...props}>
+      <path d="M13 3l-5 8h4l-2 7 7-10h-4l3-5z" />
+      <circle cx="19" cy="19" r="2.5" />
+    </Svg>
+  );
+}
+
 // IconSun is a sun (switch to light mode).
 export function IconSun(props: SVGProps<SVGSVGElement>) {
   return (

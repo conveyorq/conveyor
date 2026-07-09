@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/conveyorq/conveyor/embedded"
+
 	conveyor "github.com/conveyorq/conveyor/sdks/go"
 )
 

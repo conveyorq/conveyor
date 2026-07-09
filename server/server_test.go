@@ -13,6 +13,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -23,6 +24,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/conveyorq/conveyor/internal/broker"
+	"github.com/conveyorq/conveyor/internal/broker/memory"
 	"github.com/conveyorq/conveyor/internal/clock"
 )
 
@@ -375,5 +378,124 @@ func TestBuildClusterTLSRejectsEmptyCA(t *testing.T) {
 
 	if _, err := node.buildClusterTLS(); err == nil {
 		t.Fatal("expected an error for a CA file with no certificates")
+	}
+}
+
+func TestMetricsAddrBeforeStartIsEmpty(t *testing.T) {
+	config := DevConfig()
+
+	node, err := New(config, NewLogger(config.Log))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if addr := node.MetricsAddr(); addr != "" {
+		t.Fatalf("MetricsAddr before start = %q, want empty", addr)
+	}
+}
+
+func TestParseEventTypesResolvesKnownNames(t *testing.T) {
+	types, err := parseEventTypes([]string{"TASK_EVENT_TYPE_COMPLETED", "TASK_EVENT_TYPE_ARCHIVED"})
+	if err != nil {
+		t.Fatalf("known event types must resolve: %v", err)
+	}
+
+	if len(types) != 2 {
+		t.Fatalf("resolved %d event types, want 2", len(types))
+	}
+
+	// An empty list resolves to an empty slice, not an error.
+	empty, err := parseEventTypes(nil)
+	if err != nil {
+		t.Fatalf("an empty list must resolve: %v", err)
+	}
+
+	if len(empty) != 0 {
+		t.Fatalf("resolved %d event types from nil, want 0", len(empty))
+	}
+}
+
+func TestParseEventTypesRejectsUnknownName(t *testing.T) {
+	if _, err := parseEventTypes([]string{"TASK_EVENT_TYPE_NOPE"}); err == nil {
+		t.Fatal("an unknown event type name must be rejected")
+	}
+}
+
+func TestSeedWebhookWorkers(t *testing.T) {
+	config := DevConfig()
+	config.WebhookWorkers = []WebhookWorkerConfig{
+		{
+			Name:           "hooks",
+			URL:            "https://example.com/tasks",
+			Queues:         map[string]int32{"email": 2},
+			Concurrency:    4,
+			Secrets:        []string{"secret"},
+			RequestTimeout: 30 * time.Second,
+			Paused:         true,
+		},
+	}
+
+	node := &Server{config: config}
+	taskLog := memory.New(clock.System())
+
+	if err := node.seedWebhookWorkers(context.Background(), taskLog); err != nil {
+		t.Fatal(err)
+	}
+
+	seeded, err := taskLog.GetWebhookWorker(context.Background(), "hooks")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if seeded.URL != "https://example.com/tasks" || seeded.Queues["email"] != 2 ||
+		seeded.Concurrency != 4 || seeded.RequestTimeout != 30*time.Second || !seeded.Paused {
+		t.Fatalf("seeded registration mismatch: %+v", seeded)
+	}
+
+	// A second boot with the same config is an idempotent refresh.
+	if err := node.seedWebhookWorkers(context.Background(), taskLog); err != nil {
+		t.Fatal(err)
+	}
+
+	workers, err := taskLog.ListWebhookWorkers(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(workers) != 1 {
+		t.Fatalf("re-seeding must not duplicate, got %d registrations", len(workers))
+	}
+}
+
+// seedFailBroker fails only UpsertWebhookWorker, delegating everything else
+// to the embedded broker (nil here, since seeding touches nothing else).
+type seedFailBroker struct {
+	broker.Broker
+}
+
+// UpsertWebhookWorker always fails.
+func (seedFailBroker) UpsertWebhookWorker(context.Context, *broker.WebhookWorker) error {
+	return errTestSeed
+}
+
+// errTestSeed is the injected seeding failure.
+var errTestSeed = errors.New("injected seeding fault")
+
+func TestSeedWebhookWorkersReportsBrokerFailure(t *testing.T) {
+	config := DevConfig()
+	config.WebhookWorkers = []WebhookWorkerConfig{
+		{
+			Name:        "hooks",
+			URL:         "https://example.com/tasks",
+			Queues:      map[string]int32{"email": 1},
+			Concurrency: 1,
+			Secrets:     []string{"secret"},
+		},
+	}
+
+	node := &Server{config: config}
+
+	if err := node.seedWebhookWorkers(context.Background(), seedFailBroker{}); err == nil {
+		t.Fatal("a broker failure while seeding must be surfaced")
 	}
 }

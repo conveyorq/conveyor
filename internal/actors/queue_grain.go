@@ -345,9 +345,24 @@ func (x *QueueGrain) registerGateway(message *conveyorv1.RegisterGateway) {
 
 	for _, gateway := range x.gateways {
 		if gateway.name == message.GetGatewayName() {
+			previous := gateway.capacity
 			gateway.capacity = message.GetCapacity()
 			gateway.weight = weight
 			gateway.batchTypes = message.GetBatchTypes()
+
+			// A capacity change takes effect now, not after old credits are
+			// spent. A shrink (a webhook gateway withholding, or dropping
+			// this queue) clamps; a growth grants the delta, because refunds
+			// that landed while the cap was lower were lost to the clamp and
+			// nothing else would restore them. A steady re-registration
+			// heartbeat changes nothing, so credits are never double-granted.
+			switch {
+			case gateway.capacity < previous:
+				gateway.credits = min(gateway.credits, gateway.capacity)
+
+			case gateway.capacity > previous:
+				gateway.credits = min(gateway.credits+gateway.capacity-previous, gateway.capacity)
+			}
 
 			return
 		}

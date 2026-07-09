@@ -255,11 +255,27 @@ func TestRegisterGatewayReRegistrationDoesNotDoubleGrant(t *testing.T) {
 	grain.registerGateway(&conveyorv1.RegisterGateway{GatewayName: "gateway-1", Capacity: 4})
 	grain.gateways[0].credits = 1 // three dispatches in flight
 
-	grain.registerGateway(&conveyorv1.RegisterGateway{GatewayName: "gateway-1", Capacity: 6})
-
+	// The steady heartbeat re-registration changes nothing: same capacity,
+	// same credits — never a double grant.
+	grain.registerGateway(&conveyorv1.RegisterGateway{GatewayName: "gateway-1", Capacity: 4})
 	require.Len(t, grain.gateways, 1)
+	require.EqualValues(t, 1, grain.gateways[0].credits, "a steady re-registration must not re-grant credits")
+
+	// A capacity growth grants exactly the delta, so the three in-flight
+	// dispatches plus the credits still sum to the new capacity.
+	grain.registerGateway(&conveyorv1.RegisterGateway{GatewayName: "gateway-1", Capacity: 6})
 	require.EqualValues(t, 6, grain.gateways[0].capacity, "re-registration refreshes capacity")
-	require.EqualValues(t, 1, grain.gateways[0].credits, "re-registration must not re-grant credits")
+	require.EqualValues(t, 3, grain.gateways[0].credits, "a growth grants the delta, no more")
+
+	// A shrink (a webhook gateway withholding announces zero) clamps the
+	// credits immediately rather than after they are spent.
+	grain.registerGateway(&conveyorv1.RegisterGateway{GatewayName: "gateway-1", Capacity: 0})
+	require.EqualValues(t, 0, grain.gateways[0].credits, "a shrink clamps unspent credits")
+
+	// Recovering from the shrink re-grants the full capacity: the refunds
+	// that landed during the clamp were lost and nothing else restores them.
+	grain.registerGateway(&conveyorv1.RegisterGateway{GatewayName: "gateway-1", Capacity: 6})
+	require.EqualValues(t, 6, grain.gateways[0].credits, "a recovery re-grants the withheld capacity")
 }
 
 func TestAddCreditsIsCappedAtCapacity(t *testing.T) {
