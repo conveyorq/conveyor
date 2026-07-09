@@ -1048,7 +1048,7 @@ func TestWebhookGatewayDropsUnknownMessages(t *testing.T) {
 // carries an enqueue timestamp so a delivery records queue latency.
 func isoTask(id, queue, taskType string) *conveyorv1.TaskEnvelope {
 	task := newTask(id, queue, taskType, 4)
-	task.EnqueuedAt = timestamppb.New(time.Now())
+	task.EnqueuedAt = timestamppb.New(clock.System().Now())
 
 	return task
 }
@@ -1058,7 +1058,7 @@ func executeTaskFor(task *conveyorv1.TaskEnvelope, leaseID string) *conveyorv1.E
 	return &conveyorv1.ExecuteTask{
 		Task:           task,
 		LeaseId:        leaseID,
-		LeaseExpiresAt: timestamppb.New(time.Now().Add(time.Hour)),
+		LeaseExpiresAt: timestamppb.New(clock.System().Now().Add(time.Hour)),
 	}
 }
 
@@ -1123,7 +1123,7 @@ func TestWebhookGatewayExtendLeasesRenewsHealthyLease(t *testing.T) {
 // returns its slot.
 func TestWebhookGatewayReapsStaleAsync(t *testing.T) {
 	ctx := context.Background()
-	fake := clock.NewFake(time.Now())
+	fake := clock.NewFake(clock.System().Now())
 	server, _ := blockingEndpoint(t)
 	taskLog := memory.New(fake)
 	runtime := isolatedRuntime(taskLog, fake)
@@ -1289,7 +1289,7 @@ func TestWebhookGatewayCompletesTaskOnUnservedQueue(t *testing.T) {
 // credit refill has no grain to receive it.
 func TestWebhookGatewayRefillsCreditForUnservedQueue(t *testing.T) {
 	ctx := context.Background()
-	fake := clock.NewFake(time.Now())
+	fake := clock.NewFake(clock.System().Now())
 	server, _ := blockingEndpoint(t)
 	taskLog := memory.New(fake)
 	runtime := isolatedRuntime(taskLog, fake)
@@ -1329,7 +1329,7 @@ func executeBatchFor(tasks []*conveyorv1.TaskEnvelope, leaseID string) *conveyor
 	return &conveyorv1.ExecuteBatch{
 		Tasks:          tasks,
 		LeaseId:        leaseID,
-		LeaseExpiresAt: timestamppb.New(time.Now().Add(time.Hour)),
+		LeaseExpiresAt: timestamppb.New(clock.System().Now().Add(time.Hour)),
 	}
 }
 
@@ -1445,7 +1445,7 @@ func TestWebhookGatewayDrainLogsReleaseFailure(t *testing.T) {
 // refilling a credit on its own.
 func TestWebhookGatewayReapsStaleBatchedAsyncMember(t *testing.T) {
 	ctx := context.Background()
-	fake := clock.NewFake(time.Now())
+	fake := clock.NewFake(clock.System().Now())
 	server, _ := blockingEndpoint(t)
 	taskLog := memory.New(fake)
 	runtime := isolatedRuntime(taskLog, fake)
@@ -1589,7 +1589,7 @@ func TestWebhookGatewayDeliveryHonorsTaskDeadlineAndTimeout(t *testing.T) {
 	pid := startIsolatedGateway(t, runtime, testWebhookWorker(endpoint.server.URL, "served"))
 
 	task := isoTask("deadline-task", "served", "email:send")
-	task.Options.Deadline = timestamppb.New(time.Now().Add(45 * time.Minute))
+	task.Options.Deadline = timestamppb.New(clock.System().Now().Add(45 * time.Minute))
 	task.Options.Timeout = durationpb.New(10 * time.Minute)
 	leaseTaskFor(t, taskLog, task, "lease-deadline")
 
@@ -1608,7 +1608,7 @@ func TestWebhookGatewayDeliveryHonorsTaskDeadlineAndTimeout(t *testing.T) {
 // capacity.
 func TestWebhookGatewayResolveProbeReopensBreaker(t *testing.T) {
 	ctx := context.Background()
-	fake := clock.NewFake(time.Now())
+	fake := clock.NewFake(clock.System().Now())
 	server, _ := blockingEndpoint(t)
 	taskLog := memory.New(fake)
 	runtime := isolatedRuntime(taskLog, fake)
