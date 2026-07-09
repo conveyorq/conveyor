@@ -13,11 +13,16 @@ FROM --platform=$BUILDPLATFORM node:24-alpine AS web
 
 WORKDIR /web
 
-# pnpm is the project's package manager; enable it through corepack.
-RUN corepack enable
+# pnpm is the project's package manager; enable it through corepack. The npm
+# bundled with the base image is unused here; drop it so its vulnerable
+# transitive dependencies (e.g. undici, CVE-2026-12151) leave the image.
+RUN corepack enable \
+ && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 
 # Install deps against the committed lockfile, then build the SPA into dist/.
-COPY web/dashboard/package.json web/dashboard/pnpm-lock.yaml ./
+# pnpm-workspace.yaml carries the supply-chain policy exclusions
+# (minimumReleaseAgeExclude) and must match the local install.
+COPY web/dashboard/package.json web/dashboard/pnpm-lock.yaml web/dashboard/pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY web/dashboard/ ./
 RUN pnpm run build
