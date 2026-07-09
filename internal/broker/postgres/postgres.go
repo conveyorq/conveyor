@@ -12,6 +12,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -1950,6 +1951,144 @@ func (b *Broker) DeleteCronEntry(ctx context.Context, id string) error {
 	}
 
 	return nil
+}
+
+// webhookWorkerColumns is the registration projection shared by the webhook
+// worker queries.
+const webhookWorkerColumns = "name, url, queues, concurrency, secrets, batch_types, request_timeout, paused"
+
+// UpsertWebhookWorker creates or replaces a registration; see broker.Broker.
+func (b *Broker) UpsertWebhookWorker(ctx context.Context, worker *broker.WebhookWorker) error {
+	queues, err := json.Marshal(worker.Queues)
+	if err != nil {
+		return fmt.Errorf("postgres: marshal webhook worker queues: %w", err)
+	}
+
+	// Nil slices would encode as NULL and violate the NOT NULL columns.
+	secrets := worker.Secrets
+	if secrets == nil {
+		secrets = []string{}
+	}
+
+	batchTypes := worker.BatchTypes
+	if batchTypes == nil {
+		batchTypes = []string{}
+	}
+
+	const upsertWorker = `INSERT INTO conveyor_webhook_workers
+		(name, url, queues, concurrency, secrets, batch_types, request_timeout, paused, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		ON CONFLICT (name) DO UPDATE SET
+			url = EXCLUDED.url, queues = EXCLUDED.queues,
+			concurrency = EXCLUDED.concurrency, secrets = EXCLUDED.secrets,
+			batch_types = EXCLUDED.batch_types,
+			request_timeout = EXCLUDED.request_timeout, paused = EXCLUDED.paused,
+			updated_at = EXCLUDED.updated_at`
+
+	_, err = b.pool.Exec(ctx, upsertWorker,
+		worker.Name, worker.URL, queues, worker.Concurrency, secrets, batchTypes,
+		pgInterval(worker.RequestTimeout), worker.Paused, b.clock.Now(),
+	)
+	if err != nil {
+		return fmt.Errorf("postgres: upsert webhook worker: %w", err)
+	}
+
+	return nil
+}
+
+// GetWebhookWorker returns one registration by name; see broker.Broker.
+func (b *Broker) GetWebhookWorker(ctx context.Context, name string) (*broker.WebhookWorker, error) {
+	const query = "SELECT " + webhookWorkerColumns + " FROM conveyor_webhook_workers WHERE name = $1"
+
+	rows, err := b.pool.Query(ctx, query, name)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: get webhook worker: %w", err)
+	}
+	defer rows.Close()
+
+	workers, err := scanWebhookWorkers(rows)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(workers) == 0 {
+		return nil, broker.ErrTaskNotFound
+	}
+
+	return workers[0], nil
+}
+
+// ListWebhookWorkers returns all registrations ordered by name; see
+// broker.Broker.
+func (b *Broker) ListWebhookWorkers(ctx context.Context) ([]*broker.WebhookWorker, error) {
+	const query = "SELECT " + webhookWorkerColumns + " FROM conveyor_webhook_workers ORDER BY name"
+
+	rows, err := b.pool.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: list webhook workers: %w", err)
+	}
+	defer rows.Close()
+
+	return scanWebhookWorkers(rows)
+}
+
+// SetWebhookWorkerPaused persists the registration pause flag; see
+// broker.Broker.
+func (b *Broker) SetWebhookWorkerPaused(ctx context.Context, name string, paused bool) error {
+	const pauseWorker = "UPDATE conveyor_webhook_workers SET paused = $2, updated_at = $3 WHERE name = $1"
+
+	tag, err := b.pool.Exec(ctx, pauseWorker, name, paused, b.clock.Now())
+	if err != nil {
+		return fmt.Errorf("postgres: set webhook worker paused: %w", err)
+	}
+
+	if tag.RowsAffected() == 0 {
+		return broker.ErrTaskNotFound
+	}
+
+	return nil
+}
+
+// DeleteWebhookWorker removes a registration; see broker.Broker.
+func (b *Broker) DeleteWebhookWorker(ctx context.Context, name string) error {
+	if _, err := b.pool.Exec(ctx, "DELETE FROM conveyor_webhook_workers WHERE name = $1", name); err != nil {
+		return fmt.Errorf("postgres: delete webhook worker: %w", err)
+	}
+
+	return nil
+}
+
+// scanWebhookWorkers materializes registration rows in the
+// webhookWorkerColumns projection.
+func scanWebhookWorkers(rows pgx.Rows) ([]*broker.WebhookWorker, error) {
+	var workers []*broker.WebhookWorker
+
+	for rows.Next() {
+		var (
+			worker         broker.WebhookWorker
+			queues         []byte
+			requestTimeout pgtype.Interval
+		)
+
+		err := rows.Scan(&worker.Name, &worker.URL, &queues, &worker.Concurrency,
+			&worker.Secrets, &worker.BatchTypes, &requestTimeout, &worker.Paused)
+		if err != nil {
+			return nil, fmt.Errorf("postgres: scan webhook worker: %w", err)
+		}
+
+		if err := json.Unmarshal(queues, &worker.Queues); err != nil {
+			return nil, fmt.Errorf("postgres: unmarshal webhook worker queues: %w", err)
+		}
+
+		worker.RequestTimeout = time.Duration(requestTimeout.Microseconds) * time.Microsecond
+		workers = append(workers, &worker)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres: iterate webhook workers: %w", err)
+	}
+
+	return workers, nil
 }
 
 // Close releases the connection pool.

@@ -30,6 +30,7 @@ and priorities, backed by Postgres or an in-memory broker, with **no Redis and n
 - [How it works](#how-it-works)
 - [Usage](#usage)
 - [SDKs](#sdks)
+- [Enqueue from anywhere](#enqueue-from-anywhere)
 - [Embedded mode](#embedded-mode)
 - [Dashboard](#dashboard)
 - [Documentation](#documentation)
@@ -249,6 +250,8 @@ go run ./examples/standalone/client   # 3: enqueue ten welcome emails
   with no infrastructure (see [Embedded mode](#embedded-mode)).
 - **[TypeScript](examples/typescript)** and **[Python](examples/python)** are the
   same worker-and-producer shape on the other two SDKs.
+- **[Webhook](examples/webhook)** processes pushed tasks over HTTP with no SDK
+  at all (see [webhook workers](docs/webhook-workers.md)).
 
 ## How it works
 
@@ -339,6 +342,30 @@ archive, pause and resume, rate and concurrency limits, cron) are driven by the
 `conveyor` CLI and the [dashboard](#dashboard), which keeps the application
 surface small and operator concerns out of app code.
 
+## Enqueue from anywhere
+
+Producing does not require an SDK. The server speaks plain HTTP/JSON on the
+same port, so any language, cron job, or webhook can enqueue with a POST:
+
+```sh
+curl -sS http://localhost:8080/conveyor.v1.TaskService/Enqueue \
+  -H "Authorization: Bearer $CONVEYOR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "queue": "email",
+        "type": "email:send",
+        "payload": "'"$(printf '{"to":"a@b.c"}' | base64)"'",
+        "contentType": "application/json"
+      }'
+```
+
+The [HTTP API guide](docs/http-api.md) covers all the enqueue endpoints, the
+JSON encoding rules, and the sharp edges. Consuming needs no SDK either:
+register an HTTP endpoint as a [webhook worker](docs/webhook-workers.md) and
+Conveyor pushes each task to it as a signed JSON-RPC call, with the same
+retries, concurrency, and circuit breaking an SDK worker gets. It stays
+push-based, so there is still no queue to poll.
+
 ## Embedded mode
 
 Run the whole system (broker, server, and dispatch) inside your own Go
@@ -414,6 +441,10 @@ a different-origin UI, and `api.grafana_url` for the metrics link. See the
   scaling, broker sizing, security, observability, and upgrades.
 - [CLI reference](docs/cli.md): every `conveyor` command, its flags, and the
   global address/token/encryption settings, for producing and operating.
+- [HTTP API](docs/http-api.md): enqueue and inspect tasks from any language
+  over plain HTTP/JSON, no SDK required.
+- [Webhook workers](docs/webhook-workers.md): process pushed tasks over a
+  signed JSON-RPC endpoint, with no SDK, while staying push-based.
 - [High availability](docs/high-availability.md): a complete clustered deployment
   that ties the server, Postgres, and worker tiers together.
 - [Task dependencies](docs/workflows.md): order work with chains and

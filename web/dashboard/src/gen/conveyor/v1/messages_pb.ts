@@ -4,6 +4,8 @@
 
 import type { GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2";
 import { fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
+import type { TaskOutcome } from "./service_pb";
+import { file_conveyor_v1_service } from "./service_pb";
 import type { TaskEnvelope } from "./task_pb";
 import { file_conveyor_v1_task } from "./task_pb";
 import type { Timestamp } from "@bufbuild/protobuf/wkt";
@@ -14,7 +16,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file conveyor/v1/messages.proto.
  */
 export const file_conveyor_v1_messages: GenFile = /*@__PURE__*/
-  fileDesc("Chpjb252ZXlvci92MS9tZXNzYWdlcy5wcm90bxILY29udmV5b3IudjEiHQoMVGFza0VucXVldWVkEg0KBXF1ZXVlGAEgASgJIi0KDlRhc2tzQXZhaWxhYmxlEg0KBXF1ZXVlGAEgASgJEgwKBGhpbnQYAiABKAMibQoPUmVnaXN0ZXJHYXRld2F5Eg0KBXF1ZXVlGAEgASgJEhQKDGdhdGV3YXlfbmFtZRgCIAEoCRIQCghjYXBhY2l0eRgDIAEoBRITCgtiYXRjaF90eXBlcxgEIAMoCRIOCgZ3ZWlnaHQYBSABKAUiRQoNR2F0ZXdheUNyZWRpdBINCgVxdWV1ZRgBIAEoCRIUCgxnYXRld2F5X25hbWUYAiABKAkSDwoHY3JlZGl0cxgDIAEoBSJ+CgtFeGVjdXRlVGFzaxInCgR0YXNrGAEgASgLMhkuY29udmV5b3IudjEuVGFza0VudmVsb3BlEhAKCGxlYXNlX2lkGAIgASgJEjQKEGxlYXNlX2V4cGlyZXNfYXQYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIo8BCgxFeGVjdXRlQmF0Y2gSKAoFdGFza3MYASADKAsyGS5jb252ZXlvci52MS5UYXNrRW52ZWxvcGUSEAoIbGVhc2VfaWQYAiABKAkSNAoQbGVhc2VfZXhwaXJlc19hdBgDIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDQoFZ3JvdXAYBCABKAkiRgoJRmlyZUdyb3VwEg0KBXF1ZXVlGAEgASgJEg0KBWdyb3VwGAIgASgJEgwKBHR5cGUYAyABKAkSDQoFbGltaXQYBCABKAUiswEKE0dyb3VwTGVhc2VDb21wbGV0ZWQSKAoFdGFza3MYASADKAsyGS5jb252ZXlvci52MS5UYXNrRW52ZWxvcGUSEAoIbGVhc2VfaWQYAiABKAkSNAoQbGVhc2VfZXhwaXJlc19hdBgDIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDQoFZ3JvdXAYBCABKAkSDAoEdHlwZRgFIAEoCRINCgVlcnJvchgGIAEoCSJWCg1UYXNrQ29tcGxldGVkEg8KB3Rhc2tfaWQYASABKAkSDQoFcXVldWUYAiABKAkSDwoHc3VjY2VzcxgDIAEoCBIUCgxnYXRld2F5X25hbWUYBCABKAkiVwoOQmF0Y2hDb21wbGV0ZWQSDQoFcXVldWUYASABKAkSFAoMZ2F0ZXdheV9uYW1lGAIgASgJEg0KBXRvdGFsGAMgASgFEhEKCXN1Y2NlZWRlZBgEIAEoBSIbCgpEcmFpblF1ZXVlEg0KBXF1ZXVlGAEgASgJIhwKC1Jlc3VtZVF1ZXVlEg0KBXF1ZXVlGAEgASgJIh8KDENhbmNlbEFjdGl2ZRIPCgd0YXNrX2lkGAEgASgJIkYKEFJhdGVMaW1pdENoYW5nZWQSDQoFcXVldWUYASABKAkSFAoMcmF0ZV9wZXJfc2VjGAIgASgBEg0KBWJ1cnN0GAMgASgFIjwKF0NvbmN1cnJlbmN5TGltaXRDaGFuZ2VkEg0KBXF1ZXVlGAEgASgJEhIKCm1heF9hY3RpdmUYAiABKAUiHAoIRmlyZUNyb24SEAoIZW50cnlfaWQYASABKAkiFAoSQ3JvbkVudHJpZXNDaGFuZ2VkIpYBChNMZWFzZUN5Y2xlQ29tcGxldGVkEigKBXRhc2tzGAEgAygLMhkuY29udmV5b3IudjEuVGFza0VudmVsb3BlEhAKCGxlYXNlX2lkGAIgASgJEjQKEGxlYXNlX2V4cGlyZXNfYXQYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEg0KBWVycm9yGAQgASgJIjcKE0xlYXNlZFRhc2tzUmVsZWFzZWQSEAoIcmVsZWFzZWQYASABKAUSDgoGZmFpbGVkGAIgASgFIg0KC1Byb21vdGVUaWNrIgoKCFJlYXBUaWNrIhAKDkdyb3VwU3dlZXBUaWNrIiQKEVJlc29sdmVEZXBlbmRlbnRzEg8KB3Rhc2tfaWQYASABKAliBnByb3RvMw", [file_conveyor_v1_task, file_google_protobuf_timestamp]);
+  fileDesc("Chpjb252ZXlvci92MS9tZXNzYWdlcy5wcm90bxILY29udmV5b3IudjEiHQoMVGFza0VucXVldWVkEg0KBXF1ZXVlGAEgASgJIi0KDlRhc2tzQXZhaWxhYmxlEg0KBXF1ZXVlGAEgASgJEgwKBGhpbnQYAiABKAMibQoPUmVnaXN0ZXJHYXRld2F5Eg0KBXF1ZXVlGAEgASgJEhQKDGdhdGV3YXlfbmFtZRgCIAEoCRIQCghjYXBhY2l0eRgDIAEoBRITCgtiYXRjaF90eXBlcxgEIAMoCRIOCgZ3ZWlnaHQYBSABKAUiRQoNR2F0ZXdheUNyZWRpdBINCgVxdWV1ZRgBIAEoCRIUCgxnYXRld2F5X25hbWUYAiABKAkSDwoHY3JlZGl0cxgDIAEoBSJ+CgtFeGVjdXRlVGFzaxInCgR0YXNrGAEgASgLMhkuY29udmV5b3IudjEuVGFza0VudmVsb3BlEhAKCGxlYXNlX2lkGAIgASgJEjQKEGxlYXNlX2V4cGlyZXNfYXQYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIo8BCgxFeGVjdXRlQmF0Y2gSKAoFdGFza3MYASADKAsyGS5jb252ZXlvci52MS5UYXNrRW52ZWxvcGUSEAoIbGVhc2VfaWQYAiABKAkSNAoQbGVhc2VfZXhwaXJlc19hdBgDIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDQoFZ3JvdXAYBCABKAkiRgoJRmlyZUdyb3VwEg0KBXF1ZXVlGAEgASgJEg0KBWdyb3VwGAIgASgJEgwKBHR5cGUYAyABKAkSDQoFbGltaXQYBCABKAUiswEKE0dyb3VwTGVhc2VDb21wbGV0ZWQSKAoFdGFza3MYASADKAsyGS5jb252ZXlvci52MS5UYXNrRW52ZWxvcGUSEAoIbGVhc2VfaWQYAiABKAkSNAoQbGVhc2VfZXhwaXJlc19hdBgDIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDQoFZ3JvdXAYBCABKAkSDAoEdHlwZRgFIAEoCRINCgVlcnJvchgGIAEoCSJWCg1UYXNrQ29tcGxldGVkEg8KB3Rhc2tfaWQYASABKAkSDQoFcXVldWUYAiABKAkSDwoHc3VjY2VzcxgDIAEoCBIUCgxnYXRld2F5X25hbWUYBCABKAkiVwoOQmF0Y2hDb21wbGV0ZWQSDQoFcXVldWUYASABKAkSFAoMZ2F0ZXdheV9uYW1lGAIgASgJEg0KBXRvdGFsGAMgASgFEhEKCXN1Y2NlZWRlZBgEIAEoBSIbCgpEcmFpblF1ZXVlEg0KBXF1ZXVlGAEgASgJIhwKC1Jlc3VtZVF1ZXVlEg0KBXF1ZXVlGAEgASgJIh8KDENhbmNlbEFjdGl2ZRIPCgd0YXNrX2lkGAEgASgJIkYKEFJhdGVMaW1pdENoYW5nZWQSDQoFcXVldWUYASABKAkSFAoMcmF0ZV9wZXJfc2VjGAIgASgBEg0KBWJ1cnN0GAMgASgFIjwKF0NvbmN1cnJlbmN5TGltaXRDaGFuZ2VkEg0KBXF1ZXVlGAEgASgJEhIKCm1heF9hY3RpdmUYAiABKAUiHAoIRmlyZUNyb24SEAoIZW50cnlfaWQYASABKAkiFAoSQ3JvbkVudHJpZXNDaGFuZ2VkIpYBChNMZWFzZUN5Y2xlQ29tcGxldGVkEigKBXRhc2tzGAEgAygLMhkuY29udmV5b3IudjEuVGFza0VudmVsb3BlEhAKCGxlYXNlX2lkGAIgASgJEjQKEGxlYXNlX2V4cGlyZXNfYXQYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEg0KBWVycm9yGAQgASgJIjcKE0xlYXNlZFRhc2tzUmVsZWFzZWQSEAoIcmVsZWFzZWQYASABKAUSDgoGZmFpbGVkGAIgASgFIg0KC1Byb21vdGVUaWNrIgoKCFJlYXBUaWNrIhAKDkdyb3VwU3dlZXBUaWNrIiQKEVJlc29sdmVEZXBlbmRlbnRzEg8KB3Rhc2tfaWQYASABKAkiOgoVV2ViaG9va0xlYXNlSGVhcnRiZWF0Eg8KB3Rhc2tfaWQYASABKAkSEAoIbGVhc2VfaWQYAiABKAkihQEKEldlYmhvb2tMZWFzZVJlc3VsdBIPCgd0YXNrX2lkGAEgASgJEhAKCGxlYXNlX2lkGAIgASgJEikKB291dGNvbWUYAyABKA4yGC5jb252ZXlvci52MS5UYXNrT3V0Y29tZRIRCgllcnJvcl9tc2cYBCABKAkSDgoGcmVzdWx0GAUgASgMIhIKEFdlYmhvb2tSZWNvbmNpbGViBnByb3RvMw", [file_conveyor_v1_service, file_conveyor_v1_task, file_google_protobuf_timestamp]);
 
 /**
  * TaskEnqueued tells a queue grain that one new task was committed.
@@ -673,4 +675,103 @@ export type ResolveDependents = Message<"conveyor.v1.ResolveDependents"> & {
  */
 export const ResolveDependentsSchema: GenMessage<ResolveDependents> = /*@__PURE__*/
   messageDesc(file_conveyor_v1_messages, 22);
+
+/**
+ * WebhookLeaseHeartbeat extends one asynchronously completing webhook
+ * delivery's lease. The API callback handler verifies the delivery's lease
+ * token, then routes this to the owning webhook gateway; the lease id pins
+ * the extension to the delivery the token was minted for, so a stale token
+ * from a superseded delivery cannot touch the current one.
+ *
+ * @generated from message conveyor.v1.WebhookLeaseHeartbeat
+ */
+export type WebhookLeaseHeartbeat = Message<"conveyor.v1.WebhookLeaseHeartbeat"> & {
+  /**
+   * task_id is the delivered task.
+   *
+   * @generated from field: string task_id = 1;
+   */
+  taskId: string;
+
+  /**
+   * lease_id is the delivery the token was minted for.
+   *
+   * @generated from field: string lease_id = 2;
+   */
+  leaseId: string;
+};
+
+/**
+ * Describes the message conveyor.v1.WebhookLeaseHeartbeat.
+ * Use `create(WebhookLeaseHeartbeatSchema)` to create a new message.
+ */
+export const WebhookLeaseHeartbeatSchema: GenMessage<WebhookLeaseHeartbeat> = /*@__PURE__*/
+  messageDesc(file_conveyor_v1_messages, 23);
+
+/**
+ * WebhookLeaseResult reports the final outcome of one asynchronously
+ * completing webhook delivery, routed like WebhookLeaseHeartbeat.
+ *
+ * @generated from message conveyor.v1.WebhookLeaseResult
+ */
+export type WebhookLeaseResult = Message<"conveyor.v1.WebhookLeaseResult"> & {
+  /**
+   * task_id is the delivered task.
+   *
+   * @generated from field: string task_id = 1;
+   */
+  taskId: string;
+
+  /**
+   * lease_id is the delivery the token was minted for.
+   *
+   * @generated from field: string lease_id = 2;
+   */
+  leaseId: string;
+
+  /**
+   * outcome is the execution outcome: success, retry, or skip-retry.
+   *
+   * @generated from field: conveyor.v1.TaskOutcome outcome = 3;
+   */
+  outcome: TaskOutcome;
+
+  /**
+   * error_msg describes a failed execution.
+   *
+   * @generated from field: string error_msg = 4;
+   */
+  errorMsg: string;
+
+  /**
+   * result optionally carries the handler's result payload.
+   *
+   * @generated from field: bytes result = 5;
+   */
+  result: Uint8Array;
+};
+
+/**
+ * Describes the message conveyor.v1.WebhookLeaseResult.
+ * Use `create(WebhookLeaseResultSchema)` to create a new message.
+ */
+export const WebhookLeaseResultSchema: GenMessage<WebhookLeaseResult> = /*@__PURE__*/
+  messageDesc(file_conveyor_v1_messages, 24);
+
+/**
+ * WebhookReconcile asks the webhook manager to reconcile its gateways
+ * against the persisted registrations now, instead of on its next tick; the
+ * admin surface sends it after changing a registration.
+ *
+ * @generated from message conveyor.v1.WebhookReconcile
+ */
+export type WebhookReconcile = Message<"conveyor.v1.WebhookReconcile"> & {
+};
+
+/**
+ * Describes the message conveyor.v1.WebhookReconcile.
+ * Use `create(WebhookReconcileSchema)` to create a new message.
+ */
+export const WebhookReconcileSchema: GenMessage<WebhookReconcile> = /*@__PURE__*/
+  messageDesc(file_conveyor_v1_messages, 25);
 

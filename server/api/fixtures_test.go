@@ -93,7 +93,10 @@ func startAPIServer(t *testing.T, engine *actors.Engine, taskLog broker.Broker, 
 	workerService := NewWorkerService(engine, slog.New(slog.DiscardHandler), clock.System())
 	mux.Handle(conveyorv1connect.NewWorkerServiceHandler(workerService, options...))
 	mux.Handle(conveyorv1connect.NewAdminServiceHandler(
-		NewAdminService(engine, taskLog, clock.System(), workerService), options...))
+		NewAdminService(engine, taskLog, clock.System(), workerService, true), options...))
+	// Lease-token authenticated, mounted without the bearer interceptor,
+	// mirroring production.
+	mux.Handle(conveyorv1connect.NewWebhookServiceHandler(NewWebhookService(engine, taskLog)))
 
 	server := httptest.NewUnstartedServer(mux)
 

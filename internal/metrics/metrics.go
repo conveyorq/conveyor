@@ -24,6 +24,13 @@ const scope = "github.com/conveyorq/conveyor"
 // queueAttr labels the timing histograms with the queue name.
 const queueAttr = "queue"
 
+// Webhook delivery attributes: the registration name and the delivery's
+// classified result.
+const (
+	registrationAttr = "registration"
+	resultAttr       = "result"
+)
+
 // Engine holds the synchronous instruments recorded at the engine's event
 // sites. They record into the process-global meter provider — the server
 // installs a Prometheus-backed one; without it the records are no-ops.
@@ -36,6 +43,8 @@ type Engine struct {
 	rateLimited        metric.Int64Counter
 	concurrencyLimited metric.Int64Counter
 	eventsDropped      metric.Int64Counter
+	webhookDeliveries  metric.Int64Counter
+	webhookWithheld    metric.Int64Counter
 }
 
 // NewEngine creates the engine instruments from the global meter. The returned
@@ -60,6 +69,10 @@ func NewEngine() (*Engine, error) {
 		metric.WithDescription("Lease cycles in which a queue held a task back because its concurrency key was saturated."))
 	eventsDropped, e8 := meter.Int64Counter("conveyor.events.dropped",
 		metric.WithDescription("Lifecycle events dropped because a watcher's buffer was full."))
+	webhookDeliveries, e9 := meter.Int64Counter("conveyor.webhook.deliveries",
+		metric.WithDescription("Webhook delivery attempts by registration and classified result."))
+	webhookWithheld, e10 := meter.Int64Counter("conveyor.webhook.withheld",
+		metric.WithDescription("Times a webhook endpoint's capacity was withheld by its circuit breaker."))
 
 	return &Engine{
 		processDuration:    processDuration,
@@ -70,7 +83,9 @@ func NewEngine() (*Engine, error) {
 		rateLimited:        rateLimited,
 		concurrencyLimited: concurrencyLimited,
 		eventsDropped:      eventsDropped,
-	}, errors.Join(e1, e2, e3, e4, e5, e6, e7, e8)
+		webhookDeliveries:  webhookDeliveries,
+		webhookWithheld:    webhookWithheld,
+	}, errors.Join(e1, e2, e3, e4, e5, e6, e7, e8, e9, e10)
 }
 
 // RecordProcessDuration records one execution's dispatch→completion time.
@@ -114,4 +129,18 @@ func (e *Engine) ConcurrencyLimited(ctx context.Context, queue string) {
 // full, the signal that a watcher is too slow to keep up with the stream.
 func (e *Engine) EventDropped(ctx context.Context) {
 	e.eventsDropped.Add(ctx, 1)
+}
+
+// WebhookDelivery counts one webhook delivery attempt, labeled by
+// registration and its classified result ("completed", "accepted", "retry",
+// "skip_retry", "transport_failure").
+func (e *Engine) WebhookDelivery(ctx context.Context, registration, result string) {
+	e.webhookDeliveries.Add(ctx, 1, metric.WithAttributes(
+		attribute.String(registrationAttr, registration), attribute.String(resultAttr, result)))
+}
+
+// WebhookCapacityWithheld counts one capacity withholding: a webhook
+// endpoint's breaker opened and its grains stopped leasing to it.
+func (e *Engine) WebhookCapacityWithheld(ctx context.Context, registration string) {
+	e.webhookWithheld.Add(ctx, 1, metric.WithAttributes(attribute.String(registrationAttr, registration)))
 }

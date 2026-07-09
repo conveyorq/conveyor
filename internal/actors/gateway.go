@@ -360,20 +360,7 @@ func (g *Gateway) dispatch(message *conveyorv1.ExecuteTask) {
 // executionDeadline computes the effective deadline of one delivery:
 // min(lease expiry, task deadline, now + task timeout).
 func (g *Gateway) executionDeadline(message *conveyorv1.ExecuteTask) *timestamppb.Timestamp {
-	deadline := message.GetLeaseExpiresAt().AsTime()
-	options := message.GetTask().GetOptions()
-
-	if options.GetDeadline().IsValid() && options.GetDeadline().AsTime().Before(deadline) {
-		deadline = options.GetDeadline().AsTime()
-	}
-
-	if options.GetTimeout().IsValid() {
-		attemptDeadline := g.runtime.Clock().Now().Add(options.GetTimeout().AsDuration())
-
-		if attemptDeadline.Before(deadline) {
-			deadline = attemptDeadline
-		}
-	}
+	deadline := executionDeadlineAt(g.runtime.Clock().Now(), message.GetLeaseExpiresAt(), message.GetTask().GetOptions())
 
 	return timestamppb.New(deadline)
 }
@@ -392,7 +379,8 @@ func (g *Gateway) result(ctx *goakt.ReceiveContext, message *conveyorv1.Result) 
 
 	delete(g.inflight, message.GetTaskId())
 
-	success, terminal := g.applyOutcome(ctx.Context(), entry, message)
+	success, terminal := applyOutcome(ctx.Context(), g.runtime, entry, message)
+	g.recordOutcome(entry.taskType, message.GetOutcome())
 
 	if terminal {
 		g.resolveDependents(ctx, message.GetTaskId())
@@ -426,27 +414,33 @@ func (g *Gateway) progress(ctx *goakt.ReceiveContext, message *conveyorv1.Progre
 }
 
 // strategyFor resolves the retry backoff for a dispatched task: its own policy
-// when set, otherwise the gateway's configured default. Each policy field falls
-// back to the default's value when left at zero, so a task may override only the
-// strategy, only the timing, or all of it.
+// when set, otherwise the gateway's configured default.
 func (g *Gateway) strategyFor(policy *conveyorv1.RetryPolicy) backoff.Strategy {
+	return retryStrategyFor(g.strategy, policy)
+}
+
+// retryStrategyFor resolves the retry backoff for one task: its own policy
+// when set, otherwise the given default. Each policy field falls back to the
+// default's value when left at zero, so a task may override only the
+// strategy, only the timing, or all of it.
+func retryStrategyFor(defaultStrategy backoff.Strategy, policy *conveyorv1.RetryPolicy) backoff.Strategy {
 	if policy == nil {
-		return g.strategy
+		return defaultStrategy
 	}
 
-	kind := g.strategy.Kind()
+	kind := defaultStrategy.Kind()
 	if mapped, ok := backoffKind(policy.GetStrategy()); ok {
 		kind = mapped
 	}
 
 	base := policy.GetBase().AsDuration()
 	if base <= 0 {
-		base = g.strategy.Base()
+		base = defaultStrategy.Base()
 	}
 
 	maxDelay := policy.GetMax().AsDuration()
 	if maxDelay <= 0 {
-		maxDelay = g.strategy.Cap()
+		maxDelay = defaultStrategy.Cap()
 	}
 
 	return backoff.NewWithKind(kind, base, maxDelay)
@@ -471,14 +465,16 @@ func backoffKind(strategy conveyorv1.RetryStrategy) (backoff.Kind, bool) {
 }
 
 // applyOutcome performs the durable transition for one finished delivery and
-// records its process-duration and breaker sample. It returns whether the
-// delivery succeeded and whether it reached a terminal state (completed or
-// archived) — the signal the caller uses to resolve the task's dependents. It
-// does not report completion or refill credit: the caller does that — per task
-// for a single Result, once for a whole batch.
-func (g *Gateway) applyOutcome(goCtx context.Context, entry *inflightTask, message *conveyorv1.Result) (success, terminal bool) {
-	taskLog := g.runtime.Broker()
-	counters := g.runtime.Counters()
+// records its process-duration sample. It returns whether the delivery
+// succeeded and whether it reached a terminal state (completed or archived) —
+// the signal the caller uses to resolve the task's dependents. It does not
+// report completion, refill credit, or record breaker samples: the caller
+// does that — per task for a single Result, once for a whole batch. It is
+// shared by the stream gateway and the webhook gateway, which is what keeps
+// the two delivery legs' retry semantics identical.
+func applyOutcome(goCtx context.Context, runtime *Runtime, entry *inflightTask, message *conveyorv1.Result) (success, terminal bool) {
+	taskLog := runtime.Broker()
+	counters := runtime.Counters()
 	taskID := message.GetTaskId()
 
 	var (
@@ -506,7 +502,7 @@ func (g *Gateway) applyOutcome(goCtx context.Context, entry *inflightTask, messa
 			terminated = true
 
 		default:
-			processAt := g.runtime.Clock().Now().Add(entry.strategy.Delay(entry.retried))
+			processAt := runtime.Clock().Now().Add(entry.strategy.Delay(entry.retried))
 			err = taskLog.Fail(goCtx, taskID, entry.leaseID, message.GetErrorMsg(), processAt)
 			counters.Retried.Add(1)
 		}
@@ -540,17 +536,15 @@ func (g *Gateway) applyOutcome(goCtx context.Context, entry *inflightTask, messa
 
 	if err != nil {
 		if errors.Is(err, broker.ErrLeaseLost) {
-			g.runtime.Logger().Debug("result discarded: lease lost to another delivery", "task_id", taskID)
+			runtime.Logger().Debug("result discarded: lease lost to another delivery", "task_id", taskID)
 		} else {
-			g.runtime.Logger().Warn("durable transition failed", "task_id", taskID, "error", err)
+			runtime.Logger().Warn("durable transition failed", "task_id", taskID, "error", err)
 		}
 	}
 
 	// Process duration: how long the execution took from dispatch to result.
-	g.runtime.Metrics().RecordProcessDuration(context.Background(),
-		g.runtime.Clock().Now().Sub(entry.dispatchedAt).Seconds(), entry.queue)
-
-	g.recordOutcome(entry.taskType, message.GetOutcome())
+	runtime.Metrics().RecordProcessDuration(context.Background(),
+		runtime.Clock().Now().Sub(entry.dispatchedAt).Seconds(), entry.queue)
 
 	// A lease lost to another delivery means this gateway did not own the
 	// transition, so it must not drive the task's completion or resolution.

@@ -74,7 +74,7 @@ func TestGatewayApplyOutcomeBrokerErrors(t *testing.T) {
 
 	// A non-lease-lost durable-transition failure is logged, never propagated.
 	faultLog.fault(methodAck, errors.New("ack down"))
-	success, terminal := gateway.applyOutcome(ctx, entry,
+	success, terminal := applyOutcome(ctx, gateway.runtime, entry,
 		&conveyorv1.Result{TaskId: "x", Outcome: conveyorv1.TaskOutcome_TASK_OUTCOME_SUCCESS})
 	require.False(t, success)
 	require.False(t, terminal)
@@ -83,13 +83,13 @@ func TestGatewayApplyOutcomeBrokerErrors(t *testing.T) {
 	// longer owns the transition.
 	faultLog.clear(methodAck)
 	faultLog.fault(methodAck, broker.ErrLeaseLost)
-	success, _ = gateway.applyOutcome(ctx, entry,
+	success, _ = applyOutcome(ctx, gateway.runtime, entry,
 		&conveyorv1.Result{TaskId: "x", Outcome: conveyorv1.TaskOutcome_TASK_OUTCOME_SUCCESS})
 	require.False(t, success)
 
 	// An unknown outcome falls through to a safe release.
 	faultLog.clear(methodAck)
-	success, terminal = gateway.applyOutcome(ctx, entry,
+	success, terminal = applyOutcome(ctx, gateway.runtime, entry,
 		&conveyorv1.Result{TaskId: "x", Outcome: conveyorv1.TaskOutcome_TASK_OUTCOME_UNSPECIFIED})
 	require.False(t, success)
 	require.False(t, terminal)

@@ -12,6 +12,7 @@ import (
 	"math"
 	"net/url"
 	"os"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -139,6 +140,8 @@ type Config struct {
 	Metrics MetricsConfig `koanf:"metrics"`
 	// Events configures the task lifecycle event stream and optional webhook.
 	Events EventsConfig `koanf:"events"`
+	// WebhookWorkers declares webhook worker registrations seeded at boot.
+	WebhookWorkers []WebhookWorkerConfig `koanf:"webhook_workers"`
 }
 
 // EventsConfig configures the task lifecycle event stream and the optional
@@ -172,6 +175,30 @@ type WebhookConfig struct {
 	// EventTypes restricts delivery to these event types (proto enum names, e.g.
 	// "TASK_EVENT_TYPE_ARCHIVED"); empty means every type.
 	EventTypes []string `koanf:"event_types"`
+}
+
+// WebhookWorkerConfig declares one webhook worker registration: an HTTP
+// endpoint the server pushes tasks to. Entries are upserted into the broker
+// by name at boot, so config-declared and dynamically managed registrations
+// compose.
+type WebhookWorkerConfig struct {
+	// Name uniquely identifies the registration.
+	Name string `koanf:"name"`
+	// URL is the endpoint tasks are delivered to.
+	URL string `koanf:"url"`
+	// Queues maps each served queue to its dispatch weight.
+	Queues map[string]int32 `koanf:"queues"`
+	// Concurrency caps in-flight tasks on this endpoint.
+	Concurrency int32 `koanf:"concurrency"`
+	// Secrets holds one or two delivery-signing secrets, newest first.
+	Secrets []string `koanf:"secrets"`
+	// BatchTypes are the task types delivered as one batch when their
+	// aggregation group fires.
+	BatchTypes []string `koanf:"batch_types"`
+	// RequestTimeout bounds a synchronous delivery; zero selects the default.
+	RequestTimeout time.Duration `koanf:"request_timeout"`
+	// Paused registers the endpoint without delivering to it.
+	Paused bool `koanf:"paused"`
 }
 
 // MetricsConfig configures the Prometheus metrics endpoint. Metrics are
@@ -525,6 +552,75 @@ func validateRetryBackoff(engine EngineConfig) error {
 	return nil
 }
 
+// webhookWorkerNamePattern restricts registration names to what actor
+// identity names accept, the same grammar queue names follow.
+var webhookWorkerNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9-_.]*$`)
+
+// validateWebhookWorkers checks every declared registration: a unique
+// well-formed name, an absolute http(s) URL, at least one served queue with a
+// positive weight, a positive concurrency, at least one secret, and a
+// non-negative timeout. Plaintext http URLs pass only when allowInsecure is
+// set (an unauthenticated development server): signed deliveries over
+// cleartext would hand the payload to the network.
+func validateWebhookWorkers(workers []WebhookWorkerConfig, allowInsecure bool) error {
+	names := make(map[string]bool, len(workers))
+
+	for index, worker := range workers {
+		key := fmt.Sprintf("webhook_workers[%d]", index)
+
+		if !webhookWorkerNamePattern.MatchString(worker.Name) {
+			return fmt.Errorf("%s.name: %q is not a valid registration name", key, worker.Name)
+		}
+
+		if names[worker.Name] {
+			return fmt.Errorf("%s.name: %q is declared more than once", key, worker.Name)
+		}
+
+		names[worker.Name] = true
+
+		parsed, err := url.Parse(worker.URL)
+		if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+			return fmt.Errorf("%s.url: must be a valid http(s) URL, got %q", key, worker.URL)
+		}
+
+		if parsed.Scheme == "http" && !allowInsecure {
+			return fmt.Errorf("%s.url: plaintext http requires an unauthenticated development server; use https, got %q", key, worker.URL)
+		}
+
+		if len(worker.Queues) == 0 {
+			return fmt.Errorf("%s.queues: at least one queue is required", key)
+		}
+
+		for queue, weight := range worker.Queues {
+			if !webhookWorkerNamePattern.MatchString(queue) {
+				return fmt.Errorf("%s.queues: %q is not a valid queue name", key, queue)
+			}
+
+			if weight <= 0 {
+				return fmt.Errorf("%s.queues[%s]: weight must be positive, got %d", key, queue, weight)
+			}
+		}
+
+		if worker.Concurrency < 1 {
+			return fmt.Errorf("%s.concurrency: must be at least 1, got %d", key, worker.Concurrency)
+		}
+
+		if len(worker.Secrets) < 1 || len(worker.Secrets) > 2 {
+			return fmt.Errorf("%s.secrets: one or two secrets are required, got %d", key, len(worker.Secrets))
+		}
+
+		if slices.Contains(worker.Secrets, "") {
+			return fmt.Errorf("%s.secrets: secrets must not be empty", key)
+		}
+
+		if worker.RequestTimeout < 0 {
+			return fmt.Errorf("%s.request_timeout: must not be negative, got %s", key, worker.RequestTimeout)
+		}
+	}
+
+	return nil
+}
+
 // validateEvents checks the optional webhook endpoint: when set it must be a
 // valid absolute http(s) URL, and the retry budget must not be negative.
 func validateEvents(events EventsConfig) error {
@@ -653,6 +749,10 @@ func (c *Config) Validate() error {
 	}
 
 	if err := validateEvents(c.Events); err != nil {
+		return err
+	}
+
+	if err := validateWebhookWorkers(c.WebhookWorkers, c.AuthDisabled()); err != nil {
 		return err
 	}
 

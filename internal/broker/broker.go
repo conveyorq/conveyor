@@ -128,6 +128,34 @@ type CronEntry struct {
 	NextRunAt time.Time
 }
 
+// WebhookWorker is a persisted webhook worker registration: an HTTP endpoint
+// the server pushes tasks to, the webhook analog of a connected worker
+// session. Registrations survive node failover because they live in the
+// broker, not on any node.
+type WebhookWorker struct {
+	// Name uniquely identifies the registration and names its gateway.
+	Name string
+	// URL is the endpoint tasks are delivered to.
+	URL string
+	// Queues maps each served queue to its dispatch weight, exactly like a
+	// stream worker's Hello.
+	Queues map[string]int32
+	// Concurrency caps in-flight tasks: open synchronous deliveries plus
+	// accepted asynchronous tasks awaiting their reported result.
+	Concurrency int32
+	// Secrets holds the delivery-signing secrets, newest first. Two entries
+	// are present only while a rotation is in progress.
+	Secrets []string
+	// BatchTypes are the task types delivered to this endpoint as one batch
+	// when their aggregation group fires, like a stream worker's Hello.
+	BatchTypes []string
+	// RequestTimeout bounds how long a synchronous delivery may take to
+	// answer; zero selects the server default.
+	RequestTimeout time.Duration
+	// Paused suspends delivery without deleting the registration.
+	Paused bool
+}
+
 // Info reports the storage engine backing a broker for the dashboard's
 // broker-info view, the analog of a backing-store health page.
 type Info struct {
@@ -533,6 +561,25 @@ type Broker interface {
 
 	// DeleteCronEntry removes an entry; deleting an absent id is a no-op.
 	DeleteCronEntry(ctx context.Context, id string) error
+
+	// UpsertWebhookWorker creates or replaces a webhook worker registration
+	// by name.
+	UpsertWebhookWorker(ctx context.Context, worker *WebhookWorker) error
+
+	// GetWebhookWorker returns one registration, or ErrTaskNotFound when the
+	// name is unknown.
+	GetWebhookWorker(ctx context.Context, name string) (*WebhookWorker, error)
+
+	// ListWebhookWorkers returns all registrations ordered by name.
+	ListWebhookWorkers(ctx context.Context) ([]*WebhookWorker, error)
+
+	// SetWebhookWorkerPaused persists the paused flag of one registration, or
+	// returns ErrTaskNotFound when the name is unknown.
+	SetWebhookWorkerPaused(ctx context.Context, name string, paused bool) error
+
+	// DeleteWebhookWorker removes a registration; deleting an absent name is
+	// a no-op.
+	DeleteWebhookWorker(ctx context.Context, name string) error
 
 	// SetEventSink wires the lifecycle-event sink that receives a TaskEvent on
 	// every state transition. It is set once at startup before the broker serves

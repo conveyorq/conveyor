@@ -17,6 +17,7 @@ import (
 	"github.com/conveyorq/conveyor/encryption"
 	"github.com/conveyorq/conveyor/internal/backoff"
 	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
+
 	"github.com/conveyorq/conveyor/sdks/go/internal/transport"
 )
 

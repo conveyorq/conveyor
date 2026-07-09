@@ -1,17 +1,11 @@
 # CLI reference (`conveyor`)
 
-`conveyor` is the command-line client for a Conveyor server. It is two things in
-one binary:
+`conveyor` is the command-line client for a Conveyor server. It is two things in one binary:
 
 - a **producer**: enqueue tasks (`enqueue`, `enqueue-tx`), and
-- an **operator console**: inspect and drive the system (queues, tasks, limits,
-  cron, cluster, and the live event stream).
+- an **operator console**: inspect and drive the system (queues, tasks, limits, cron, cluster, and the live event stream).
 
-Operating the system lives here and in the dashboard, deliberately kept out of
-the SDKs: the SDKs are the produce-and-consume surface for application code, while
-rescheduling, running, canceling, pausing, limiting, and cron management are
-operator actions. See the [operations guide](operations.md) for the wider
-deployment picture.
+Operating the system lives here and in the dashboard, deliberately kept out of the SDKs: the SDKs are the produce-and-consume surface for application code, while rescheduling, running, canceling, pausing, limiting, and cron management are operator actions. See the [operations guide](operations.md) for the wider deployment picture.
 
 > The CLI talks to a running `conveyord`. It does not start a server. To run one,
 > see the [operations guide](operations.md); for an in-process server, see
@@ -40,10 +34,7 @@ Every command accepts these, and the same two settings cover the whole session:
 | Server URL | `--addr` | `CONVEYOR_ADDR` | `http://localhost:8080` |
 | Bearer token | `--token` | `CONVEYOR_TOKEN` | empty (dev servers only) |
 
-A flag wins over its environment variable. Outside `--dev`, a server requires a
-token, so set `--token`/`CONVEYOR_TOKEN`. When the server runs with
-`api.read_only`, the mutating commands return `permission denied` while reads,
-enqueue, and the event stream still work.
+A flag wins over its environment variable. Outside `--dev`, a server requires a token, so set `--token`/`CONVEYOR_TOKEN`. When the server runs with `api.read_only`, the mutating commands return `permission denied` while reads, enqueue, and the event stream still work.
 
 ```sh
 export CONVEYOR_ADDR=https://conveyor.internal:8080
@@ -69,8 +60,7 @@ conveyor stats
 | `events` | Stream task lifecycle events until interrupted |
 | `completion` | Generate a shell autocompletion script |
 
-Run `conveyor <command> --help` (or `conveyor <command> <subcommand> --help`) for
-the authoritative, version-matched flags.
+Run `conveyor <command> --help` (or `conveyor <command> <subcommand> --help`) for the authoritative, version-matched flags.
 
 ## Producing work
 
@@ -111,12 +101,7 @@ conveyor enqueue email:welcome --queue critical --json '{"user_id":42}' --in 5m
 conveyor enqueue-tx --file <path> [--encryption-key <id>:<secret>]
 ```
 
-`enqueue-tx` commits a set of tasks **all-or-nothing**: either every task is
-enqueued or none is. If any task fails (a duplicate unique key, a unique-key
-collision between two tasks in the file, or an invalid task), nothing is
-committed. This is atomic multi-task enqueue, distinct from the best-effort
-behavior a per-task loop of `enqueue` would give. The tasks may span queues,
-priorities, and schedules.
+`enqueue-tx` commits a set of tasks **all-or-nothing**: either every task is enqueued or none is. If any task fails (a duplicate unique key, a unique-key collision between two tasks in the file, or an invalid task), nothing is committed. This is atomic multi-task enqueue, distinct from the best-effort behavior a per-task loop of `enqueue` would give. The tasks may span queues, priorities, and schedules.
 
 `--file` is a JSON array of task specs. Each spec mirrors the `enqueue` flags:
 
@@ -149,9 +134,7 @@ priorities, and schedules.
 conveyor enqueue-tx --file tasks.json
 ```
 
-`--encryption-key` seals every payload in the file before it leaves the CLI, the
-same as `enqueue`. For the model behind this, see
-[end-to-end encryption](encryption.md).
+`--encryption-key` seals every payload in the file before it leaves the CLI, the same as `enqueue`. For the model behind this, see [end-to-end encryption](encryption.md).
 
 ## Inspecting
 
@@ -161,8 +144,7 @@ same as `enqueue`. For the model behind this, see
 conveyor stats
 ```
 
-Prints each queue with its per-state counts (scheduled, pending, active, retry,
-completed, archived, aggregating, blocked) and pause flag.
+Prints each queue with its per-state counts (scheduled, pending, active, retry, completed, archived, aggregating, blocked) and pause flag.
 
 ### `tasks get` / `tasks list`
 
@@ -171,8 +153,7 @@ conveyor tasks get <id>
 conveyor tasks list [--queue NAME] [--state STATE] [--limit N]
 ```
 
-`tasks list` shows tasks newest first. `--state` is one of `scheduled`,
-`pending`, `active`, `retry`, `completed`, `archived`, `canceled`.
+`tasks list` shows tasks newest first. `--state` is one of `scheduled`, `pending`, `active`, `retry`, `completed`, `archived`, `canceled`.
 
 ```sh
 conveyor tasks list --state retry --queue critical --limit 50
@@ -184,8 +165,7 @@ conveyor tasks list --state retry --queue critical --limit 50
 conveyor cluster info
 ```
 
-Reports the nodes in the cluster (a debugging aid; a single-node server reports
-one node).
+Reports the nodes in the cluster (a debugging aid; a single-node server reports one node).
 
 ### `events`
 
@@ -193,10 +173,7 @@ one node).
 conveyor events [--queue NAME]... [--type TYPE]...
 ```
 
-Streams task lifecycle transitions live until interrupted. `--queue` and `--type`
-are repeatable filters; `--type` is one of `enqueued`, `scheduled`, `leased`,
-`completed`, `retried`, `archived`, `canceled`, `released`. See
-[lifecycle events](events.md) for the delivery semantics.
+Streams task lifecycle transitions live until interrupted. `--queue` and `--type` are repeatable filters; `--type` is one of `enqueued`, `scheduled`, `leased`, `completed`, `retried`, `archived`, `canceled`, `released`. See [lifecycle events](events.md) for the delivery semantics.
 
 ```sh
 conveyor events --queue billing --type completed --type archived
@@ -249,8 +226,7 @@ conveyor concurrency rm <queue>
 conveyor concurrency ls
 ```
 
-Caps how many tasks sharing a concurrency key run at once. See
-[concurrency limits](concurrency.md).
+Caps how many tasks sharing a concurrency key run at once. See [concurrency limits](concurrency.md).
 
 ```sh
 conveyor concurrency set email --max 5
@@ -264,9 +240,7 @@ conveyor group rm <queue> [--group KEY]
 conveyor group ls
 ```
 
-Overrides a group's aggregation thresholds. An empty `--group` sets the
-queue-wide default applied to every group on the queue without its own override.
-See [group aggregation](grouping.md).
+Overrides a group's aggregation thresholds. An empty `--group` sets the queue-wide default applied to every group on the queue without its own override. See [group aggregation](grouping.md).
 
 ```sh
 conveyor group set email --group welcome --max-size 20 --max-delay 2m --grace 5s
@@ -281,8 +255,7 @@ conveyor cron pause <id>
 conveyor cron resume <id>
 ```
 
-`<spec>` is a 6-field cron expression. Cron entries are server-persisted, so they
-survive restarts and failover.
+`<spec>` is a 6-field cron expression. Cron entries are server-persisted, so they survive restarts and failover.
 
 ```sh
 conveyor cron add nightly-report "0 0 2 * * *" report:daily --queue reports
@@ -294,13 +267,10 @@ conveyor cron add nightly-report "0 0 2 * * *" report:daily --queue reports
 conveyor completion bash|zsh|fish|powershell
 ```
 
-Generates a completion script for the named shell; follow that command's own
-output for where to install it.
+Generates a completion script for the named shell; follow that command's own output for where to install it.
 
 ## See also
 
 - [Operations guide](operations.md): deployment, configuration, security, and observability.
 - [Concepts](concepts.md): the vocabulary the commands operate on.
-- [End-to-end encryption](encryption.md), [rate limiting](rate-limiting.md),
-  [concurrency limits](concurrency.md), [group aggregation](grouping.md),
-  [lifecycle events](events.md).
+- [End-to-end encryption](encryption.md), [rate limiting](rate-limiting.md), [concurrency limits](concurrency.md), [group aggregation](grouping.md), [lifecycle events](events.md).

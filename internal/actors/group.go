@@ -478,7 +478,8 @@ func (g *Gateway) batchResult(ctx *goakt.ReceiveContext, message *conveyorv1.Bat
 			result = &conveyorv1.Result{TaskId: taskID, Outcome: conveyorv1.TaskOutcome_TASK_OUTCOME_RELEASED}
 		}
 
-		success, terminal := g.applyOutcome(goCtx, entry, result)
+		success, terminal := applyOutcome(goCtx, g.runtime, entry, result)
+		g.recordOutcome(entry.taskType, result.GetOutcome())
 
 		if success {
 			succeeded++

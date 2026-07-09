@@ -1,8 +1,6 @@
 # Migrating from asynq
 
-[asynq](https://github.com/hibiken/asynq) is a Redis-backed Go task queue
-embedded as a library in your application. Conveyor covers the same core
-features but with a different shape, so the migration is mostly mechanical.
+[asynq](https://github.com/hibiken/asynq) is a Redis-backed Go task queue embedded as a library in your application. Conveyor covers the same core features but with a different shape, so the migration is mostly mechanical.
 
 ## What changes conceptually
 
@@ -14,9 +12,7 @@ features but with a different shape, so the migration is mostly mechanical.
 | Cron     | Registered in code via `asynq.Scheduler` | Persisted on the server; managed via the API/CLI                                                                                |
 | Web UI   | asynqmon                                 | None yet (Grafana dashboard for metrics)                                                                                        |
 
-The important practical consequence: with asynq your worker binary talks to
-Redis directly; with Conveyor your client and worker talk to `conveyord`, which
-owns the broker. Run one `conveyord` (plus Postgres) and point both at it.
+The important practical consequence: with asynq your worker binary talks to Redis directly; with Conveyor your client and worker talk to `conveyord`, which owns the broker. Run one `conveyord` (plus Postgres) and point both at it.
 
 ## Enqueuing
 
@@ -50,9 +46,7 @@ client.Enqueue(ctx, task, conveyor.Queue("critical"), conveyor.MaxRetry(5), conv
 | `asynq.Timeout(d)` / `asynq.Deadline(t)` | `conveyor.Timeout(d)` / `conveyor.Deadline(t)`  | the handler `ctx` is canceled at the earliest of the timeout, the deadline, and the lease expiry (`engine.lease_ttl`); honor it. |
 | `asynq.Group` (aggregation)        | `conveyor.Group(name)` + `Mux.HandleBatch`      | members accumulate by (queue, group) and are delivered as one batch; see [grouping](grouping.md) |
 
-Payloads: asynq takes raw `[]byte`; Conveyor takes a `conveyor.Payload`
-(`conveyor.JSON(v)`, `conveyor.Bytes(b)`, or `conveyor.Proto(m)`), which also
-records the content type.
+Payloads: asynq takes raw `[]byte`; Conveyor takes a `conveyor.Payload` (`conveyor.JSON(v)`, `conveyor.Bytes(b)`, or `conveyor.Proto(m)`), which also records the content type.
 
 ## Processing
 
@@ -96,14 +90,11 @@ worker.Run(ctx, mux)
 | return `asynq.SkipRetry`             | return `conveyor.SkipRetry(err)`                                                          |
 | `asynq.GetTaskID(ctx)` / retry count | `conveyor.GetTaskID(ctx)`, `conveyor.GetRetryCount(ctx)`, or `task.ID()`/`task.Retried()` |
 
-A crashed worker mid-task is safe in both: asynq recovers via its lease, Conveyor
-releases the in-flight task on disconnect (no retry penalty) and redelivers it.
+A crashed worker mid-task is safe in both: asynq recovers via its lease, Conveyor releases the in-flight task on disconnect (no retry penalty) and redelivers it.
 
 ## Cron
 
-asynq registers periodic tasks in code with `asynq.Scheduler`. Conveyor persists
-cron entries on the server, so they survive restarts and run from whichever node
-holds the scheduler. Manage them with the CLI (or the Admin API):
+asynq registers periodic tasks in code with `asynq.Scheduler`. Conveyor persists cron entries on the server, so they survive restarts and run from whichever node holds the scheduler. Manage them with the CLI (or the Admin API):
 
 ```sh
 conveyor cron add nightly-report "0 0 2 * * *" report:daily --queue reports
@@ -124,39 +115,24 @@ conveyor tasks run <id>        # make a scheduled/retry task due now
 conveyor queues pause critical
 ```
 
-A read-only web dashboard is planned; today, metrics are exported in Prometheus
-format (see the [operations guide](operations.md)).
+A read-only web dashboard is planned; today, metrics are exported in Prometheus format (see the [operations guide](operations.md)).
 
 ## What you gain, what you give up
 
-Some honest framing: asynq is mature and excellent at what it does, so switch only
-for reasons that actually apply to you.
+Some honest framing: asynq is mature and excellent at what it does, so switch only for reasons that actually apply to you.
 
 **Genuinely gain:**
 
-- **No Redis.** If you already run Postgres, Conveyor needs no extra datastore,
-  and you avoid sizing Redis persistence/eviction for durable jobs. (The reverse
-  is also true: if you run Redis and not Postgres, asynq is the simpler choice.)
-- **A clustered server tier with built-in HA.** asynq has no server process, so
-  coordination lives entirely in Redis, which is the single point of failure
-  unless you run Redis Sentinel (Redis Cluster is only partially supported).
-  Conveyor's server tier is clustered by default and a lost node's queues
-  re-activate elsewhere.
-- **Server-controlled dispatch.** The server pushes work with credit-based
-  backpressure instead of every worker contending on the broker. This is about
-  flow control and broker load, **not** raw latency (asynq's blocking dequeue is
-  already near-real-time; don't switch expecting lower latency).
-- **Per-task priority** (asynq orders by queue weight only) and an **embeddable**
-  in-process mode.
+- **No Redis.** If you already run Postgres, Conveyor needs no extra datastore, and you avoid sizing Redis persistence/eviction for durable jobs. (The reverse is also true: if you run Redis and not Postgres, asynq is the simpler choice.)
+- **A clustered server tier with built-in HA.** asynq has no server process, so coordination lives entirely in Redis, which is the single point of failure unless you run Redis Sentinel (Redis Cluster is only partially supported). Conveyor's server tier is clustered by default and a lost node's queues re-activate elsewhere.
+- **Server-controlled dispatch.** The server pushes work with credit-based backpressure instead of every worker contending on the broker. This is about flow control and broker load, **not** raw latency (asynq's blocking dequeue is already near-real-time; don't switch expecting lower latency).
+- **Per-task priority** (asynq orders by queue weight only) and an **embeddable** in-process mode.
 
 **Give up:**
 
-- **Maturity and ecosystem.** asynq is battle-tested, with a large community and
-  the mature asynqmon UI. Conveyor is pre-1.0, though it ships its own operations
-  dashboard.
+- **Maturity and ecosystem.** asynq is battle-tested, with a large community and the mature asynqmon UI. Conveyor is pre-1.0, though it ships its own operations dashboard.
 - **The simplicity** of a single library plus Redis.
 
 ## Not yet covered
 
-Task aggregation/groups and a built-in web UI are not in v1. Everything else in
-asynq's core has a direct equivalent above.
+Task aggregation/groups and a built-in web UI are not in v1. Everything else in asynq's core has a direct equivalent above.

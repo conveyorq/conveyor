@@ -25,6 +25,8 @@ const (
 	TaskServiceName = "conveyor.v1.TaskService"
 	// WorkerServiceName is the fully-qualified name of the WorkerService service.
 	WorkerServiceName = "conveyor.v1.WorkerService"
+	// WebhookServiceName is the fully-qualified name of the WebhookService service.
+	WebhookServiceName = "conveyor.v1.WebhookService"
 	// AdminServiceName is the fully-qualified name of the AdminService service.
 	AdminServiceName = "conveyor.v1.AdminService"
 )
@@ -48,6 +50,12 @@ const (
 	TaskServiceGetTaskProcedure = "/conveyor.v1.TaskService/GetTask"
 	// WorkerServiceSessionProcedure is the fully-qualified name of the WorkerService's Session RPC.
 	WorkerServiceSessionProcedure = "/conveyor.v1.WorkerService/Session"
+	// WebhookServiceHeartbeatProcedure is the fully-qualified name of the WebhookService's Heartbeat
+	// RPC.
+	WebhookServiceHeartbeatProcedure = "/conveyor.v1.WebhookService/Heartbeat"
+	// WebhookServiceReportResultProcedure is the fully-qualified name of the WebhookService's
+	// ReportResult RPC.
+	WebhookServiceReportResultProcedure = "/conveyor.v1.WebhookService/ReportResult"
 	// AdminServiceListQueuesProcedure is the fully-qualified name of the AdminService's ListQueues RPC.
 	AdminServiceListQueuesProcedure = "/conveyor.v1.AdminService/ListQueues"
 	// AdminServicePauseQueueProcedure is the fully-qualified name of the AdminService's PauseQueue RPC.
@@ -121,6 +129,21 @@ const (
 	// AdminServiceClusterInfoProcedure is the fully-qualified name of the AdminService's ClusterInfo
 	// RPC.
 	AdminServiceClusterInfoProcedure = "/conveyor.v1.AdminService/ClusterInfo"
+	// AdminServiceListWebhookWorkersProcedure is the fully-qualified name of the AdminService's
+	// ListWebhookWorkers RPC.
+	AdminServiceListWebhookWorkersProcedure = "/conveyor.v1.AdminService/ListWebhookWorkers"
+	// AdminServiceUpsertWebhookWorkerProcedure is the fully-qualified name of the AdminService's
+	// UpsertWebhookWorker RPC.
+	AdminServiceUpsertWebhookWorkerProcedure = "/conveyor.v1.AdminService/UpsertWebhookWorker"
+	// AdminServicePauseWebhookWorkerProcedure is the fully-qualified name of the AdminService's
+	// PauseWebhookWorker RPC.
+	AdminServicePauseWebhookWorkerProcedure = "/conveyor.v1.AdminService/PauseWebhookWorker"
+	// AdminServiceResumeWebhookWorkerProcedure is the fully-qualified name of the AdminService's
+	// ResumeWebhookWorker RPC.
+	AdminServiceResumeWebhookWorkerProcedure = "/conveyor.v1.AdminService/ResumeWebhookWorker"
+	// AdminServiceDeleteWebhookWorkerProcedure is the fully-qualified name of the AdminService's
+	// DeleteWebhookWorker RPC.
+	AdminServiceDeleteWebhookWorkerProcedure = "/conveyor.v1.AdminService/DeleteWebhookWorker"
 	// AdminServiceListWorkerSessionsProcedure is the fully-qualified name of the AdminService's
 	// ListWorkerSessions RPC.
 	AdminServiceListWorkerSessionsProcedure = "/conveyor.v1.AdminService/ListWorkerSessions"
@@ -369,6 +392,110 @@ func (UnimplementedWorkerServiceHandler) Session(context.Context, *connect.BidiS
 	return connect.NewError(connect.CodeUnimplemented, errors.New("conveyor.v1.WorkerService.Session is not implemented"))
 }
 
+// WebhookServiceClient is a client for the conveyor.v1.WebhookService service.
+type WebhookServiceClient interface {
+	// Heartbeat extends the delivery's lease. A missed heartbeat lets the
+	// lease expire and the task retry elsewhere, exactly like a crashed
+	// stream worker.
+	Heartbeat(context.Context, *connect.Request[v1.WebhookHeartbeatRequest]) (*connect.Response[v1.WebhookHeartbeatResponse], error)
+	// ReportResult reports the delivery's final outcome and frees its slot.
+	ReportResult(context.Context, *connect.Request[v1.WebhookReportResultRequest]) (*connect.Response[v1.WebhookReportResultResponse], error)
+}
+
+// NewWebhookServiceClient constructs a client for the conveyor.v1.WebhookService service. By
+// default, it uses the Connect protocol with the binary Protobuf Codec, asks for gzipped responses,
+// and sends uncompressed requests. To use the gRPC or gRPC-Web protocols, supply the
+// connect.WithGRPC() or connect.WithGRPCWeb() options.
+//
+// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
+// http://api.acme.com or https://acme.com/grpc).
+func NewWebhookServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) WebhookServiceClient {
+	baseURL = strings.TrimRight(baseURL, "/")
+	webhookServiceMethods := v1.File_conveyor_v1_service_proto.Services().ByName("WebhookService").Methods()
+	return &webhookServiceClient{
+		heartbeat: connect.NewClient[v1.WebhookHeartbeatRequest, v1.WebhookHeartbeatResponse](
+			httpClient,
+			baseURL+WebhookServiceHeartbeatProcedure,
+			connect.WithSchema(webhookServiceMethods.ByName("Heartbeat")),
+			connect.WithClientOptions(opts...),
+		),
+		reportResult: connect.NewClient[v1.WebhookReportResultRequest, v1.WebhookReportResultResponse](
+			httpClient,
+			baseURL+WebhookServiceReportResultProcedure,
+			connect.WithSchema(webhookServiceMethods.ByName("ReportResult")),
+			connect.WithClientOptions(opts...),
+		),
+	}
+}
+
+// webhookServiceClient implements WebhookServiceClient.
+type webhookServiceClient struct {
+	heartbeat    *connect.Client[v1.WebhookHeartbeatRequest, v1.WebhookHeartbeatResponse]
+	reportResult *connect.Client[v1.WebhookReportResultRequest, v1.WebhookReportResultResponse]
+}
+
+// Heartbeat calls conveyor.v1.WebhookService.Heartbeat.
+func (c *webhookServiceClient) Heartbeat(ctx context.Context, req *connect.Request[v1.WebhookHeartbeatRequest]) (*connect.Response[v1.WebhookHeartbeatResponse], error) {
+	return c.heartbeat.CallUnary(ctx, req)
+}
+
+// ReportResult calls conveyor.v1.WebhookService.ReportResult.
+func (c *webhookServiceClient) ReportResult(ctx context.Context, req *connect.Request[v1.WebhookReportResultRequest]) (*connect.Response[v1.WebhookReportResultResponse], error) {
+	return c.reportResult.CallUnary(ctx, req)
+}
+
+// WebhookServiceHandler is an implementation of the conveyor.v1.WebhookService service.
+type WebhookServiceHandler interface {
+	// Heartbeat extends the delivery's lease. A missed heartbeat lets the
+	// lease expire and the task retry elsewhere, exactly like a crashed
+	// stream worker.
+	Heartbeat(context.Context, *connect.Request[v1.WebhookHeartbeatRequest]) (*connect.Response[v1.WebhookHeartbeatResponse], error)
+	// ReportResult reports the delivery's final outcome and frees its slot.
+	ReportResult(context.Context, *connect.Request[v1.WebhookReportResultRequest]) (*connect.Response[v1.WebhookReportResultResponse], error)
+}
+
+// NewWebhookServiceHandler builds an HTTP handler from the service implementation. It returns the
+// path on which to mount the handler and the handler itself.
+//
+// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
+// and JSON codecs. They also support gzip compression.
+func NewWebhookServiceHandler(svc WebhookServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	webhookServiceMethods := v1.File_conveyor_v1_service_proto.Services().ByName("WebhookService").Methods()
+	webhookServiceHeartbeatHandler := connect.NewUnaryHandler(
+		WebhookServiceHeartbeatProcedure,
+		svc.Heartbeat,
+		connect.WithSchema(webhookServiceMethods.ByName("Heartbeat")),
+		connect.WithHandlerOptions(opts...),
+	)
+	webhookServiceReportResultHandler := connect.NewUnaryHandler(
+		WebhookServiceReportResultProcedure,
+		svc.ReportResult,
+		connect.WithSchema(webhookServiceMethods.ByName("ReportResult")),
+		connect.WithHandlerOptions(opts...),
+	)
+	return "/conveyor.v1.WebhookService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case WebhookServiceHeartbeatProcedure:
+			webhookServiceHeartbeatHandler.ServeHTTP(w, r)
+		case WebhookServiceReportResultProcedure:
+			webhookServiceReportResultHandler.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+}
+
+// UnimplementedWebhookServiceHandler returns CodeUnimplemented from all methods.
+type UnimplementedWebhookServiceHandler struct{}
+
+func (UnimplementedWebhookServiceHandler) Heartbeat(context.Context, *connect.Request[v1.WebhookHeartbeatRequest]) (*connect.Response[v1.WebhookHeartbeatResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("conveyor.v1.WebhookService.Heartbeat is not implemented"))
+}
+
+func (UnimplementedWebhookServiceHandler) ReportResult(context.Context, *connect.Request[v1.WebhookReportResultRequest]) (*connect.Response[v1.WebhookReportResultResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("conveyor.v1.WebhookService.ReportResult is not implemented"))
+}
+
 // AdminServiceClient is a client for the conveyor.v1.AdminService service.
 type AdminServiceClient interface {
 	ListQueues(context.Context, *connect.Request[v1.ListQueuesRequest]) (*connect.Response[v1.ListQueuesResponse], error)
@@ -415,6 +542,19 @@ type AdminServiceClient interface {
 	ResumeCron(context.Context, *connect.Request[v1.ResumeCronRequest]) (*connect.Response[v1.ResumeCronResponse], error)
 	DeleteCron(context.Context, *connect.Request[v1.DeleteCronRequest]) (*connect.Response[v1.DeleteCronResponse], error)
 	ClusterInfo(context.Context, *connect.Request[v1.ClusterInfoRequest]) (*connect.Response[v1.ClusterInfoResponse], error)
+	// ListWebhookWorkers returns every webhook worker registration; signing
+	// secrets are redacted.
+	ListWebhookWorkers(context.Context, *connect.Request[v1.ListWebhookWorkersRequest]) (*connect.Response[v1.ListWebhookWorkersResponse], error)
+	// UpsertWebhookWorker creates or replaces a webhook worker registration by
+	// name and applies it immediately.
+	UpsertWebhookWorker(context.Context, *connect.Request[v1.UpsertWebhookWorkerRequest]) (*connect.Response[v1.UpsertWebhookWorkerResponse], error)
+	// PauseWebhookWorker suspends delivery to a registration without deleting it.
+	PauseWebhookWorker(context.Context, *connect.Request[v1.PauseWebhookWorkerRequest]) (*connect.Response[v1.PauseWebhookWorkerResponse], error)
+	// ResumeWebhookWorker resumes delivery to a paused registration.
+	ResumeWebhookWorker(context.Context, *connect.Request[v1.ResumeWebhookWorkerRequest]) (*connect.Response[v1.ResumeWebhookWorkerResponse], error)
+	// DeleteWebhookWorker removes a registration; its in-flight deliveries are
+	// released for redelivery elsewhere.
+	DeleteWebhookWorker(context.Context, *connect.Request[v1.DeleteWebhookWorkerRequest]) (*connect.Response[v1.DeleteWebhookWorkerResponse], error)
 	// ListWorkerSessions lists the worker sessions connected to the node serving
 	// the request, for the operations dashboard's worker-topology view.
 	ListWorkerSessions(context.Context, *connect.Request[v1.ListWorkerSessionsRequest]) (*connect.Response[v1.ListWorkerSessionsResponse], error)
@@ -609,6 +749,36 @@ func NewAdminServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(adminServiceMethods.ByName("ClusterInfo")),
 			connect.WithClientOptions(opts...),
 		),
+		listWebhookWorkers: connect.NewClient[v1.ListWebhookWorkersRequest, v1.ListWebhookWorkersResponse](
+			httpClient,
+			baseURL+AdminServiceListWebhookWorkersProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("ListWebhookWorkers")),
+			connect.WithClientOptions(opts...),
+		),
+		upsertWebhookWorker: connect.NewClient[v1.UpsertWebhookWorkerRequest, v1.UpsertWebhookWorkerResponse](
+			httpClient,
+			baseURL+AdminServiceUpsertWebhookWorkerProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("UpsertWebhookWorker")),
+			connect.WithClientOptions(opts...),
+		),
+		pauseWebhookWorker: connect.NewClient[v1.PauseWebhookWorkerRequest, v1.PauseWebhookWorkerResponse](
+			httpClient,
+			baseURL+AdminServicePauseWebhookWorkerProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("PauseWebhookWorker")),
+			connect.WithClientOptions(opts...),
+		),
+		resumeWebhookWorker: connect.NewClient[v1.ResumeWebhookWorkerRequest, v1.ResumeWebhookWorkerResponse](
+			httpClient,
+			baseURL+AdminServiceResumeWebhookWorkerProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("ResumeWebhookWorker")),
+			connect.WithClientOptions(opts...),
+		),
+		deleteWebhookWorker: connect.NewClient[v1.DeleteWebhookWorkerRequest, v1.DeleteWebhookWorkerResponse](
+			httpClient,
+			baseURL+AdminServiceDeleteWebhookWorkerProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("DeleteWebhookWorker")),
+			connect.WithClientOptions(opts...),
+		),
 		listWorkerSessions: connect.NewClient[v1.ListWorkerSessionsRequest, v1.ListWorkerSessionsResponse](
 			httpClient,
 			baseURL+AdminServiceListWorkerSessionsProcedure,
@@ -660,6 +830,11 @@ type adminServiceClient struct {
 	resumeCron                  *connect.Client[v1.ResumeCronRequest, v1.ResumeCronResponse]
 	deleteCron                  *connect.Client[v1.DeleteCronRequest, v1.DeleteCronResponse]
 	clusterInfo                 *connect.Client[v1.ClusterInfoRequest, v1.ClusterInfoResponse]
+	listWebhookWorkers          *connect.Client[v1.ListWebhookWorkersRequest, v1.ListWebhookWorkersResponse]
+	upsertWebhookWorker         *connect.Client[v1.UpsertWebhookWorkerRequest, v1.UpsertWebhookWorkerResponse]
+	pauseWebhookWorker          *connect.Client[v1.PauseWebhookWorkerRequest, v1.PauseWebhookWorkerResponse]
+	resumeWebhookWorker         *connect.Client[v1.ResumeWebhookWorkerRequest, v1.ResumeWebhookWorkerResponse]
+	deleteWebhookWorker         *connect.Client[v1.DeleteWebhookWorkerRequest, v1.DeleteWebhookWorkerResponse]
 	listWorkerSessions          *connect.Client[v1.ListWorkerSessionsRequest, v1.ListWorkerSessionsResponse]
 	brokerInfo                  *connect.Client[v1.BrokerInfoRequest, v1.BrokerInfoResponse]
 	watchEvents                 *connect.Client[v1.WatchEventsRequest, v1.TaskEvent]
@@ -805,6 +980,31 @@ func (c *adminServiceClient) ClusterInfo(ctx context.Context, req *connect.Reque
 	return c.clusterInfo.CallUnary(ctx, req)
 }
 
+// ListWebhookWorkers calls conveyor.v1.AdminService.ListWebhookWorkers.
+func (c *adminServiceClient) ListWebhookWorkers(ctx context.Context, req *connect.Request[v1.ListWebhookWorkersRequest]) (*connect.Response[v1.ListWebhookWorkersResponse], error) {
+	return c.listWebhookWorkers.CallUnary(ctx, req)
+}
+
+// UpsertWebhookWorker calls conveyor.v1.AdminService.UpsertWebhookWorker.
+func (c *adminServiceClient) UpsertWebhookWorker(ctx context.Context, req *connect.Request[v1.UpsertWebhookWorkerRequest]) (*connect.Response[v1.UpsertWebhookWorkerResponse], error) {
+	return c.upsertWebhookWorker.CallUnary(ctx, req)
+}
+
+// PauseWebhookWorker calls conveyor.v1.AdminService.PauseWebhookWorker.
+func (c *adminServiceClient) PauseWebhookWorker(ctx context.Context, req *connect.Request[v1.PauseWebhookWorkerRequest]) (*connect.Response[v1.PauseWebhookWorkerResponse], error) {
+	return c.pauseWebhookWorker.CallUnary(ctx, req)
+}
+
+// ResumeWebhookWorker calls conveyor.v1.AdminService.ResumeWebhookWorker.
+func (c *adminServiceClient) ResumeWebhookWorker(ctx context.Context, req *connect.Request[v1.ResumeWebhookWorkerRequest]) (*connect.Response[v1.ResumeWebhookWorkerResponse], error) {
+	return c.resumeWebhookWorker.CallUnary(ctx, req)
+}
+
+// DeleteWebhookWorker calls conveyor.v1.AdminService.DeleteWebhookWorker.
+func (c *adminServiceClient) DeleteWebhookWorker(ctx context.Context, req *connect.Request[v1.DeleteWebhookWorkerRequest]) (*connect.Response[v1.DeleteWebhookWorkerResponse], error) {
+	return c.deleteWebhookWorker.CallUnary(ctx, req)
+}
+
 // ListWorkerSessions calls conveyor.v1.AdminService.ListWorkerSessions.
 func (c *adminServiceClient) ListWorkerSessions(ctx context.Context, req *connect.Request[v1.ListWorkerSessionsRequest]) (*connect.Response[v1.ListWorkerSessionsResponse], error) {
 	return c.listWorkerSessions.CallUnary(ctx, req)
@@ -866,6 +1066,19 @@ type AdminServiceHandler interface {
 	ResumeCron(context.Context, *connect.Request[v1.ResumeCronRequest]) (*connect.Response[v1.ResumeCronResponse], error)
 	DeleteCron(context.Context, *connect.Request[v1.DeleteCronRequest]) (*connect.Response[v1.DeleteCronResponse], error)
 	ClusterInfo(context.Context, *connect.Request[v1.ClusterInfoRequest]) (*connect.Response[v1.ClusterInfoResponse], error)
+	// ListWebhookWorkers returns every webhook worker registration; signing
+	// secrets are redacted.
+	ListWebhookWorkers(context.Context, *connect.Request[v1.ListWebhookWorkersRequest]) (*connect.Response[v1.ListWebhookWorkersResponse], error)
+	// UpsertWebhookWorker creates or replaces a webhook worker registration by
+	// name and applies it immediately.
+	UpsertWebhookWorker(context.Context, *connect.Request[v1.UpsertWebhookWorkerRequest]) (*connect.Response[v1.UpsertWebhookWorkerResponse], error)
+	// PauseWebhookWorker suspends delivery to a registration without deleting it.
+	PauseWebhookWorker(context.Context, *connect.Request[v1.PauseWebhookWorkerRequest]) (*connect.Response[v1.PauseWebhookWorkerResponse], error)
+	// ResumeWebhookWorker resumes delivery to a paused registration.
+	ResumeWebhookWorker(context.Context, *connect.Request[v1.ResumeWebhookWorkerRequest]) (*connect.Response[v1.ResumeWebhookWorkerResponse], error)
+	// DeleteWebhookWorker removes a registration; its in-flight deliveries are
+	// released for redelivery elsewhere.
+	DeleteWebhookWorker(context.Context, *connect.Request[v1.DeleteWebhookWorkerRequest]) (*connect.Response[v1.DeleteWebhookWorkerResponse], error)
 	// ListWorkerSessions lists the worker sessions connected to the node serving
 	// the request, for the operations dashboard's worker-topology view.
 	ListWorkerSessions(context.Context, *connect.Request[v1.ListWorkerSessionsRequest]) (*connect.Response[v1.ListWorkerSessionsResponse], error)
@@ -1056,6 +1269,36 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(adminServiceMethods.ByName("ClusterInfo")),
 		connect.WithHandlerOptions(opts...),
 	)
+	adminServiceListWebhookWorkersHandler := connect.NewUnaryHandler(
+		AdminServiceListWebhookWorkersProcedure,
+		svc.ListWebhookWorkers,
+		connect.WithSchema(adminServiceMethods.ByName("ListWebhookWorkers")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceUpsertWebhookWorkerHandler := connect.NewUnaryHandler(
+		AdminServiceUpsertWebhookWorkerProcedure,
+		svc.UpsertWebhookWorker,
+		connect.WithSchema(adminServiceMethods.ByName("UpsertWebhookWorker")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServicePauseWebhookWorkerHandler := connect.NewUnaryHandler(
+		AdminServicePauseWebhookWorkerProcedure,
+		svc.PauseWebhookWorker,
+		connect.WithSchema(adminServiceMethods.ByName("PauseWebhookWorker")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceResumeWebhookWorkerHandler := connect.NewUnaryHandler(
+		AdminServiceResumeWebhookWorkerProcedure,
+		svc.ResumeWebhookWorker,
+		connect.WithSchema(adminServiceMethods.ByName("ResumeWebhookWorker")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceDeleteWebhookWorkerHandler := connect.NewUnaryHandler(
+		AdminServiceDeleteWebhookWorkerProcedure,
+		svc.DeleteWebhookWorker,
+		connect.WithSchema(adminServiceMethods.ByName("DeleteWebhookWorker")),
+		connect.WithHandlerOptions(opts...),
+	)
 	adminServiceListWorkerSessionsHandler := connect.NewUnaryHandler(
 		AdminServiceListWorkerSessionsProcedure,
 		svc.ListWorkerSessions,
@@ -1132,6 +1375,16 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 			adminServiceDeleteCronHandler.ServeHTTP(w, r)
 		case AdminServiceClusterInfoProcedure:
 			adminServiceClusterInfoHandler.ServeHTTP(w, r)
+		case AdminServiceListWebhookWorkersProcedure:
+			adminServiceListWebhookWorkersHandler.ServeHTTP(w, r)
+		case AdminServiceUpsertWebhookWorkerProcedure:
+			adminServiceUpsertWebhookWorkerHandler.ServeHTTP(w, r)
+		case AdminServicePauseWebhookWorkerProcedure:
+			adminServicePauseWebhookWorkerHandler.ServeHTTP(w, r)
+		case AdminServiceResumeWebhookWorkerProcedure:
+			adminServiceResumeWebhookWorkerHandler.ServeHTTP(w, r)
+		case AdminServiceDeleteWebhookWorkerProcedure:
+			adminServiceDeleteWebhookWorkerHandler.ServeHTTP(w, r)
 		case AdminServiceListWorkerSessionsProcedure:
 			adminServiceListWorkerSessionsHandler.ServeHTTP(w, r)
 		case AdminServiceBrokerInfoProcedure:
@@ -1257,6 +1510,26 @@ func (UnimplementedAdminServiceHandler) DeleteCron(context.Context, *connect.Req
 
 func (UnimplementedAdminServiceHandler) ClusterInfo(context.Context, *connect.Request[v1.ClusterInfoRequest]) (*connect.Response[v1.ClusterInfoResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("conveyor.v1.AdminService.ClusterInfo is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) ListWebhookWorkers(context.Context, *connect.Request[v1.ListWebhookWorkersRequest]) (*connect.Response[v1.ListWebhookWorkersResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("conveyor.v1.AdminService.ListWebhookWorkers is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) UpsertWebhookWorker(context.Context, *connect.Request[v1.UpsertWebhookWorkerRequest]) (*connect.Response[v1.UpsertWebhookWorkerResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("conveyor.v1.AdminService.UpsertWebhookWorker is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) PauseWebhookWorker(context.Context, *connect.Request[v1.PauseWebhookWorkerRequest]) (*connect.Response[v1.PauseWebhookWorkerResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("conveyor.v1.AdminService.PauseWebhookWorker is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) ResumeWebhookWorker(context.Context, *connect.Request[v1.ResumeWebhookWorkerRequest]) (*connect.Response[v1.ResumeWebhookWorkerResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("conveyor.v1.AdminService.ResumeWebhookWorker is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) DeleteWebhookWorker(context.Context, *connect.Request[v1.DeleteWebhookWorkerRequest]) (*connect.Response[v1.DeleteWebhookWorkerResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("conveyor.v1.AdminService.DeleteWebhookWorker is not implemented"))
 }
 
 func (UnimplementedAdminServiceHandler) ListWorkerSessions(context.Context, *connect.Request[v1.ListWorkerSessionsRequest]) (*connect.Response[v1.ListWorkerSessionsResponse], error) {

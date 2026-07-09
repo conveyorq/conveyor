@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/conveyorq/conveyor/internal/broker/memory"
 	"github.com/conveyorq/conveyor/internal/clock"
 )
 
@@ -375,5 +376,51 @@ func TestBuildClusterTLSRejectsEmptyCA(t *testing.T) {
 
 	if _, err := node.buildClusterTLS(); err == nil {
 		t.Fatal("expected an error for a CA file with no certificates")
+	}
+}
+
+func TestSeedWebhookWorkers(t *testing.T) {
+	config := DevConfig()
+	config.WebhookWorkers = []WebhookWorkerConfig{
+		{
+			Name:           "hooks",
+			URL:            "https://example.com/tasks",
+			Queues:         map[string]int32{"email": 2},
+			Concurrency:    4,
+			Secrets:        []string{"secret"},
+			RequestTimeout: 30 * time.Second,
+			Paused:         true,
+		},
+	}
+
+	node := &Server{config: config}
+	taskLog := memory.New(clock.System())
+
+	if err := node.seedWebhookWorkers(context.Background(), taskLog); err != nil {
+		t.Fatal(err)
+	}
+
+	seeded, err := taskLog.GetWebhookWorker(context.Background(), "hooks")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if seeded.URL != "https://example.com/tasks" || seeded.Queues["email"] != 2 ||
+		seeded.Concurrency != 4 || seeded.RequestTimeout != 30*time.Second || !seeded.Paused {
+		t.Fatalf("seeded registration mismatch: %+v", seeded)
+	}
+
+	// A second boot with the same config is an idempotent refresh.
+	if err := node.seedWebhookWorkers(context.Background(), taskLog); err != nil {
+		t.Fatal(err)
+	}
+
+	workers, err := taskLog.ListWebhookWorkers(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(workers) != 1 {
+		t.Fatalf("re-seeding must not duplicate, got %d registrations", len(workers))
 	}
 }

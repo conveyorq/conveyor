@@ -1,8 +1,6 @@
 # Third-party license inventory
 
-Conveyor is licensed under [Apache-2.0](../LICENSE). This file inventories the
-licenses of its compiled dependencies and records that all of them are
-compatible with redistribution under Apache-2.0.
+Conveyor is licensed under [Apache-2.0](../LICENSE). This file inventories the licenses of its compiled dependencies and records that all of them are compatible with redistribution under Apache-2.0.
 
 Regenerate with:
 
@@ -10,8 +8,7 @@ Regenerate with:
 make licenses
 ```
 
-(which runs `go-licenses report` over the server, CLI, SDK, and embedded
-packages). Update this file whenever the dependency set changes.
+(which runs `go-licenses report` over the server, CLI, SDK, and embedded packages). Update this file whenever the dependency set changes.
 
 ## Summary
 
@@ -24,16 +21,9 @@ packages). Update this file whenever the dependency set changes.
 | BSD-2-Clause |     5 | yes                                                 |
 | ISC          |     1 | yes                                                 |
 
-All licenses are permissive or file-level weak-copyleft and impose no condition
-that conflicts with distributing Conveyor under Apache-2.0. The seven MPL-2.0
-modules are HashiCorp clustering libraries (`memberlist` and its dependencies,
-pulled in transitively through GoAkt); MPL-2.0 governs its own files only and is
-satisfied by redistributing those modules unmodified, which Conveyor does.
+All licenses are permissive or file-level weak-copyleft and impose no condition that conflicts with distributing Conveyor under Apache-2.0. The seven MPL-2.0 modules are HashiCorp clustering libraries (`memberlist` and its dependencies, pulled in transitively through GoAkt); MPL-2.0 governs its own files only and is satisfied by redistributing those modules unmodified, which Conveyor does.
 
-The dependencies named in the relicensing plan check out:
-GoAkt (`github.com/tochemey/goakt/v4`) is MIT, ConnectRPC
-(`connectrpc.com/connect`) is Apache-2.0, and pgx (`github.com/jackc/pgx/v5`)
-is MIT.
+The dependencies named in the relicensing plan check out: GoAkt (`github.com/tochemey/goakt/v4`) is MIT, ConnectRPC (`connectrpc.com/connect`) is Apache-2.0, and pgx (`github.com/jackc/pgx/v5`) is MIT.
 
 ## Inventory
 

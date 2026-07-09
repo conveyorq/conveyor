@@ -112,6 +112,10 @@ func (s *Server) Start(ctx context.Context) error {
 
 	s.taskLog = taskLog
 
+	if err := s.seedWebhookWorkers(ctx, taskLog); err != nil {
+		return err
+	}
+
 	provider, err := s.buildDiscovery()
 	if err != nil {
 		return err
@@ -264,6 +268,31 @@ func (s *Server) buildBroker(ctx context.Context) (broker.Broker, error) {
 	}
 }
 
+// seedWebhookWorkers upserts every config-declared webhook worker
+// registration into the broker at boot. Upserting by name lets declared and
+// dynamically managed registrations compose: a re-boot refreshes declared
+// entries and leaves the rest untouched.
+func (s *Server) seedWebhookWorkers(ctx context.Context, taskLog broker.Broker) error {
+	for _, declared := range s.config.WebhookWorkers {
+		worker := &broker.WebhookWorker{
+			Name:           declared.Name,
+			URL:            declared.URL,
+			Queues:         declared.Queues,
+			Concurrency:    declared.Concurrency,
+			Secrets:        declared.Secrets,
+			BatchTypes:     declared.BatchTypes,
+			RequestTimeout: declared.RequestTimeout,
+			Paused:         declared.Paused,
+		}
+
+		if err := taskLog.UpsertWebhookWorker(ctx, worker); err != nil {
+			return fmt.Errorf("seeding webhook worker %q: %w", declared.Name, err)
+		}
+	}
+
+	return nil
+}
+
 // startWebhook starts the optional event webhook sink, subscribing it to the
 // engine's event bus. A blank URL leaves it disabled.
 func (s *Server) startWebhook() error {
@@ -412,8 +441,14 @@ func (s *Server) buildMux() *http.ServeMux {
 		adminOptions = append(adminOptions, connect.WithInterceptors(api.NewReadOnlyInterceptor()))
 	}
 
-	adminService := api.NewAdminService(s.engine, s.taskLog, clock.System(), s.workerService)
+	adminService := api.NewAdminService(s.engine, s.taskLog, clock.System(), s.workerService, s.config.AuthDisabled())
 	mux.Handle(conveyorv1connect.NewAdminServiceHandler(adminService, adminOptions...))
+
+	// The webhook callback service authenticates with per-delivery lease
+	// tokens, never bearer tokens, so it mounts without the auth
+	// interceptor: endpoints hold no API credentials by design.
+	webhookService := api.NewWebhookService(s.engine, s.taskLog)
+	mux.Handle(conveyorv1connect.NewWebhookServiceHandler(webhookService))
 
 	s.mountDashboard(mux)
 

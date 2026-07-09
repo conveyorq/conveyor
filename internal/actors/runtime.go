@@ -81,6 +81,10 @@ type Settings struct {
 	// RetryBackoff is the default retry backoff a gateway applies to a failed
 	// task that carries no per-task retry policy.
 	RetryBackoff backoff.Strategy
+	// WebhookBreakerOpenTimeout is how long an open webhook endpoint breaker
+	// withholds capacity before probing the endpoint again; zero selects the
+	// default.
+	WebhookBreakerOpenTimeout time.Duration
 }
 
 // Counters are the core engine counters, safe for concurrent use. OTel

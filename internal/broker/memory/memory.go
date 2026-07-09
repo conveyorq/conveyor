@@ -100,6 +100,8 @@ type Broker struct {
 	groupConfigs map[groupConfigKey]broker.GroupConfig
 	// cronEntries maps entry id to the stored entry.
 	cronEntries map[string]*broker.CronEntry
+	// webhookWorkers maps registration name to the stored registration.
+	webhookWorkers map[string]*broker.WebhookWorker
 	// dependents is the reverse dependency index: each dependency task id maps
 	// to the set of blocked task ids waiting on it. It makes resolving a
 	// finished task's dependents proportional to its dependent count rather than
@@ -146,6 +148,7 @@ func New(timeSource clock.Clock) *Broker {
 		concurrencyLimits: make(map[string]broker.ConcurrencyLimit),
 		groupConfigs:      make(map[groupConfigKey]broker.GroupConfig),
 		cronEntries:       make(map[string]*broker.CronEntry),
+		webhookWorkers:    make(map[string]*broker.WebhookWorker),
 		dependents:        make(map[string]map[string]struct{}),
 	}
 }
@@ -1690,9 +1693,87 @@ func (b *Broker) DeleteCronEntry(_ context.Context, id string) error {
 	return nil
 }
 
+// UpsertWebhookWorker creates or replaces a registration; see broker.Broker.
+func (b *Broker) UpsertWebhookWorker(_ context.Context, worker *broker.WebhookWorker) error {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	b.webhookWorkers[worker.Name] = cloneWebhookWorker(worker)
+
+	return nil
+}
+
+// GetWebhookWorker returns one registration by name; see broker.Broker.
+func (b *Broker) GetWebhookWorker(_ context.Context, name string) (*broker.WebhookWorker, error) {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	worker, exists := b.webhookWorkers[name]
+	if !exists {
+		return nil, broker.ErrTaskNotFound
+	}
+
+	return cloneWebhookWorker(worker), nil
+}
+
+// ListWebhookWorkers returns all registrations ordered by name; see
+// broker.Broker.
+func (b *Broker) ListWebhookWorkers(_ context.Context) ([]*broker.WebhookWorker, error) {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	workers := make([]*broker.WebhookWorker, 0, len(b.webhookWorkers))
+	for _, worker := range b.webhookWorkers {
+		workers = append(workers, cloneWebhookWorker(worker))
+	}
+
+	slices.SortFunc(workers, func(a, other *broker.WebhookWorker) int {
+		return strings.Compare(a.Name, other.Name)
+	})
+
+	return workers, nil
+}
+
+// SetWebhookWorkerPaused persists the registration pause flag; see
+// broker.Broker.
+func (b *Broker) SetWebhookWorkerPaused(_ context.Context, name string, paused bool) error {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	worker, exists := b.webhookWorkers[name]
+	if !exists {
+		return broker.ErrTaskNotFound
+	}
+
+	worker.Paused = paused
+
+	return nil
+}
+
+// DeleteWebhookWorker removes a registration; see broker.Broker.
+func (b *Broker) DeleteWebhookWorker(_ context.Context, name string) error {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	delete(b.webhookWorkers, name)
+
+	return nil
+}
+
 // Close releases resources; the in-memory broker holds none.
 func (b *Broker) Close() error {
 	return nil
+}
+
+// cloneWebhookWorker deep-copies a registration so callers cannot alias
+// stored state.
+func cloneWebhookWorker(worker *broker.WebhookWorker) *broker.WebhookWorker {
+	clone := *worker
+	clone.Queues = maps.Clone(worker.Queues)
+	clone.Secrets = slices.Clone(worker.Secrets)
+	clone.BatchTypes = slices.Clone(worker.BatchTypes)
+
+	return &clone
 }
 
 // cloneCronEntry deep-copies an entry so callers cannot alias stored state.

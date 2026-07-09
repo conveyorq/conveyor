@@ -86,6 +86,8 @@ func Run(t *testing.T, factory Factory) {
 		{"GroupConfig", testGroupConfig},
 		{"QueueStats", testQueueStats},
 		{"CronEntries", testCronEntries},
+		{"WebhookWorkers", testWebhookWorkers},
+		{"WebhookWorkerLifecycle", testWebhookWorkerLifecycle},
 		{"ListTasks", testListTasks},
 		{"Info", testInfo},
 		{"ConcurrentLeaseNoDoubleDelivery", testConcurrentLeaseNoDoubleDelivery},
@@ -1327,6 +1329,121 @@ func testCronEntries(t *testing.T, b broker.Broker, _ *clock.Fake) {
 	entries, _ = b.ListCronEntries(context.Background())
 	if len(entries) != 1 || entries[0].ID != "cron-b" {
 		t.Fatalf("entries after delete = %v, want only cron-b", entries)
+	}
+}
+
+func testWebhookWorkers(t *testing.T, b broker.Broker, _ *clock.Fake) {
+	worker := &broker.WebhookWorker{
+		Name:           "hooks-b",
+		URL:            "https://example.com/tasks",
+		Queues:         map[string]int32{queueName: 3, "other": 1},
+		Concurrency:    8,
+		Secrets:        []string{"secret-new", "secret-old"},
+		BatchTypes:     []string{"report:batch"},
+		RequestTimeout: 30 * time.Second,
+	}
+
+	if err := b.UpsertWebhookWorker(context.Background(), worker); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := b.UpsertWebhookWorker(context.Background(), &broker.WebhookWorker{Name: "hooks-a", URL: "https://example.com/a", Queues: map[string]int32{queueName: 1}, Concurrency: 1, Secrets: []string{"s"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	workers, err := b.ListWebhookWorkers(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(workers) != 2 || workers[0].Name != "hooks-a" || workers[1].Name != "hooks-b" {
+		t.Fatalf("workers = %v, want hooks-a then hooks-b", workers)
+	}
+
+	got, err := b.GetWebhookWorker(context.Background(), "hooks-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got.URL != worker.URL || got.Concurrency != 8 || got.RequestTimeout != 30*time.Second {
+		t.Fatalf("registration not round-tripped: %+v", got)
+	}
+
+	if len(got.Queues) != 2 || got.Queues[queueName] != 3 || got.Queues["other"] != 1 {
+		t.Fatalf("queues not round-tripped: %v", got.Queues)
+	}
+
+	if len(got.Secrets) != 2 || got.Secrets[0] != "secret-new" || got.Secrets[1] != "secret-old" {
+		t.Fatalf("secrets not round-tripped in order: %v", got.Secrets)
+	}
+
+	if len(got.BatchTypes) != 1 || got.BatchTypes[0] != "report:batch" {
+		t.Fatalf("batch types not round-tripped: %v", got.BatchTypes)
+	}
+
+	if _, err := b.GetWebhookWorker(context.Background(), "absent"); !errors.Is(err, broker.ErrTaskNotFound) {
+		t.Fatalf("get absent registration: err = %v, want ErrTaskNotFound", err)
+	}
+
+	// Returned registrations must not alias stored state: mutating one must
+	// not leak into a later read.
+	got.Queues[queueName] = 99
+	got.Secrets[0] = "mutated"
+
+	reread, _ := b.GetWebhookWorker(context.Background(), "hooks-b")
+	if reread.Queues[queueName] != 3 || reread.Secrets[0] != "secret-new" {
+		t.Fatalf("stored registration aliased by caller mutation: %+v", reread)
+	}
+}
+
+func testWebhookWorkerLifecycle(t *testing.T, b broker.Broker, _ *clock.Fake) {
+	worker := &broker.WebhookWorker{
+		Name:        "hooks",
+		URL:         "https://example.com/tasks",
+		Queues:      map[string]int32{queueName: 1},
+		Concurrency: 4,
+		Secrets:     []string{"secret-new", "secret-old"},
+	}
+
+	if err := b.UpsertWebhookWorker(context.Background(), worker); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := b.SetWebhookWorkerPaused(context.Background(), "hooks", true); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, _ := b.GetWebhookWorker(context.Background(), "hooks"); !got.Paused {
+		t.Fatal("pause flag not persisted")
+	}
+
+	if err := b.SetWebhookWorkerPaused(context.Background(), "absent", true); !errors.Is(err, broker.ErrTaskNotFound) {
+		t.Fatalf("pause absent registration: err = %v, want ErrTaskNotFound", err)
+	}
+
+	// An upsert replaces every field, including resetting the pause flag.
+	worker.URL = "https://example.com/v2"
+	worker.Secrets = []string{"secret-new"}
+
+	if err := b.UpsertWebhookWorker(context.Background(), worker); err != nil {
+		t.Fatal(err)
+	}
+
+	got, _ := b.GetWebhookWorker(context.Background(), "hooks")
+	if got.URL != "https://example.com/v2" || got.Paused || len(got.Secrets) != 1 {
+		t.Fatalf("upsert must replace the registration: %+v", got)
+	}
+
+	if err := b.DeleteWebhookWorker(context.Background(), "hooks"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := b.DeleteWebhookWorker(context.Background(), "hooks"); err != nil {
+		t.Fatalf("deleting an absent registration is a no-op, got %v", err)
+	}
+
+	if workers, _ := b.ListWebhookWorkers(context.Background()); len(workers) != 0 {
+		t.Fatalf("workers after delete = %v, want none", workers)
 	}
 }
 

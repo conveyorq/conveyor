@@ -1,9 +1,6 @@
 # Usage guide
 
-The two halves of using Conveyor: a **worker** registers a handler per task type
-and processes work, and a **client** enqueues tasks. Both shapes are the same in
-every SDK. For the concepts behind task, queue, client, server, worker, and
-broker, see [Concepts](concepts.md).
+The two halves of using Conveyor: a **worker** registers a handler per task type and processes work, and a **client** enqueues tasks. Both shapes are the same in every SDK. For the concepts behind task, queue, client, server, worker, and broker, see [Concepts](concepts.md).
 
 ## Contents
 
@@ -94,9 +91,7 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-Handlers must be idempotent and should honor cancellation (`ctx.Done()` in Go,
-the abort signal in TypeScript and Python). A handler that panics or throws is
-recovered and reported as a retryable failure, and it never kills the worker.
+Handlers must be idempotent and should honor cancellation (`ctx.Done()` in Go, the abort signal in TypeScript and Python). A handler that panics or throws is recovered and reported as a retryable failure, and it never kills the worker.
 
 ## Enqueueing work
 
