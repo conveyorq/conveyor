@@ -194,14 +194,18 @@ func TestWebhookServiceReportsUntrackedDelivery(t *testing.T) {
 	ctx := context.Background()
 	engine, taskLog := startTestEngine(t)
 
-	// The registration exists so its token verifies, but it is never
-	// reconciled into a running gateway, so the callback has nowhere to land.
+	// The registration exists so its token verifies, but it is paused: the
+	// manager's reconcile skips paused registrations, so no gateway is ever
+	// spawned and the callback has nowhere to land. Pausing makes this
+	// deterministic — an unpaused registration would race the reconcile that
+	// spawns its gateway.
 	require.NoError(t, taskLog.UpsertWebhookWorker(ctx, &broker.WebhookWorker{
 		Name:        "untracked-hooks",
 		URL:         "https://example.com/tasks",
 		Queues:      map[string]int32{"default": 1},
 		Concurrency: 1,
 		Secrets:     []string{"untracked-secret"},
+		Paused:      true,
 	}))
 
 	service := NewWebhookService(engine, taskLog)
