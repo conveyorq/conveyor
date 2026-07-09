@@ -179,6 +179,16 @@ func TestPoolErrorPropagation(t *testing.T) {
 		{"SetGroupConfig", true, 6, func(b *Broker) error { return b.SetGroupConfig(ctx, "q", "g", 1, time.Second, time.Second) }},
 		{"DeleteGroupConfig", true, 2, func(b *Broker) error { return b.DeleteGroupConfig(ctx, "q", "g") }},
 		{"GroupConfigs", false, 0, func(b *Broker) error { _, err := b.GroupConfigs(ctx); return err }},
+		{"UpsertWebhookWorker", true, 9, func(b *Broker) error {
+			return b.UpsertWebhookWorker(ctx, &broker.WebhookWorker{
+				Name: "hooks", URL: "https://example.com/tasks",
+				Queues: map[string]int32{"q": 1}, Concurrency: 1, Secrets: []string{"secret"},
+			})
+		}},
+		{"GetWebhookWorker", false, 1, func(b *Broker) error { _, err := b.GetWebhookWorker(ctx, "hooks"); return err }},
+		{"ListWebhookWorkers", false, 0, func(b *Broker) error { _, err := b.ListWebhookWorkers(ctx); return err }},
+		{"SetWebhookWorkerPaused", true, 3, func(b *Broker) error { return b.SetWebhookWorkerPaused(ctx, "hooks", true) }},
+		{"DeleteWebhookWorker", true, 1, func(b *Broker) error { return b.DeleteWebhookWorker(ctx, "hooks") }},
 	}
 
 	for _, tc := range tests {
@@ -243,6 +253,8 @@ func TestRowIterationErrors(t *testing.T) {
 		{"QueueRateLimits", 0, func(b *Broker) error { _, err := b.QueueRateLimits(ctx); return err }},
 		{"QueueConcurrencyLimits", 0, func(b *Broker) error { _, err := b.QueueConcurrencyLimits(ctx); return err }},
 		{"GroupConfigs", 0, func(b *Broker) error { _, err := b.GroupConfigs(ctx); return err }},
+		{"GetWebhookWorker", 1, func(b *Broker) error { _, err := b.GetWebhookWorker(ctx, "hooks"); return err }},
+		{"ListWebhookWorkers", 0, func(b *Broker) error { _, err := b.ListWebhookWorkers(ctx); return err }},
 	}
 
 	for _, tc := range tests {
@@ -280,6 +292,34 @@ func TestExtendLeaseLostWhenNoRowUpdated(t *testing.T) {
 
 	require.ErrorIs(t, b.ExtendLease(context.Background(), "t", "L", time.Second), broker.ErrLeaseLost)
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestWebhookWorkerNotFoundPaths covers the not-found guards of the webhook
+// registration read and pause paths.
+func TestWebhookWorkerNotFoundPaths(t *testing.T) {
+	ctx := context.Background()
+
+	webhookColumns := []string{"name", "url", "queues", "concurrency", "secrets", "batch_types", "request_timeout", "paused"}
+
+	t.Run("GetWebhookWorker missing", func(t *testing.T) {
+		b, mock := newMockBroker(t)
+		// An empty (but well-formed) result set means the registration is
+		// absent, which maps to ErrTaskNotFound.
+		mock.ExpectQuery("").WithArgs(anyArgs(1)...).WillReturnRows(pgxmock.NewRows(webhookColumns))
+
+		_, err := b.GetWebhookWorker(ctx, "hooks")
+		require.ErrorIs(t, err, broker.ErrTaskNotFound)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("SetWebhookWorkerPaused missing", func(t *testing.T) {
+		b, mock := newMockBroker(t)
+		// No row updated: the registration does not exist.
+		mock.ExpectExec("").WithArgs(anyArgs(3)...).WillReturnResult(pgxmock.NewResult("UPDATE", 0))
+
+		require.ErrorIs(t, b.SetWebhookWorkerPaused(ctx, "hooks", true), broker.ErrTaskNotFound)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
 }
 
 // TestExplainMissOutcomes exercises every branch of the shared explainMiss

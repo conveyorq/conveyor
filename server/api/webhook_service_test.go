@@ -187,6 +187,56 @@ func TestWebhookServiceRejectsBadTokens(t *testing.T) {
 	}
 }
 
+// TestWebhookServiceReportsUntrackedDelivery proves that a token whose
+// registration exists (so it verifies) but whose gateway is not running maps
+// to NotFound on both callbacks: the delivery is no longer tracked.
+func TestWebhookServiceReportsUntrackedDelivery(t *testing.T) {
+	ctx := context.Background()
+	engine, taskLog := startTestEngine(t)
+
+	// The registration exists so its token verifies, but it is never
+	// reconciled into a running gateway, so the callback has nowhere to land.
+	require.NoError(t, taskLog.UpsertWebhookWorker(ctx, &broker.WebhookWorker{
+		Name:        "untracked-hooks",
+		URL:         "https://example.com/tasks",
+		Queues:      map[string]int32{"default": 1},
+		Concurrency: 1,
+		Secrets:     []string{"untracked-secret"},
+	}))
+
+	service := NewWebhookService(engine, taskLog)
+	token := webhook.MintLeaseToken("untracked-secret", "untracked-hooks", "t", "l")
+
+	_, err := service.Heartbeat(ctx, connect.NewRequest(&conveyorv1.WebhookHeartbeatRequest{LeaseToken: token}))
+	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
+
+	_, err = service.ReportResult(ctx, connect.NewRequest(&conveyorv1.WebhookReportResultRequest{
+		LeaseToken: token,
+		Outcome:    conveyorv1.TaskOutcome_TASK_OUTCOME_SUCCESS,
+	}))
+	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
+}
+
+// TestWebhookServiceReturnsInternalOnBrokerFault proves that a broker failure
+// while loading a registration for verification surfaces as Internal, not as
+// an unauthenticated rejection that would hide the fault.
+func TestWebhookServiceReturnsInternalOnBrokerFault(t *testing.T) {
+	ctx := context.Background()
+	engine, taskLog := startTestEngine(t)
+
+	service := NewWebhookService(engine, &faultBroker{Broker: taskLog, failOn: "GetWebhookWorker"})
+	token := webhook.MintLeaseToken("s", "hooks", "t", "l")
+
+	_, err := service.Heartbeat(ctx, connect.NewRequest(&conveyorv1.WebhookHeartbeatRequest{LeaseToken: token}))
+	require.Equal(t, connect.CodeInternal, connect.CodeOf(err))
+
+	_, err = service.ReportResult(ctx, connect.NewRequest(&conveyorv1.WebhookReportResultRequest{
+		LeaseToken: token,
+		Outcome:    conveyorv1.TaskOutcome_TASK_OUTCOME_SUCCESS,
+	}))
+	require.Equal(t, connect.CodeInternal, connect.CodeOf(err))
+}
+
 func TestWebhookServiceRejectsInvalidOutcomes(t *testing.T) {
 	ctx := context.Background()
 	engine, taskLog := startTestEngine(t)

@@ -365,6 +365,11 @@ func TestWebhookAsyncCompletion(t *testing.T) {
 	stale := &conveyorv1.WebhookLeaseResult{TaskId: claims.TaskID, LeaseId: "stale-lease", Outcome: conveyorv1.TaskOutcome_TASK_OUTCOME_SUCCESS}
 	require.NoError(t, engine.TellWebhookGateway(ctx, "hooks", stale))
 
+	// An outcome the async contract does not allow (a bare RELEASED) is
+	// dropped, not applied: the delivery stays in flight.
+	invalid := &conveyorv1.WebhookLeaseResult{TaskId: claims.TaskID, LeaseId: claims.LeaseID, Outcome: conveyorv1.TaskOutcome_TASK_OUTCOME_RELEASED}
+	require.NoError(t, engine.TellWebhookGateway(ctx, "hooks", invalid))
+
 	report := &conveyorv1.WebhookLeaseResult{TaskId: claims.TaskID, LeaseId: claims.LeaseID, Outcome: conveyorv1.TaskOutcome_TASK_OUTCOME_SUCCESS}
 	require.NoError(t, engine.TellWebhookGateway(ctx, "hooks", report))
 
@@ -576,6 +581,139 @@ func TestWebhookManagerPauseAndResume(t *testing.T) {
 	reconcileNow(t, engine)
 
 	require.Eventually(t, completedReaches(taskLog, 2), 10*time.Second, 50*time.Millisecond)
+}
+
+// TestWebhookAdminCancelAsyncPushesNotification proves an admin cancel of an
+// accepted (asynchronous) delivery pushes a cancel notification to the still-
+// live endpoint so it stops the work the cancel revoked.
+func TestWebhookAdminCancelAsyncPushesNotification(t *testing.T) {
+	const queue = "hooks-admin-cancel"
+
+	ctx := context.Background()
+	taskLog := memory.New(clock.System())
+
+	endpoint := newRPCEndpoint(t, func(request *webhook.Request) *webhook.Response {
+		if request.Method == webhook.MethodExecute {
+			return acceptedFor(request)
+		}
+
+		// A cancel is a notification: it carries no id and wants no answer.
+		return nil
+	})
+
+	seedWebhookWorker(t, taskLog, testWebhookWorker(endpoint.server.URL, queue))
+	engine := startEngine(t, taskLog)
+
+	require.NoError(t, taskLog.Enqueue(ctx, newTask("admin-cancel-1", queue, "email:send", 4)))
+	require.Eventually(t, func() bool { return executeCount(endpoint) >= 1 }, 10*time.Second, 50*time.Millisecond)
+
+	claims, err := webhook.ParseLeaseToken(paramsOf(t, endpoint.seen()[0]).Lease.Token)
+	require.NoError(t, err)
+
+	cancel := &conveyorv1.CancelActive{TaskId: claims.TaskID}
+	require.Eventually(t, func() bool {
+		_ = engine.TellWebhookGateway(ctx, "hooks", cancel)
+
+		return canceled(endpoint)
+	}, 10*time.Second, 100*time.Millisecond, "an admin cancel of an accepted delivery notifies the endpoint")
+}
+
+// TestWebhookAdminCancelSyncAbortsAndArchives proves an admin cancel of a
+// synchronous in-flight delivery aborts the open request and archives the
+// task as canceled, never earning it a retry even with retries to spare.
+func TestWebhookAdminCancelSyncAbortsAndArchives(t *testing.T) {
+	const queue = "hooks-sync-cancel"
+
+	ctx := context.Background()
+	taskLog := memory.New(clock.System())
+
+	release := make(chan struct{})
+	var closeOnce sync.Once
+	closeRelease := func() { closeOnce.Do(func() { close(release) }) }
+
+	endpoint := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		// Hold the delivery open until the admin cancel aborts its request
+		// (its context ends) or the test tears down.
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	t.Cleanup(func() {
+		closeRelease()
+		endpoint.Close()
+	})
+
+	seedWebhookWorker(t, taskLog, testWebhookWorker(endpoint.URL, queue))
+	engine := startEngine(t, taskLog)
+
+	task := newTask("sync-cancel-1", queue, "email:send", 4)
+	task.Options.MaxRetry = 5
+	require.NoError(t, taskLog.Enqueue(ctx, task))
+
+	// The gateway leased and dispatched the task; it is now blocked on the
+	// endpoint, so the task sits ACTIVE.
+	require.Eventually(t, func() bool {
+		active, activeErr := tasksInState(taskLog, conveyorv1.TaskState_TASK_STATE_ACTIVE)
+
+		return activeErr == nil && active == 1
+	}, 10*time.Second, 50*time.Millisecond)
+
+	require.NoError(t, engine.TellWebhookGateway(ctx, "hooks", &conveyorv1.CancelActive{TaskId: "sync-cancel-1"}))
+
+	require.Eventually(t, func() bool {
+		state, _ := taskState(t, taskLog, "sync-cancel-1")
+
+		return state == conveyorv1.TaskState_TASK_STATE_ARCHIVED
+	}, 10*time.Second, 100*time.Millisecond, "an aborted, admin-canceled delivery archives instead of retrying")
+
+	_, lastError := taskState(t, taskLog, "sync-cancel-1")
+	require.Contains(t, lastError, canceledByAdminMessage)
+}
+
+// TestWebhookApplyWithdrawsRemovedQueues proves that updating a running
+// gateway's registration to drop a queue withdraws that queue's grain while
+// the retained queue keeps delivering.
+func TestWebhookApplyWithdrawsRemovedQueues(t *testing.T) {
+	const (
+		keepQueue = "hooks-keep"
+		dropQueue = "hooks-drop"
+	)
+
+	ctx := context.Background()
+	taskLog := memory.New(clock.System())
+	endpoint := newRPCEndpoint(t, completedFor)
+
+	worker := &broker.WebhookWorker{
+		Name:        "hooks",
+		URL:         endpoint.server.URL,
+		Queues:      map[string]int32{keepQueue: 1, dropQueue: 1},
+		Concurrency: 8,
+		Secrets:     []string{"secret"},
+	}
+	seedWebhookWorker(t, taskLog, worker)
+	engine := startEngine(t, taskLog)
+
+	// Both queues deliver before the registration changes.
+	require.NoError(t, taskLog.Enqueue(ctx, newTask("keep-1", keepQueue, "email:send", 4)))
+	require.NoError(t, taskLog.Enqueue(ctx, newTask("drop-1", dropQueue, "email:send", 4)))
+	require.Eventually(t, completedReaches(taskLog, 2), 10*time.Second, 50*time.Millisecond)
+
+	// Drop one queue; the reconcile hands the running gateway an updated
+	// registration, so apply withdraws the removed queue's grain.
+	updated := &broker.WebhookWorker{
+		Name:        "hooks",
+		URL:         endpoint.server.URL,
+		Queues:      map[string]int32{keepQueue: 1},
+		Concurrency: 8,
+		Secrets:     []string{"secret"},
+	}
+	require.NoError(t, taskLog.UpsertWebhookWorker(ctx, updated))
+	reconcileNow(t, engine)
+
+	// The retained queue still delivers after the change.
+	require.NoError(t, taskLog.Enqueue(ctx, newTask("keep-2", keepQueue, "email:send", 4)))
+	require.Eventually(t, completedReaches(taskLog, 3), 10*time.Second, 50*time.Millisecond)
 }
 
 func TestDeliveryResultMapping(t *testing.T) {

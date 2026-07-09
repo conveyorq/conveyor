@@ -82,6 +82,82 @@ func TestCallTransportFailures(t *testing.T) {
 	}
 }
 
+func TestCallRejectsMultipleResponses(t *testing.T) {
+	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`[
+			{"jsonrpc":"2.0","id":"a","result":{"status":"completed"}},
+			{"jsonrpc":"2.0","id":"b","result":{"status":"completed"}}
+		]`))
+	}))
+	defer endpoint.Close()
+
+	_, err := NewClient().Call(context.Background(), endpoint.URL, nil, NewExecuteRequest("l", &TaskParams{}))
+	require.Error(t, err, "a single Call expects exactly one response")
+}
+
+func TestCallBatchReportsTransportFailure(t *testing.T) {
+	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer endpoint.Close()
+
+	requests := []*Request{NewExecuteRequest("a", &TaskParams{TaskID: "a"})}
+
+	_, err := NewClient().CallBatch(context.Background(), endpoint.URL, nil, requests)
+	require.Error(t, err, "a non-200 answer fails the whole batch POST")
+}
+
+func TestCallBatchDropsResponsesWithoutID(t *testing.T) {
+	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// The second member carries no id: it cannot be correlated and is
+		// dropped from the keyed map.
+		_, _ = w.Write([]byte(`[
+			{"jsonrpc":"2.0","id":"a","result":{"status":"completed"}},
+			{"jsonrpc":"2.0","id":"","result":{"status":"completed"}}
+		]`))
+	}))
+	defer endpoint.Close()
+
+	requests := []*Request{
+		NewExecuteRequest("a", &TaskParams{TaskID: "a"}),
+		NewExecuteRequest("b", &TaskParams{TaskID: "b"}),
+	}
+
+	responses, err := NewClient().CallBatch(context.Background(), endpoint.URL, nil, requests)
+	require.NoError(t, err)
+	require.Len(t, responses, 1, "an id-less response cannot be correlated")
+	require.Contains(t, responses, "a")
+}
+
+// TestCallReportsConnectionFailure proves a dial failure to a closed endpoint
+// is surfaced as a transport error.
+func TestCallReportsConnectionFailure(t *testing.T) {
+	endpoint := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	url := endpoint.URL
+	endpoint.Close() // Nothing listens now; the dial fails.
+
+	_, err := NewClient().Call(context.Background(), url, nil, NewExecuteRequest("l", &TaskParams{}))
+	require.Error(t, err, "a dial to a closed endpoint must fail")
+}
+
+// TestNotifyReportsTransportFailure proves Notify surfaces a transport error
+// rather than swallowing it.
+func TestNotifyReportsTransportFailure(t *testing.T) {
+	endpoint := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	url := endpoint.URL
+	endpoint.Close()
+
+	err := NewClient().Notify(context.Background(), url, nil, NewCancelNotification("t1"))
+	require.Error(t, err, "a dial to a closed endpoint must fail the notification")
+}
+
+// TestSendRejectsInvalidURL proves a malformed URL fails at request building,
+// before any dial.
+func TestSendRejectsInvalidURL(t *testing.T) {
+	_, err := NewClient().Call(context.Background(), "://not-a-url", nil, NewExecuteRequest("l", &TaskParams{}))
+	require.Error(t, err, "a malformed URL must fail request construction")
+}
+
 func TestCallHonorsContextDeadline(t *testing.T) {
 	release := make(chan struct{})
 	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

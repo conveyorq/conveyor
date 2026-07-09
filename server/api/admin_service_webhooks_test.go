@@ -95,6 +95,23 @@ func TestWebhookWorkerAdminLifecycle(t *testing.T) {
 	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
 }
 
+// TestWebhookWorkerAdminRejectsEmptyName proves the name-required guard on
+// every registration handler that takes a name.
+func TestWebhookWorkerAdminRejectsEmptyName(t *testing.T) {
+	ctx := context.Background()
+	engine, taskLog := startTestEngine(t)
+	admin := NewAdminService(engine, taskLog, clock.System(), stubSessions(nil), true)
+
+	_, err := admin.PauseWebhookWorker(ctx, connect.NewRequest(&conveyorv1.PauseWebhookWorkerRequest{}))
+	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+
+	_, err = admin.ResumeWebhookWorker(ctx, connect.NewRequest(&conveyorv1.ResumeWebhookWorkerRequest{}))
+	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+
+	_, err = admin.DeleteWebhookWorker(ctx, connect.NewRequest(&conveyorv1.DeleteWebhookWorkerRequest{}))
+	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+}
+
 func TestUpsertWebhookWorkerValidation(t *testing.T) {
 	ctx := context.Background()
 	engine, taskLog := startTestEngine(t)

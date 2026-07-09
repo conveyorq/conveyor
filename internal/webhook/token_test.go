@@ -52,8 +52,30 @@ func TestLeaseTokenRejectsTampering(t *testing.T) {
 }
 
 func TestParseLeaseTokenRejectsMalformed(t *testing.T) {
-	for _, token := range []string{"", "a.b", "a.b.c.d.e", "!!!.b.c.d"} {
-		_, err := ParseLeaseToken(token)
-		require.ErrorIs(t, err, ErrInvalidToken, "token %q must not parse", token)
+	valid := "aGVsbG8" // "hello" in raw base64url, a decodable segment.
+
+	cases := map[string]string{
+		"empty":             "",
+		"too few segments":  "a.b",
+		"too many segments": "a.b.c.d.e",
+		"bad registration":  "!!!." + valid + "." + valid + ".mac",
+		"bad task id":       valid + ".!!!." + valid + ".mac",
+		"bad lease id":      valid + "." + valid + ".!!!.mac",
 	}
+
+	for name, token := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := ParseLeaseToken(token)
+			require.ErrorIs(t, err, ErrInvalidToken, "token %q must not parse", token)
+		})
+	}
+}
+
+// TestVerifyLeaseTokenRejectsMalformed proves verification rejects a token
+// with the wrong segment count before it ever computes a MAC.
+func TestVerifyLeaseTokenRejectsMalformed(t *testing.T) {
+	claims := &LeaseClaims{Registration: "hooks", TaskID: "t", LeaseID: "l"}
+
+	err := VerifyLeaseToken("a.b", claims, []string{"secret"})
+	require.ErrorIs(t, err, ErrInvalidToken, "a token with too few segments must not verify")
 }

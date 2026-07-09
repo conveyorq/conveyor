@@ -114,6 +114,51 @@ func (f *faultBroker) GroupConfigs(ctx context.Context) ([]broker.GroupConfig, e
 	return f.Broker.GroupConfigs(ctx)
 }
 
+// ListWebhookWorkers faults when selected; otherwise delegates.
+func (f *faultBroker) ListWebhookWorkers(ctx context.Context) ([]*broker.WebhookWorker, error) {
+	if f.failOn == "ListWebhookWorkers" {
+		return nil, errFault
+	}
+
+	return f.Broker.ListWebhookWorkers(ctx)
+}
+
+// UpsertWebhookWorker faults when selected; otherwise delegates.
+func (f *faultBroker) UpsertWebhookWorker(ctx context.Context, worker *broker.WebhookWorker) error {
+	if f.failOn == "UpsertWebhookWorker" {
+		return errFault
+	}
+
+	return f.Broker.UpsertWebhookWorker(ctx, worker)
+}
+
+// SetWebhookWorkerPaused faults when selected; otherwise delegates.
+func (f *faultBroker) SetWebhookWorkerPaused(ctx context.Context, name string, paused bool) error {
+	if f.failOn == "SetWebhookWorkerPaused" {
+		return errFault
+	}
+
+	return f.Broker.SetWebhookWorkerPaused(ctx, name, paused)
+}
+
+// DeleteWebhookWorker faults when selected; otherwise delegates.
+func (f *faultBroker) DeleteWebhookWorker(ctx context.Context, name string) error {
+	if f.failOn == "DeleteWebhookWorker" {
+		return errFault
+	}
+
+	return f.Broker.DeleteWebhookWorker(ctx, name)
+}
+
+// GetWebhookWorker faults when selected; otherwise delegates.
+func (f *faultBroker) GetWebhookWorker(ctx context.Context, name string) (*broker.WebhookWorker, error) {
+	if f.failOn == "GetWebhookWorker" {
+		return nil, errFault
+	}
+
+	return f.Broker.GetWebhookWorker(ctx, name)
+}
+
 // newFaultAdminService builds an AdminService whose broker faults on failOn. The
 // engine is the real test engine; the config handlers under test fail at the
 // broker before any engine call, so the injected fault is what the handler maps
@@ -173,6 +218,28 @@ func TestAdminConfigHandlersReturnInternalOnBrokerFault(t *testing.T) {
 		}},
 		{"DeleteGroupConfig", "DeleteGroupConfig", func(a *AdminService) error {
 			_, err := a.DeleteGroupConfig(ctx, connect.NewRequest(&conveyorv1.DeleteGroupConfigRequest{Queue: defaultQueueName, Group: "emails"}))
+			return err
+		}},
+		{"ListWebhookWorkers", "ListWebhookWorkers", func(a *AdminService) error {
+			_, err := a.ListWebhookWorkers(ctx, connect.NewRequest(&conveyorv1.ListWebhookWorkersRequest{}))
+			return err
+		}},
+		{"UpsertWebhookWorker", "UpsertWebhookWorker", func(a *AdminService) error {
+			_, err := a.UpsertWebhookWorker(ctx, connect.NewRequest(&conveyorv1.UpsertWebhookWorkerRequest{
+				Worker: validWebhookWorkerMessage(nil),
+			}))
+			return err
+		}},
+		{"PauseWebhookWorker", "SetWebhookWorkerPaused", func(a *AdminService) error {
+			_, err := a.PauseWebhookWorker(ctx, connect.NewRequest(&conveyorv1.PauseWebhookWorkerRequest{Name: "hooks"}))
+			return err
+		}},
+		{"ResumeWebhookWorker", "SetWebhookWorkerPaused", func(a *AdminService) error {
+			_, err := a.ResumeWebhookWorker(ctx, connect.NewRequest(&conveyorv1.ResumeWebhookWorkerRequest{Name: "hooks"}))
+			return err
+		}},
+		{"DeleteWebhookWorker", "DeleteWebhookWorker", func(a *AdminService) error {
+			_, err := a.DeleteWebhookWorker(ctx, connect.NewRequest(&conveyorv1.DeleteWebhookWorkerRequest{Name: "hooks"}))
 			return err
 		}},
 	}
