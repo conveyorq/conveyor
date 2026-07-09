@@ -10,5 +10,9 @@ deploy/grafana
 # The dashboard's Go package (embed.go) and its committed dist/ are needed to
 # build conveyord; only the frontend's node_modules is excluded.
 web/dashboard/node_modules
+# Host installs must not leak into the TypeScript example image; each stage
+# runs its own pnpm install.
+sdks/typescript/node_modules
+examples/typescript/node_modules
 *.md
 Dockerfile.tools
