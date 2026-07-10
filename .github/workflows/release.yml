@@ -265,6 +265,24 @@ jobs:
             --destination dist
           echo "version=${version}" >>"${GITHUB_OUTPUT}"
 
+      - name: Verify chart version/appVersion match the tag
+        # Fail the release before publishing if the packaged metadata does not
+        # match the tag — appVersion is the default image tag consumers pull
+        # (statefulset.yaml: image.tag | default .Chart.AppVersion), so a wrong
+        # value would point installs at the wrong (or missing) image.
+        env:
+          EXPECTED: ${{ steps.package.outputs.version }}
+        run: |
+          set -euo pipefail
+          meta="$(helm show chart "dist/conveyor-${EXPECTED}.tgz")"
+          got_ver="$(awk '/^version:/{print $2}' <<<"$meta")"
+          got_app="$(awk '/^appVersion:/{print $2}' <<<"$meta" | tr -d '"')"
+          echo "expected=${EXPECTED} version=${got_ver} appVersion=${got_app}"
+          if [[ "$got_ver" != "$EXPECTED" || "$got_app" != "$EXPECTED" ]]; then
+            echo "::error::packaged chart version/appVersion (${got_ver}/${got_app}) does not match tag (${EXPECTED})"
+            exit 1
+          fi
+
       - id: push
         name: Push chart to GHCR
         # helm push prints the pushed digest; capture it for signing.
