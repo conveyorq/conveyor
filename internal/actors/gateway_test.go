@@ -233,6 +233,13 @@ func leaseOne(t *testing.T, engine *Engine, queue, id string, leaseID string) *c
 	tasks, err := taskLog.Lease(ctx, queue, 1, 30*time.Second, leaseID)
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
+	// Lease picks the earliest-due task on the queue, not this id: a task an
+	// earlier step left in retry whose backoff has lapsed sorts ahead of the one
+	// just enqueued. Callers that lease several tasks on one queue must lease
+	// them all before failing any (see TestGatewayBreakerWithholdsOnOpen), so
+	// this assertion turns that ordering mistake into a clear failure instead of
+	// a flake where the fresh task is never dispatched.
+	require.Equal(t, id, tasks[0].GetId(), "leaseOne claimed a stale due task, not the one just enqueued")
 
 	return &conveyorv1.ExecuteTask{Task: tasks[0], LeaseId: leaseID}
 }
@@ -274,34 +281,40 @@ func TestGatewayOutcomeTransitions(t *testing.T) {
 		require.NoError(t, handle.Tell(ctx, message))
 	}
 
+	// Lease every task upfront while the queue holds no re-leasable work:
+	// driving the outcomes one at a time would leave an earlier task in retry,
+	// and once its backoff lapsed leaseOne would claim it instead of the fresh
+	// task (see leaseOne). Leasing first keeps every prior task active, so each
+	// lease returns the task just enqueued.
+	success := leaseOne(t, engine, queue, "task-success", "lease-1")
+	retry := leaseOne(t, engine, queue, "task-retry", "lease-2")
+	exhausted := leaseOne(t, engine, queue, "task-exhausted", "lease-3")
+	exhausted.Task.Retried = exhausted.GetTask().GetOptions().GetMaxRetry()
+	skip := leaseOne(t, engine, queue, "task-skip", "lease-4")
+	released := leaseOne(t, engine, queue, "task-released", "lease-5")
+
 	// SUCCESS acks the task.
-	execute := leaseOne(t, engine, queue, "task-success", "lease-1")
-	tell(execute)
+	tell(success)
 	tell(&conveyorv1.Result{TaskId: "task-success", Outcome: conveyorv1.TaskOutcome_TASK_OUTCOME_SUCCESS})
 	requireTaskState(t, engine, "task-success", conveyorv1.TaskState_TASK_STATE_COMPLETED)
 
 	// RETRY with budget left moves the task to retry with the error stored.
-	execute = leaseOne(t, engine, queue, "task-retry", "lease-2")
-	tell(execute)
+	tell(retry)
 	tell(&conveyorv1.Result{TaskId: "task-retry", Outcome: conveyorv1.TaskOutcome_TASK_OUTCOME_RETRY, ErrorMsg: "boom"})
 	requireTaskState(t, engine, "task-retry", conveyorv1.TaskState_TASK_STATE_RETRY)
 
 	// RETRY with the budget exhausted archives instead.
-	execute = leaseOne(t, engine, queue, "task-exhausted", "lease-3")
-	execute.Task.Retried = execute.GetTask().GetOptions().GetMaxRetry()
-	tell(execute)
+	tell(exhausted)
 	tell(&conveyorv1.Result{TaskId: "task-exhausted", Outcome: conveyorv1.TaskOutcome_TASK_OUTCOME_RETRY, ErrorMsg: "boom"})
 	requireTaskState(t, engine, "task-exhausted", conveyorv1.TaskState_TASK_STATE_ARCHIVED)
 
 	// SKIP_RETRY archives immediately.
-	execute = leaseOne(t, engine, queue, "task-skip", "lease-4")
-	tell(execute)
+	tell(skip)
 	tell(&conveyorv1.Result{TaskId: "task-skip", Outcome: conveyorv1.TaskOutcome_TASK_OUTCOME_SKIP_RETRY, ErrorMsg: "bad payload"})
 	requireTaskState(t, engine, "task-skip", conveyorv1.TaskState_TASK_STATE_ARCHIVED)
 
 	// RELEASED re-queues without a retry increment.
-	execute = leaseOne(t, engine, queue, "task-released", "lease-5")
-	tell(execute)
+	tell(released)
 	tell(&conveyorv1.Result{TaskId: "task-released", Outcome: conveyorv1.TaskOutcome_TASK_OUTCOME_RELEASED})
 	requireTaskState(t, engine, "task-released", conveyorv1.TaskState_TASK_STATE_PENDING)
 

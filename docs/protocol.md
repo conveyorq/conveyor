@@ -273,7 +273,7 @@ Unary RPCs. All inputs validated server-side; violations return `invalid_argumen
 
 - `EnqueueResponse.task` is a `TaskInfo` reflecting the committed task and its initial state (`SCHEDULED` if delayed, else `PENDING`).
 - `EnqueueBatch` accepts **1..1000** items. Items fail **independently**: `EnqueueBatchResponse.results[i]` carries either the committed `task` or a non-empty `error` string for item *i*, positionally. The RPC itself succeeds unless the batch is empty or oversized.
-- `EnqueueTx` accepts **1..1000** items and commits them **atomically**: either all are enqueued or none are. Any item failing (a duplicate `unique_key`, a `unique_key` collision between two items in the same request, or a validation error) fails the whole RPC (`already_exists` or `invalid_argument`) and commits nothing; re-committing an existing `task_id` is a no-op that does not abort the request. On success `EnqueueTxResponse.tasks` holds the committed `TaskInfo`s in request order. There are no per-item results — that is the difference from `EnqueueBatch`. The atomicity holds regardless of the server's broker.
+- `EnqueueTx` accepts **1..1000** items and commits them **atomically**: either all are enqueued or none are. Any item failing (a duplicate `unique_key`, a `unique_key` collision between two items in the same request, or a validation error) fails the whole RPC (`already_exists` or `invalid_argument`) and commits nothing; re-committing an existing `task_id` is a no-op that does not abort the request. On success `EnqueueTxResponse.tasks` holds the committed `TaskInfo`s in request order. There are no per-item results; that is the difference from `EnqueueBatch`. The atomicity holds regardless of the server's broker.
 
 ### 6.2 GetTask
 

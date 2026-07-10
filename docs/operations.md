@@ -78,7 +78,7 @@ Priorities and weights shape *what* runs first: per-task `Priority(1..9)` orders
 - **Health.** `/healthz` (liveness) and `/readyz` (readiness: broker reachable and engine running) on the API port. Wired into the chart's probes.
 - **Metrics.** Prometheus exposition at `/metrics` on `metrics.listen` (`:9464`): `conveyor_enqueued_total`, `…_completed_total`, `…_failed_total`, `…_retried_total`, `…_archived_total`, `…_released_total`, `conveyor_active`, `conveyor_sessions_active`, `conveyor_pending`, plus runtime metrics. The chart stamps `prometheus.io/scrape` annotations and ships an opt-in ServiceMonitor; `deploy/grafana/` has a dashboard and scrape config.
 - **Tracing.** Set `otel.endpoint` to push OTLP traces to a collector. Each enqueue opens a span and stamps a W3C `traceparent` into the task; if your worker process has OpenTelemetry configured, its execution span links back to the enqueue.
-- **Lifecycle events.** A push stream of per-task state transitions for live dashboards, alerting, audit logs, and event-driven chaining — see [lifecycle events](events.md).
+- **Lifecycle events.** A push stream of per-task state transitions for live dashboards, alerting, audit logs, and event-driven chaining; see [lifecycle events](events.md).
 - `conveyor cluster info` reports cluster membership.
 
 ## Upgrades & restarts

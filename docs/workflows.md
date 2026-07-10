@@ -21,7 +21,7 @@ The dependent is committed in the `blocked` state and stays there until `order:c
 
 ## Chains
 
-A chain is a dependency per step — each task depends on the one before it:
+A chain is a dependency per step, where each task depends on the one before it:
 
 ```go
 payload := conveyor.JSON(record)
@@ -35,7 +35,7 @@ client.Enqueue(ctx, conveyor.NewTask("step:load", payload), conveyor.DependsOn(b
 
 ## Fan-out / fan-in
 
-Fan-out is enqueuing N independent children; fan-in is a **continuation** that depends on all of them. The continuation runs once — after every child succeeds:
+Fan-out is enqueuing N independent children; fan-in is a **continuation** that depends on all of them. The continuation runs once, after every child succeeds:
 
 ```go
 var shardIDs []string
@@ -56,7 +56,7 @@ The shards run in parallel (subject to your workers and queue limits); the summa
 
 ## Failure policies
 
-By default a dependent that depends on a task which **fails terminally** (its retries are exhausted, it is skipped, or it is canceled) stays blocked forever — the dependency never succeeded. Choose a different policy per dependency with `DependsOnTasks`:
+By default a dependent that depends on a task which **fails terminally** (its retries are exhausted, it is skipped, or it is canceled) stays blocked forever, because the dependency never succeeded. Choose a different policy per dependency with `DependsOnTasks`:
 
 ```go
 client.Enqueue(ctx,
@@ -69,16 +69,16 @@ client.Enqueue(ctx,
 )
 ```
 
-- **`BlockOnFailure`** (default) — the dependent stays blocked; the dependency never succeeded, so the dependent never becomes eligible.
-- **`ContinueOnFailure`** — the failed dependency is treated as satisfied, so the dependent proceeds once its remaining dependencies clear.
-- **`CascadeCancelOnFailure`** — the dependent is canceled, and the cancellation cascades to *its* dependents in turn.
+- **`BlockOnFailure`** (default): the dependent stays blocked; the dependency never succeeded, so the dependent never becomes eligible.
+- **`ContinueOnFailure`**: the failed dependency is treated as satisfied, so the dependent proceeds once its remaining dependencies clear.
+- **`CascadeCancelOnFailure`**: the dependent is canceled, and the cancellation cascades to *its* dependents in turn.
 
 ## Semantics & guarantees
 
 - A task with dependencies starts in **`blocked`**, distinct from `pending`, `scheduled`, and `aggregating`. It cannot be leased while blocked.
-- A dependency that has **already completed** when the dependent is enqueued is treated as satisfied immediately — the dependent does not block on it. A dependency that already failed is applied through its failure policy at enqueue time.
+- A dependency that has **already completed** when the dependent is enqueued is treated as satisfied immediately, so the dependent does not block on it. A dependency that already failed is applied through its failure policy at enqueue time.
 - Resolution is **at-least-once and eventually consistent**: completing a dependency promotes its dependents promptly, and a background sweep is the safety net, so a dependent is never stranded by a lost wake-up. A dependent may briefly remain `blocked` after its last dependency finishes before it is promoted.
-- Dependencies must be **acyclic**. A cycle (A depends on B, B depends on A) leaves every task in it blocked forever — it is never detected or rejected.
+- Dependencies must be **acyclic**. A cycle (A depends on B, B depends on A) leaves every task in it blocked forever, and it is never detected or rejected.
 - A dependency on a **task id that is never enqueued** blocks the dependent indefinitely; the dependent waits for a task that will never finish.
 - A task may depend on at most **1000** tasks.
 

@@ -102,7 +102,7 @@ Each task attempt is one [JSON-RPC 2.0](https://www.jsonrpc.org/specification) r
 | `X-Conveyor-Signature` | `v1=` followed by the hex HMAC-SHA256 of `"{timestamp}.{body}"`, keyed by your secret. |
 
 
-The two `X-Conveyor-*` headers authenticate the delivery — verify them before trusting the body (see [Verifying the signature](#verifying-the-signature)). A registration with no secret sends them empty/omitted.
+The two `X-Conveyor-*` headers authenticate the delivery; verify them before trusting the body (see [Verifying the signature](#verifying-the-signature)). A registration with no secret sends them empty/omitted.
 
 ### Request envelope
 
@@ -142,7 +142,7 @@ The body is a JSON-RPC 2.0 request: `method` is always `conveyor.task.execute`, 
 | `params.maxRetry`    | number            | The task's retry budget.                                                                                                                                                                                      |
 | `params.deadline`    | string (RFC 3339) | Execution deadline; omitted when unbounded.                                                                                                                                                                   |
 | `params.contentType` | string            | Codec of the payload bytes (e.g. `application/json`).                                                                                                                                                         |
-| `params.payload`     | string (base64)   | The task payload — the envelope is JSON, so the raw bytes are base64-encoded, delivered exactly as stored.                                                                                                    |
+| `params.payload`     | string (base64)   | The task payload; the envelope is JSON, so the raw bytes are base64-encoded, delivered exactly as stored.                                                                                                     |
 | `params.metadata`    | object            | User-set string tags; omitted when none.                                                                                                                                                                      |
 | `params.lease`       | object            | Present only when the task may complete asynchronously (see [Long-running tasks](#long-running-tasks)): `token` authenticates its callbacks, `heartbeatInterval` (e.g. `"30s"`) is the required beat cadence. |
 
@@ -201,7 +201,7 @@ When the work outlives the request, accept the task and return immediately:
 {"jsonrpc": "2.0", "id": "01KX3E7T...", "result": {"status": "accepted"}}
 ```
 
-From there the endpoint completes the task out of band, over the server's plain HTTP/JSON surface, authenticated by the delivery's **lease token** — no API bearer token needed. Use the `lease.token` from the delivery `params`:
+From there the endpoint completes the task out of band, over the server's plain HTTP/JSON surface, authenticated by the delivery's **lease token**, with no API bearer token needed. Use the `lease.token` from the delivery `params`:
 
 - **Heartbeat** at least every `heartbeatInterval`, or the lease expires and the task is reclaimed and retried elsewhere (exactly like a crashed worker):
   ```sh
@@ -236,7 +236,7 @@ Cancellation is best-effort, the same contract SDK workers have; the endpoint ma
 
 An [aggregation group](grouping.md) fires as one delivery: a JSON-RPC batch (a JSON array), one `conveyor.task.execute` call per member, one POST. Answer with the response array; each member's `id` is its `taskId`. Members complete individually (any mix of `completed`, `accepted`, and errors), and the group's credit refills when every member resolves.
 
-A registration only receives a group batch for a task type listed in its `--batch-type` set. The values are your own task-type identifiers — the same free-form strings you set when enqueuing tasks — not a predefined vocabulary; `report:batch` used throughout these examples is simply illustrative. A task type not listed here is still delivered, just one call per task rather than batched.
+A registration only receives a group batch for a task type listed in its `--batch-type` set. The values are your own task-type identifiers (the same free-form strings you set when enqueuing tasks), not a predefined vocabulary; `report:batch` used throughout these examples is only illustrative. A task type not listed here is still delivered, just one call per task rather than batched.
 
 ## Verifying the signature
 

@@ -67,13 +67,13 @@ The coordination layer and the enqueue entry point the API calls. It builds the 
 
 ### Runtime (`runtime.go`): actor-system extension
 
-A shared service object (extension id `"broker"`) that every actor and grain resolves on start. It hands out the broker, the injected clock, server settings, the logger, metric counters, the lifecycle event bus, a monotonic ULID source, and — once the system is up — the node's dependency-resolver pool. It is how stateless actors reach durable state without holding a reference of their own.
+A shared service object (extension id `"broker"`) that every actor and grain resolves on start. It hands out the broker, the injected clock, server settings, the logger, metric counters, the lifecycle event bus, a monotonic ULID source, and (once the system is up) the node's dependency-resolver pool. It is how stateless actors reach durable state without holding a reference of their own.
 
 ### QueueGrain (`queue_grain.go`): grain (one per queue)
 
 The per-queue **dispatcher**, and the heart of the system. Exactly one activation per queue exists cluster-wide; it is activated on demand and passivated when idle. On activation (`OnActivate`) it rebuilds all state from the broker: the persisted pause flag, the rate limiter, and the per-key concurrency limit. It holds no durable state, so `OnDeactivate` is a no-op.
 
-It reacts to wakes (`TasksAvailable`), gateway registrations and credits, and completion messages. Its core loop, `maybeLease`, runs whenever the queue is unpaused, no lease cycle is already in flight, and credits are available: it leases up to `min(credits, batchMax)` due tasks (further capped by available rate-limiter tokens), then distributes them across the registered gateways in proportion to their declared weights (smooth weighted round-robin over the gateways that still have credits), decrementing one credit per dispatched task. A gateway that declared no weight counts as weight one, so an unweighted fleet falls back to plain round-robin. A leased task whose concurrency key is already at the queue's per-key limit is held back — released to redeliver rather than dispatched — so a keyed queue never runs more than its limit per key. Leasing happens off the mailbox turn via `PipeToSelf` so the grain never blocks on the broker.
+It reacts to wakes (`TasksAvailable`), gateway registrations and credits, and completion messages. Its core loop, `maybeLease`, runs whenever the queue is unpaused, no lease cycle is already in flight, and credits are available: it leases up to `min(credits, batchMax)` due tasks (further capped by available rate-limiter tokens), then distributes them across the registered gateways in proportion to their declared weights (smooth weighted round-robin over the gateways that still have credits), decrementing one credit per dispatched task. A gateway that declared no weight counts as weight one, so an unweighted fleet falls back to plain round-robin. A leased task whose concurrency key is already at the queue's per-key limit is held back (released to redeliver rather than dispatched), so a keyed queue never runs more than its limit per key. Leasing happens off the mailbox turn via `PipeToSelf` so the grain never blocks on the broker.
 
 ### Gateway (`gateway.go`): actor (one per worker session)
 
@@ -89,7 +89,7 @@ The bridge between the actor world and one worker's stream. Spawned per accepted
 
 [Webhook workers](webhook-workers.md) let an external HTTP endpoint process tasks with no SDK: the server leases due tasks to a registered URL and pushes each as a signed JSON-RPC call. Two units implement them, both in `webhook_gateway.go`.
 
-- **WebhookManager**: a fourth cluster singleton (registered alongside the maintenance loops). On a reconcile tick it lists the persisted registrations from the broker and converges its children onto them — spawning a gateway for each active registration, refreshing the snapshot of one that changed, and draining the child of one that was paused, deleted, or lost its secret. Because it is a singleton, a relocated manager rebuilds every gateway on its new host. A registration with no secret is skipped: the gateway signs deliveries and mints lease tokens with the newest secret, so it cannot start without one.
+- **WebhookManager**: a fourth cluster singleton (registered alongside the maintenance loops). On a reconcile tick it lists the persisted registrations from the broker and converges its children onto them: it spawns a gateway for each active registration, refreshes the snapshot of one that changed, and drains the child of one that was paused, deleted, or lost its secret. Because it is a singleton, a relocated manager rebuilds every gateway on its new host. A registration with no secret is skipped: the gateway signs deliveries and mints lease tokens with the newest secret, so it cannot start without one.
 - **WebhookGateway**: the webhook analog of the per-session `Gateway`, one plain actor per registration (long-lived, relocation-disabled). A queue grain dispatches to it exactly like any gateway; instead of pushing a stream frame it POSTs a JSON-RPC call to the endpoint off its mailbox turn, maps the response to the durable transition (`Ack`/`Fail`/`Archive`/`Release`), and reports completion for the credit refill. It re-registers its capacity every tick like the stream gateway, extends the leases of open synchronous deliveries, and carries the same per-task-type circuit breaker. A delivery the endpoint answers `accepted` parks in **asynchronous mode**: its slot stays held and its lease is driven by the endpoint's `Heartbeat` callbacks until a `ReportResult` callback (both served by `WebhookService` and routed here by the engine) resolves it, or it stops beating and lease expiry reclaims it. A per-endpoint **circuit breaker** withholds capacity (announces zero, then a single probe slot) when transport failures pile up, so a dead endpoint's queue stays `pending` instead of churning.
 
 ### Cluster singletons: maintenance loops
@@ -97,12 +97,12 @@ The bridge between the actor world and one worker's stream. Spawned per accepted
 Three singletons run on one node (the leader) and relocate to a survivor on node loss. Each arms its own recurring tick in `PostStart`, so after relocation the new host re-arms the cadence; the stale entry on the departed node self-cancels. Each tolerates `ErrSingletonAlreadyExists` on non-leaders as the desired state.
 
 - **Scheduler (`scheduler.go`)**, on `PromoteTick`: promotes due `scheduled` tasks to `pending` (`PromoteScheduled`), materializes due cron entries into real tasks, and wakes affected queues.
-- **Reaper (`reaper.go`)**, on `ReapTick`: reclaims expired leases (`ReapExpiredLeases` → retry or archive), purges retention-lapsed completed rows (`PurgeCompleted`), archives tasks past their pre-dispatch TTL (`ArchiveExpired`), promotes blocked tasks whose dependencies have since reached a terminal state but that inline resolution missed (`PromoteReadyDependents`), and sweeps for queues with due work whose wake was lost (`PendingCount`), waking each. It runs under GoAkt's default (stop-on-failure) supervision, so it deliberately logs and skips a failed pass — leaving the next tick to retry — rather than escalating a transient broker error into a crash that would permanently stop all maintenance.
+- **Reaper (`reaper.go`)**, on `ReapTick`: reclaims expired leases (`ReapExpiredLeases` → retry or archive), purges retention-lapsed completed rows (`PurgeCompleted`), archives tasks past their pre-dispatch TTL (`ArchiveExpired`), promotes blocked tasks whose dependencies have since reached a terminal state but that inline resolution missed (`PromoteReadyDependents`), and sweeps for queues with due work whose wake was lost (`PendingCount`), waking each. It runs under GoAkt's default (stop-on-failure) supervision, so it deliberately logs and skips a failed pass (leaving the next tick to retry) rather than escalating a transient broker error into a crash that would permanently stop all maintenance.
 - **GroupSweeper (`group.go`)**, on `GroupSweepTick`: reads `GroupStats` and fires aggregation groups that are past a size, max-delay, or grace-period threshold by telling the owning queue grain `FireGroup`.
 
 ### DependencyResolver (`resolver.go`): per-node router pool
 
-Completion-time dependency resolution runs here, off the gateway and grain turns. A bounded pool of stateless routees sits behind a per-node round-robin router: when a task reaches a terminal state its gateway hands a `ResolveDependents` to the router with a non-blocking tell, and a routee runs the reconciling broker transaction — promoting each dependent whose dependencies are now satisfied, applying each failed edge's on-failure policy (block, continue, or cascade-cancel) — then wakes the queues that gained work. The pool is node-local and its size is configurable; resolution is best-effort, so a failure is only logged, and a node with no pool (or any missed resolution) falls back to the reaper's `PromoteReadyDependents` sweep.
+Completion-time dependency resolution runs here, off the gateway and grain turns. A bounded pool of stateless routees sits behind a per-node round-robin router: when a task reaches a terminal state its gateway hands a `ResolveDependents` to the router with a non-blocking tell, and a routee runs the reconciling broker transaction, promoting each dependent whose dependencies are now satisfied and applying each failed edge's on-failure policy (block, continue, or cascade-cancel). It then wakes the queues that gained work. The pool is node-local and its size is configurable; resolution is best-effort, so a failure is only logged, and a node with no pool (or any missed resolution) falls back to the reaper's `PromoteReadyDependents` sweep.
 
 ## The broker
 
@@ -139,51 +139,42 @@ A task row stores its identity and options plus mutable execution fields (`state
 
 ## Task lifecycle
 
-The task states are defined in [`protos/conveyor/v1/task.proto`](../protos/conveyor/v1/task.proto). The diagram reads top to bottom: a task lands in one of the pre-dispatch **waiting** states, is leased into `active`, and ends in a terminal state. Two points the "single lease path" picture gets wrong are worth stating up front:
+The task states are defined in [`protos/conveyor/v1/task.proto`](../protos/conveyor/v1/task.proto). The diagram reads top to bottom: a task lands in one of the pre-dispatch **waiting** states, is leased into `active`, and ends in a terminal state. The "single lease path" picture gets two points wrong:
 
-- **There are two lease paths.** `pending` and `retry` tasks are leased individually (`Lease`) — a retry is dispatched straight from `retry`, *not* funneled back through `pending` — while a fired aggregation group is leased as a batch straight from `aggregating` (`LeaseGroup`) and never passes through `pending`.
+- **There are two lease paths.** `pending` and `retry` tasks are leased individually (`Lease`); a retry is dispatched straight from `retry`, *not* funneled back through `pending`. A fired aggregation group is leased as a batch straight from `aggregating` (`LeaseGroup`) and never passes through `pending`.
 - **`canceled` is a pre-dispatch outcome only.** Any *waiting* task can be canceled (by an admin, or by a dependency that failed under the cascade-cancel policy). An admin cancel of an *already-running* task cannot undo it: the attempt is aborted and lands in `archived`, not `canceled`.
 
-A task with unmet dependencies starts `blocked` and, once they resolve, is promoted to `pending` (or to `scheduled`/`aggregating` when it is also delayed or grouped). There is no separate "expired" state: a pre-dispatch expiry resolves to `archived` with `last_error = "task expired before dispatch"`. Transitions marked `admin:` are operator-initiated; the rest are driven by the engine.
+A task with unmet dependencies starts `blocked` and, once they resolve, is promoted to `pending` (or to `scheduled`/`aggregating` when it is also delayed or grouped). There is no separate "expired" state: a pre-dispatch expiry resolves to `archived` with `last_error = "task expired before dispatch"`.
+
+The diagram reads top to bottom. The box holds the pre-dispatch **waiting** states; a task is born into one of them (`pending` when due, `scheduled` when delayed, `aggregating` when grouped, `blocked` when it has unmet dependencies), and `scheduled` and `blocked` promote to `pending` once they are ready. Dispatch leases the task out to `active`: `Lease` for an individual `pending` or `retry` task, `LeaseGroup` for a fired group. A failed attempt returns it to the box as `retry`, a graceful drain as `pending`. Any waiting task can leave early: an admin (or a cascade from a failed dependency) cancels it to `canceled`, and one past its pre-dispatch TTL is archived. Admin actions can also reschedule a waiting task to a later time or revive an archived one. Transitions labeled *admin* are operator actions; the rest are engine-driven.
 
 ```mermaid
 stateDiagram-v2
     direction TB
 
-    %% Pre-dispatch: a task waits in one of these states until it is due,
-    %% unblocked, or its group fires. Any of them can be canceled; the
-    %% time-bounded ones (scheduled, pending, retry) can also expire.
-    state "waiting for dispatch" as WAITING {
-        [*] --> PENDING: Enqueue (due now)
-        [*] --> SCHEDULED: Enqueue (future process_at)
-        [*] --> AGGREGATING: Enqueue (grouped)
-        [*] --> BLOCKED: Enqueue (unmet dependencies)
-
-        SCHEDULED --> PENDING: becomes due (Scheduler)
-        BLOCKED --> PENDING: dependencies satisfied
-        PENDING --> SCHEDULED: admin: RescheduleTask (future)
-        RETRY --> SCHEDULED: admin: RescheduleTask (future)
+    state "waiting for dispatch" as W {
+        direction LR
+        PENDING
+        SCHEDULED
+        AGGREGATING
+        BLOCKED
+        RETRY
+        SCHEDULED --> PENDING: becomes due
+        BLOCKED --> PENDING: deps satisfied
     }
 
-    %% Dispatch — two paths: pending/retry leased individually, a fired group
-    %% leased together straight from aggregating.
-    PENDING --> ACTIVE: Lease
-    RETRY --> ACTIVE: Lease (backoff elapsed)
-    AGGREGATING --> ACTIVE: group fires (LeaseGroup)
+    [*] --> W: enqueue
 
-    %% How an active task ends.
-    ACTIVE --> COMPLETED: Ack (success)
-    ACTIVE --> RETRY: Fail / lease expired (retries left)
-    ACTIVE --> ARCHIVED: retries exhausted / SkipRetry / admin cancel
-    ACTIVE --> PENDING: Release (graceful drain, no penalty)
+    W --> ACTIVE: Lease / LeaseGroup
+    ACTIVE --> W: Fail (retry) / Release (drain)
+    ACTIVE --> COMPLETED: Ack
+    ACTIVE --> ARCHIVED: exhausted / SkipRetry / admin cancel
 
-    %% Leaving the waiting states without ever dispatching.
-    WAITING --> CANCELED: admin: CancelTask / cascade-cancel
-    WAITING --> ARCHIVED: ArchiveExpired (scheduled/pending/retry)
+    W --> CANCELED: admin / cascade cancel
+    W --> ARCHIVED: expired before dispatch
 
-    %% Revive & purge.
-    ARCHIVED --> PENDING: admin: RunTaskNow (revive)
-    COMPLETED --> [*]: PurgeCompleted (retention lapsed)
+    ARCHIVED --> W: admin revive
+    COMPLETED --> [*]: purge
     CANCELED --> [*]
 ```
 
@@ -231,10 +222,10 @@ Delayed tasks enter `scheduled` and are promoted by the Scheduler when due. Cron
 
 The wire contract is one proto, [`protos/conveyor/v1/service.proto`](../protos/conveyor/v1/service.proto), served over a single ConnectRPC port that speaks gRPC, gRPC-Web, and HTTP/JSON. Four services ([`server/api`](../server/api)):
 
-- **TaskService**, the producer API: `Enqueue`, `EnqueueBatch` and `EnqueueTx` (both capped at 1000 — `EnqueueBatch` reports per-item results, `EnqueueTx` commits all-or-nothing), `GetTask`.
+- **TaskService**, the producer API: `Enqueue`, `EnqueueBatch` and `EnqueueTx` (both capped at 1000; `EnqueueBatch` reports per-item results, `EnqueueTx` commits all-or-nothing), `GetTask`.
 - **WorkerService**: `Session`, the long-lived bidirectional stream that is the push channel. The handler bridges the stream to a per-session Gateway actor. The first frame must be `Hello` (queues→weights, concurrency, labels, SDK version, minimum server version, batch types); the server replies `Welcome` (session id, lease TTL, heartbeat interval = TTL/3, server version, minimum SDK version). Worker→server frames: `Hello`, `Credit`, `Result`, `Heartbeat`, `BatchResult`, `Progress`. Server→worker frames: `Welcome`, `Dispatch`, `Cancel`, `Ping`, `BatchDispatch`.
 - **AdminService**: inspection (reads straight from the broker) and mutation (broker write plus a live-grain nudge), including pause/resume, rate and concurrency limits, aggregation-group configs, cancel/run/delete/reschedule/archive and their batch forms, cron management, webhook registration management, a best-effort cluster/worker view, and the `WatchEvents` live lifecycle-event stream.
-- **WebhookService**: the asynchronous-completion callback surface for [webhook workers](webhook-workers.md). An endpoint that answered a delivery `accepted` calls `Heartbeat` (extend the lease) and `ReportResult` (finish the task) here, authenticated by the delivery's lease token alone — no API bearer token. The handler verifies the token and routes the callback to the owning `WebhookGateway`.
+- **WebhookService**: the asynchronous-completion callback surface for [webhook workers](webhook-workers.md). An endpoint that answered a delivery `accepted` calls `Heartbeat` (extend the lease) and `ReportResult` (finish the task) here, authenticated by the delivery's lease token alone, with no API bearer token. The handler verifies the token and routes the callback to the owning `WebhookGateway`.
 
 The normative, language-agnostic version of this contract, for authors building an SDK in a new language, is [`docs/protocol.md`](protocol.md).
 

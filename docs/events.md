@@ -1,17 +1,17 @@
 # Lifecycle events
 
-Conveyor can **push** every task state transition as it happens, so external systems react without polling `GetTask`/`ListTasks`. Use it for live dashboards, alerting, audit logs, and event-driven chaining — for example, "archive this record the moment its task is dead-lettered."
+Conveyor can **push** every task state transition as it happens, so external systems react without polling `GetTask`/`ListTasks`. Use it for live dashboards, alerting, audit logs, and event-driven chaining, for example "archive this record the moment its task is dead-lettered."
 
 There are two ways to consume the stream, and they share the same events:
 
-- **`WatchEvents`** — a server-streaming Admin API the CLI exposes as `conveyor events`. A client subscribes and receives events live.
-- **A webhook** — the server POSTs each event as JSON to a URL you configure.
+- **`WatchEvents`**: a server-streaming Admin API the CLI exposes as `conveyor events`. A client subscribes and receives events live.
+- **A webhook**: the server POSTs each event as JSON to a URL you configure.
 
-Events are **off by default** in production (`events.enabled: false`) — nothing consumes the stream out of the box, so a node pays nothing until you opt in. Turn it on with `events.enabled: true` (the `--dev` preset already does). Setting a webhook URL also requires `events.enabled: true`.
+Events are **off by default** in production (`events.enabled: false`); nothing consumes the stream out of the box, so a node pays nothing until you opt in. Turn it on with `events.enabled: true` (the `--dev` preset already does). Setting a webhook URL also requires `events.enabled: true`.
 
 ## What an event carries
 
-Each event is a small notification — the task's identity and its new state, not its payload:
+Each event is a small notification: the task's identity and its new state, not its payload:
 
 | Field         | Meaning                                                        |
 |---------------|---------------------------------------------------------------|
@@ -78,7 +78,7 @@ Deliveries retry on transport errors, `5xx`, and `429` with exponential backoff;
 
 Events are **best-effort and non-durable** (fire-and-forget):
 
-- A watcher receives events from the moment it subscribes — there is **no replay** of past transitions and no durable history. For the authoritative current state of a task, read it with `GetTask`.
+- A watcher receives events from the moment it subscribes; there is **no replay** of past transitions and no durable history. For the authoritative current state of a task, read it with `GetTask`.
 - Delivery is **at-least-once to connected listeners**: a rare duplicate is possible; consumers should be idempotent (the `id` plus `event_type` identifies a transition).
 - **Backpressure never reaches the dispatcher.** Each watcher and the webhook have a bounded buffer; a consumer too slow to keep up has events **dropped** rather than stalling task processing. Drops are counted by the `conveyor_events_dropped_total` metric. Raise `events.buffer_size` if a fast, bursty stream overruns a consumer that is normally able to keep up.
 
@@ -88,11 +88,11 @@ Events are **best-effort and non-durable** (fire-and-forget):
 |------------------------------|---------|------------------------------------------------|
 | `events.enabled`             | `false` | master switch for the stream and the webhook (on in `--dev`) |
 | `events.buffer_size`         | `1024`  | per-consumer buffer depth before events drop   |
-| `events.webhook.url`         | —       | webhook endpoint; empty disables the webhook   |
+| `events.webhook.url`         | none    | webhook endpoint; empty disables the webhook   |
 | `events.webhook.timeout`     | `10s`   | per-delivery timeout                           |
 | `events.webhook.max_retries` | `3`     | retries after a failed delivery                |
-| `events.webhook.secret`      | —       | bearer token sent on each delivery             |
-| `events.webhook.queues`      | —       | queue filter; empty = all                      |
-| `events.webhook.event_types` | —       | event-type filter (enum names); empty = all    |
+| `events.webhook.secret`      | none    | bearer token sent on each delivery             |
+| `events.webhook.queues`      | none    | queue filter; empty = all                      |
+| `events.webhook.event_types` | none    | event-type filter (enum names); empty = all    |
 
 With `events.enabled: false`, `WatchEvents` returns `Unavailable` and no webhook runs.
