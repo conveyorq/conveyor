@@ -211,8 +211,14 @@ jobs:
     timeout-minutes: 10
     # Only releases publish a chart, and only after the matching image is pushed
     # — the chart's appVersion points at an image that must already exist.
+    # !cancelled() is required: without a status-check function GitHub injects an
+    # implicit success() that also fails when the transitively-needed `changes`
+    # job is skipped (as it is on the release path), which would skip this job.
     needs: [setup, publish]
-    if: needs.setup.outputs.is_release == 'true' && needs.publish.result == 'success'
+    if: >-
+      !cancelled()
+      && needs.setup.outputs.is_release == 'true'
+      && needs.publish.result == 'success'
     steps:
       - uses: actions/checkout@v7
         name: Checkout
