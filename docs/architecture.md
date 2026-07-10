@@ -16,13 +16,16 @@ Conveyor is a **push-based, durable task queue** built on the [GoAkt](https://gi
 flowchart LR
     PROD["Producer / CLI"]
     WORK["Worker"]
+    EP["Webhook endpoint<br/>external HTTP service"]
 
     subgraph node["conveyord node (clustered)"]
       direction TB
-      API["ConnectRPC API<br/>TaskService · WorkerService · AdminService"]
+      API["ConnectRPC API<br/>TaskService · WorkerService · AdminService · WebhookService"]
       ENG["Engine<br/>enqueue entry · hosts the actor system"]
-      QG["QueueGrain<br/>one per queue · dispatcher · credits · rate limit"]
+      QG["QueueGrain<br/>one per queue · dispatcher · credits · rate & concurrency limits"]
       GW["Gateway<br/>one per worker session · durable transitions"]
+      WGW["WebhookGateway<br/>one per registration · JSON-RPC delivery · durable transitions"]
+      WMGR["WebhookManager<br/>singleton · one gateway per registration"]
       SING["Cluster singletons<br/>Scheduler · Reaper · GroupSweeper"]
     end
 
@@ -30,19 +33,27 @@ flowchart LR
 
     PROD -->|"Enqueue (gRPC)"| API
     WORK <-->|"Session stream"| API
+    EP -->|"Heartbeat / ReportResult"| API
     API --> ENG
     ENG -->|"TasksAvailable"| QG
     API -->|"spawn per session"| GW
+    API -->|"route async callback"| WGW
     QG -->|"ExecuteTask / ExecuteBatch"| GW
+    QG -->|"ExecuteTask / ExecuteBatch"| WGW
     GW -->|"credit + completion"| QG
+    WGW -->|"credit + completion"| QG
+    WGW -->|"JSON-RPC POST"| EP
+    WMGR -->|"spawn per registration"| WGW
     SING -->|"wake / FireGroup"| QG
     ENG --> BROKER
     QG <--> BROKER
     GW --> BROKER
+    WGW --> BROKER
+    WMGR --> BROKER
     SING --> BROKER
 ```
 
-Everything above lives in one `conveyord` process; clustering replicates the process across nodes (see [Clustering & HA](#clustering--ha)). Worker and producer processes are external and speak ConnectRPC.
+Everything above lives in one `conveyord` process; clustering replicates the process across nodes (see [Clustering & HA](#clustering--ha)). Worker and producer processes are external and speak ConnectRPC; a webhook endpoint is any external HTTP service that receives signed JSON-RPC deliveries and answers with the outcome (see [Webhook workers](webhook-workers.md)).
 
 ## The actors
 
@@ -56,13 +67,13 @@ The coordination layer and the enqueue entry point the API calls. It builds the 
 
 ### Runtime (`runtime.go`): actor-system extension
 
-A shared service object (extension id `"broker"`) that every actor and grain resolves on start. It hands out the broker, the injected clock, server settings, the logger, metric counters, and a monotonic ULID source. It is how stateless actors reach durable state without holding a reference of their own.
+A shared service object (extension id `"broker"`) that every actor and grain resolves on start. It hands out the broker, the injected clock, server settings, the logger, metric counters, the lifecycle event bus, a monotonic ULID source, and — once the system is up — the node's dependency-resolver pool. It is how stateless actors reach durable state without holding a reference of their own.
 
 ### QueueGrain (`queue_grain.go`): grain (one per queue)
 
-The per-queue **dispatcher**, and the heart of the system. Exactly one activation per queue exists cluster-wide; it is activated on demand and passivated when idle. On activation (`OnActivate`) it rebuilds all state from the broker: the persisted pause flag and the rate limiter. It holds no durable state, so `OnDeactivate` is a no-op.
+The per-queue **dispatcher**, and the heart of the system. Exactly one activation per queue exists cluster-wide; it is activated on demand and passivated when idle. On activation (`OnActivate`) it rebuilds all state from the broker: the persisted pause flag, the rate limiter, and the per-key concurrency limit. It holds no durable state, so `OnDeactivate` is a no-op.
 
-It reacts to wakes (`TasksAvailable`), gateway registrations and credits, and completion messages. Its core loop, `maybeLease`, runs whenever the queue is unpaused, no lease cycle is already in flight, and credits are available: it leases up to `min(credits, batchMax)` due tasks (further capped by available rate-limiter tokens), then distributes them across the registered gateways in proportion to their declared weights (smooth weighted round-robin over the gateways that still have credits), decrementing one credit per dispatched task. A gateway that declared no weight counts as weight one, so an unweighted fleet falls back to plain round-robin. Leasing happens off the mailbox turn via `PipeToSelf` so the grain never blocks on the broker.
+It reacts to wakes (`TasksAvailable`), gateway registrations and credits, and completion messages. Its core loop, `maybeLease`, runs whenever the queue is unpaused, no lease cycle is already in flight, and credits are available: it leases up to `min(credits, batchMax)` due tasks (further capped by available rate-limiter tokens), then distributes them across the registered gateways in proportion to their declared weights (smooth weighted round-robin over the gateways that still have credits), decrementing one credit per dispatched task. A gateway that declared no weight counts as weight one, so an unweighted fleet falls back to plain round-robin. A leased task whose concurrency key is already at the queue's per-key limit is held back — released to redeliver rather than dispatched — so a keyed queue never runs more than its limit per key. Leasing happens off the mailbox turn via `PipeToSelf` so the grain never blocks on the broker.
 
 ### Gateway (`gateway.go`): actor (one per worker session)
 
@@ -74,13 +85,24 @@ The bridge between the actor world and one worker's stream. Spawned per accepted
 - A `Heartbeat` extends every in-flight lease; a lost lease cancels that task on the worker.
 - A per-task-type **circuit breaker** can defer a completion (and its credit refill) briefly when a type is failing, throttling it to probe speed.
 
+### Webhook workers (`webhook_gateway.go`): singleton + per-registration actors
+
+[Webhook workers](webhook-workers.md) let an external HTTP endpoint process tasks with no SDK: the server leases due tasks to a registered URL and pushes each as a signed JSON-RPC call. Two units implement them, both in `webhook_gateway.go`.
+
+- **WebhookManager**: a fourth cluster singleton (registered alongside the maintenance loops). On a reconcile tick it lists the persisted registrations from the broker and converges its children onto them — spawning a gateway for each active registration, refreshing the snapshot of one that changed, and draining the child of one that was paused, deleted, or lost its secret. Because it is a singleton, a relocated manager rebuilds every gateway on its new host. A registration with no secret is skipped: the gateway signs deliveries and mints lease tokens with the newest secret, so it cannot start without one.
+- **WebhookGateway**: the webhook analog of the per-session `Gateway`, one plain actor per registration (long-lived, relocation-disabled). A queue grain dispatches to it exactly like any gateway; instead of pushing a stream frame it POSTs a JSON-RPC call to the endpoint off its mailbox turn, maps the response to the durable transition (`Ack`/`Fail`/`Archive`/`Release`), and reports completion for the credit refill. It re-registers its capacity every tick like the stream gateway, extends the leases of open synchronous deliveries, and carries the same per-task-type circuit breaker. A delivery the endpoint answers `accepted` parks in **asynchronous mode**: its slot stays held and its lease is driven by the endpoint's `Heartbeat` callbacks until a `ReportResult` callback (both served by `WebhookService` and routed here by the engine) resolves it, or it stops beating and lease expiry reclaims it. A per-endpoint **circuit breaker** withholds capacity (announces zero, then a single probe slot) when transport failures pile up, so a dead endpoint's queue stays `pending` instead of churning.
+
 ### Cluster singletons: maintenance loops
 
 Three singletons run on one node (the leader) and relocate to a survivor on node loss. Each arms its own recurring tick in `PostStart`, so after relocation the new host re-arms the cadence; the stale entry on the departed node self-cancels. Each tolerates `ErrSingletonAlreadyExists` on non-leaders as the desired state.
 
 - **Scheduler (`scheduler.go`)**, on `PromoteTick`: promotes due `scheduled` tasks to `pending` (`PromoteScheduled`), materializes due cron entries into real tasks, and wakes affected queues.
-- **Reaper (`reaper.go`)**, on `ReapTick`: reclaims expired leases (`ReapExpiredLeases` → retry or archive), purges retention-lapsed completed rows (`PurgeCompleted`), archives tasks past their pre-dispatch TTL (`ArchiveExpired`), and sweeps for queues with due work whose wake was lost (`PendingCount`), waking them. It runs under a lenient supervision directive and swallows transient broker errors rather than crashing.
+- **Reaper (`reaper.go`)**, on `ReapTick`: reclaims expired leases (`ReapExpiredLeases` → retry or archive), purges retention-lapsed completed rows (`PurgeCompleted`), archives tasks past their pre-dispatch TTL (`ArchiveExpired`), promotes blocked tasks whose dependencies have since reached a terminal state but that inline resolution missed (`PromoteReadyDependents`), and sweeps for queues with due work whose wake was lost (`PendingCount`), waking each. It runs under GoAkt's default (stop-on-failure) supervision, so it deliberately logs and skips a failed pass — leaving the next tick to retry — rather than escalating a transient broker error into a crash that would permanently stop all maintenance.
 - **GroupSweeper (`group.go`)**, on `GroupSweepTick`: reads `GroupStats` and fires aggregation groups that are past a size, max-delay, or grace-period threshold by telling the owning queue grain `FireGroup`.
+
+### DependencyResolver (`resolver.go`): per-node router pool
+
+Completion-time dependency resolution runs here, off the gateway and grain turns. A bounded pool of stateless routees sits behind a per-node round-robin router: when a task reaches a terminal state its gateway hands a `ResolveDependents` to the router with a non-blocking tell, and a routee runs the reconciling broker transaction — promoting each dependent whose dependencies are now satisfied, applying each failed edge's on-failure policy (block, continue, or cascade-cancel) — then wakes the queues that gained work. The pool is node-local and its size is configurable; resolution is best-effort, so a failure is only logged, and a node with no pool (or any missed resolution) falls back to the reaper's `PromoteReadyDependents` sweep.
 
 ## The broker
 
@@ -88,16 +110,20 @@ The [`Broker`](../internal/broker/broker.go) interface is the sole stateful laye
 
 The interface methods group as:
 
-| Group                         | Methods                                                                                                                                                |
-|-------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **Enqueue**                   | `Enqueue` (idempotent on id; `ErrDuplicateTask` on a live unique key)                                                                                  |
-| **Lease / dispatch**          | `Lease`, `LeaseGroup`, `ExtendLease`, `SetProgress`                                                                                                    |
-| **Outcomes (lease-scoped)**   | `Ack`, `Fail`, `Release`, `Archive`                                                                                                                    |
-| **Maintenance sweeps**        | `ReapExpiredLeases`, `PromoteScheduled`, `PurgeCompleted`, `ArchiveExpired`                                                                            |
-| **Inspection / admin**        | `PendingCount`, `QueueStats`, `GetTask`, `ListTasks`, `CancelTask`, `DeleteTask`, `RunTaskNow`, `RescheduleTask`, `ArchiveTask`, `SetQueuePaused`, `QueuePaused`, `Info` |
-| **Rate limits (config only)** | `SetQueueRateLimit`, `DeleteQueueRateLimit`, `QueueRateLimit`, `QueueRateLimits`                                                                       |
-| **Groups**                    | `GroupStats`                                                                                                                                           |
-| **Cron**                      | `UpsertCronEntry`, `ListCronEntries`, `ListDueCronEntries`, `SetCronPaused`, `UpdateCronNextRun`, `DeleteCronEntry`                                    |
+| Group                                | Methods                                                                                                                                                |
+|--------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Enqueue**                          | `Enqueue`, `EnqueueBatch` (idempotent on id; `ErrDuplicateTask` on a live unique key; the batch commits all-or-nothing)                                |
+| **Lease / dispatch**                 | `Lease`, `LeaseGroup`, `ExtendLease`, `SetProgress`                                                                                                    |
+| **Outcomes (lease-scoped)**          | `Ack`, `Fail`, `Release`, `Archive`                                                                                                                    |
+| **Maintenance sweeps**               | `ReapExpiredLeases`, `PromoteScheduled`, `PurgeCompleted`, `ArchiveExpired`                                                                            |
+| **Dependencies**                     | `ResolveDependents`, `PromoteReadyDependents`                                                                                                          |
+| **Inspection / admin**               | `PendingCount`, `QueueStats`, `GetTask`, `ListTasks`, `CancelTask`, `DeleteTask`, `RunTaskNow`, `RescheduleTask`, `ArchiveTask`, `SetQueuePaused`, `QueuePaused`, `Info` |
+| **Rate limits (config only)**        | `SetQueueRateLimit`, `DeleteQueueRateLimit`, `QueueRateLimit`, `QueueRateLimits`                                                                       |
+| **Concurrency limits (config only)** | `SetQueueConcurrencyLimit`, `DeleteQueueConcurrencyLimit`, `QueueConcurrencyLimit`, `QueueConcurrencyLimits`                                            |
+| **Groups**                           | `GroupStats`, `SetGroupConfig`, `DeleteGroupConfig`, `GroupConfigs`                                                                                    |
+| **Cron**                             | `UpsertCronEntry`, `ListCronEntries`, `ListDueCronEntries`, `SetCronPaused`, `UpdateCronNextRun`, `DeleteCronEntry`                                    |
+| **Webhook registrations**            | `UpsertWebhookWorker`, `GetWebhookWorker`, `ListWebhookWorkers`, `SetWebhookWorkerPaused`, `DeleteWebhookWorker`                                       |
+| **Lifecycle / events**               | `SetEventSink`, `Close`                                                                                                                                |
 
 ### Persistence model
 
@@ -109,53 +135,56 @@ A task row stores its identity and options plus mutable execution fields (`state
 
 ### Encryption decorator
 
-[`internal/broker/encrypted`](../internal/broker/encrypted) wraps any `Broker` so callers see plaintext while storage sees only ciphertext: the server-side, zero-code-change encryption seam. It implements every method by hand (a compile-time `var _ broker.Broker` assertion) so a future payload-bearing method cannot silently bypass encryption. It seals on write (`Enqueue`, `Ack` result, cron payload) and opens on read on a clone. Note there is no result *read* path in the interface, so `Ack` seals the result but no symmetric decrypt is needed. This server-side seam is an alternative to SDK end-to-end encryption: a deployment uses one or the other, never both.
+[`internal/broker/encrypted`](../internal/broker/encrypted) wraps any `Broker` so callers see plaintext while storage sees only ciphertext: the server-side, zero-code-change encryption seam. It implements every method by hand (a compile-time `var _ broker.Broker` assertion) so a future payload-bearing method cannot silently bypass encryption. It seals on write (the `Enqueue`/`EnqueueBatch` payloads, the `Ack` result, and the `UpsertCronEntry` payload) and opens on read on a clone (`Lease`, `LeaseGroup`, `GetTask`, `ListTasks`, and the cron list reads). Note there is no result *read* path in the interface, so `Ack` seals the result but no symmetric decrypt is needed. This server-side seam is an alternative to SDK end-to-end encryption: a deployment uses one or the other, never both.
 
 ## Task lifecycle
 
-The task states are defined in [`protos/conveyor/v1/task.proto`](../protos/conveyor/v1/task.proto). Every path funnels through `pending` into a single `Lease`, and the diagram reads top-to-bottom: enqueue, become runnable, finish. A task enqueued with unmet dependencies starts `blocked` and is promoted once every dependency completes — to `pending`, or to `scheduled`/`aggregating` when it is also delayed or grouped; a dependency that fails applies its on-failure policy (keep blocked, treat as satisfied, or cascade-cancel). There is no separate "expired" state: a pre-dispatch expiry resolves to `archived` with `last_error = "task expired before dispatch"`.
+The task states are defined in [`protos/conveyor/v1/task.proto`](../protos/conveyor/v1/task.proto). The diagram reads top to bottom: a task lands in one of the pre-dispatch **waiting** states, is leased into `active`, and ends in a terminal state. Two points the "single lease path" picture gets wrong are worth stating up front:
+
+- **There are two lease paths.** `pending` and `retry` tasks are leased individually (`Lease`) — a retry is dispatched straight from `retry`, *not* funneled back through `pending` — while a fired aggregation group is leased as a batch straight from `aggregating` (`LeaseGroup`) and never passes through `pending`.
+- **`canceled` is a pre-dispatch outcome only.** Any *waiting* task can be canceled (by an admin, or by a dependency that failed under the cascade-cancel policy). An admin cancel of an *already-running* task cannot undo it: the attempt is aborted and lands in `archived`, not `canceled`.
+
+A task with unmet dependencies starts `blocked` and, once they resolve, is promoted to `pending` (or to `scheduled`/`aggregating` when it is also delayed or grouped). There is no separate "expired" state: a pre-dispatch expiry resolves to `archived` with `last_error = "task expired before dispatch"`. Transitions marked `admin:` are operator-initiated; the rest are driven by the engine.
 
 ```mermaid
 stateDiagram-v2
-    %% Enqueue — where a new task first lands
-    [*] --> PENDING: Enqueue (due now)
-    [*] --> SCHEDULED: Enqueue (future process_at)
-    [*] --> AGGREGATING: Enqueue (grouped)
-    [*] --> BLOCKED: Enqueue (waiting on dependencies)
+    direction TB
 
-    %% Becoming runnable — every waiting path funnels toward a lease
-    SCHEDULED --> PENDING: becomes due (Scheduler / Reschedule)
-    BLOCKED --> PENDING: dependencies satisfied
+    %% Pre-dispatch: a task waits in one of these states until it is due,
+    %% unblocked, or its group fires. Any of them can be canceled; the
+    %% time-bounded ones (scheduled, pending, retry) can also expire.
+    state "waiting for dispatch" as WAITING {
+        [*] --> PENDING: Enqueue (due now)
+        [*] --> SCHEDULED: Enqueue (future process_at)
+        [*] --> AGGREGATING: Enqueue (grouped)
+        [*] --> BLOCKED: Enqueue (unmet dependencies)
+
+        SCHEDULED --> PENDING: becomes due (Scheduler)
+        BLOCKED --> PENDING: dependencies satisfied
+        PENDING --> SCHEDULED: admin: RescheduleTask (future)
+        RETRY --> SCHEDULED: admin: RescheduleTask (future)
+    }
+
+    %% Dispatch — two paths: pending/retry leased individually, a fired group
+    %% leased together straight from aggregating.
     PENDING --> ACTIVE: Lease
     RETRY --> ACTIVE: Lease (backoff elapsed)
     AGGREGATING --> ACTIVE: group fires (LeaseGroup)
 
-    %% How an active task ends
+    %% How an active task ends.
     ACTIVE --> COMPLETED: Ack (success)
     ACTIVE --> RETRY: Fail / lease expired (retries left)
-    ACTIVE --> ARCHIVED: Archive / retries exhausted / SkipRetry
+    ACTIVE --> ARCHIVED: retries exhausted / SkipRetry / admin cancel
     ACTIVE --> PENDING: Release (graceful drain, no penalty)
 
-    %% Reschedule a waiting task's due time into the future
-    PENDING --> SCHEDULED: RescheduleTask (future)
-    RETRY --> SCHEDULED: RescheduleTask (future)
+    %% Leaving the waiting states without ever dispatching.
+    WAITING --> CANCELED: admin: CancelTask / cascade-cancel
+    WAITING --> ARCHIVED: ArchiveExpired (scheduled/pending/retry)
 
-    %% Revive & purge
-    ARCHIVED --> PENDING: RunTaskNow (revive)
+    %% Revive & purge.
+    ARCHIVED --> PENDING: admin: RunTaskNow (revive)
     COMPLETED --> [*]: PurgeCompleted (retention lapsed)
     CANCELED --> [*]
-
-    note right of CANCELED
-        CancelTask cancels any task still waiting —
-        SCHEDULED, PENDING, RETRY, AGGREGATING, or BLOCKED.
-        A dependency that fails under the cascade-cancel
-        policy lands its dependents here too.
-    end note
-
-    note right of ARCHIVED
-        ArchiveExpired dead-letters a SCHEDULED, PENDING,
-        or RETRY task whose expires_at passes before dispatch.
-    end note
 ```
 
 ## Key flows
@@ -200,11 +229,12 @@ Delayed tasks enter `scheduled` and are promoted by the Scheduler when due. Cron
 
 ## API & wire protocol
 
-The wire contract is one proto, [`protos/conveyor/v1/service.proto`](../protos/conveyor/v1/service.proto), served over a single ConnectRPC port that speaks gRPC, gRPC-Web, and HTTP/JSON. Three services ([`server/api`](../server/api)):
+The wire contract is one proto, [`protos/conveyor/v1/service.proto`](../protos/conveyor/v1/service.proto), served over a single ConnectRPC port that speaks gRPC, gRPC-Web, and HTTP/JSON. Four services ([`server/api`](../server/api)):
 
-- **TaskService**, the producer API: `Enqueue`, `EnqueueBatch` (capped at 1000), `GetTask`.
-- **WorkerService**: `Session`, the long-lived bidirectional stream that is the push channel. The handler bridges the stream to a per-session Gateway actor. The first frame must be `Hello` (queues→weights, concurrency, labels, SDK version, minimum server version, batch types); the server replies `Welcome` (session id, lease TTL, heartbeat interval = TTL/3). Worker→server frames: `Hello`, `Credit`, `Result`, `Heartbeat`, `BatchResult`. Server→worker frames: `Welcome`, `Dispatch`, `Cancel`, `Ping`, `BatchDispatch`.
-- **AdminService**: inspection (reads straight from the broker) and mutation (broker write plus a live-grain nudge), including pause/resume, rate limits, cancel/run/delete, batch operations, and a best-effort cluster/worker view.
+- **TaskService**, the producer API: `Enqueue`, `EnqueueBatch` and `EnqueueTx` (both capped at 1000 — `EnqueueBatch` reports per-item results, `EnqueueTx` commits all-or-nothing), `GetTask`.
+- **WorkerService**: `Session`, the long-lived bidirectional stream that is the push channel. The handler bridges the stream to a per-session Gateway actor. The first frame must be `Hello` (queues→weights, concurrency, labels, SDK version, minimum server version, batch types); the server replies `Welcome` (session id, lease TTL, heartbeat interval = TTL/3, server version, minimum SDK version). Worker→server frames: `Hello`, `Credit`, `Result`, `Heartbeat`, `BatchResult`, `Progress`. Server→worker frames: `Welcome`, `Dispatch`, `Cancel`, `Ping`, `BatchDispatch`.
+- **AdminService**: inspection (reads straight from the broker) and mutation (broker write plus a live-grain nudge), including pause/resume, rate and concurrency limits, aggregation-group configs, cancel/run/delete/reschedule/archive and their batch forms, cron management, webhook registration management, a best-effort cluster/worker view, and the `WatchEvents` live lifecycle-event stream.
+- **WebhookService**: the asynchronous-completion callback surface for [webhook workers](webhook-workers.md). An endpoint that answered a delivery `accepted` calls `Heartbeat` (extend the lease) and `ReportResult` (finish the task) here, authenticated by the delivery's lease token alone — no API bearer token. The handler verifies the token and routes the callback to the owning `WebhookGateway`.
 
 The normative, language-agnostic version of this contract, for authors building an SDK in a new language, is [`docs/protocol.md`](protocol.md).
 
@@ -226,7 +256,7 @@ The **four run modes** (standalone, cluster, kubernetes, embedded) are conventio
 
 | Path                                                                                                                  | Responsibility                                                                                        |
 |-----------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------|
-| [`internal/actors`](../internal/actors)                                                                               | Engine, runtime extension, gateway, queue grain, scheduler, reaper, group sweeper                     |
+| [`internal/actors`](../internal/actors)                                                                               | Engine, runtime extension, gateway, queue grain, scheduler, reaper, group sweeper, dependency resolver, webhook manager & gateway |
 | [`internal/broker`](../internal/broker)                                                                               | `Broker` interface; `memory`, `postgres`, `encrypted` implementations; `brokertest` conformance suite |
 | [`internal/backoff`](../internal/backoff), [`internal/clock`](../internal/clock), [`internal/cron`](../internal/cron) | Retry backoff, injectable clock, cron parsing                                                         |
 | [`internal/wire`](../internal/wire)                                                                                   | ConnectRPC transport plumbing (h2c client, bearer interceptor)                                        |

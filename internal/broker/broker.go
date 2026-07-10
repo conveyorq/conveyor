@@ -510,9 +510,10 @@ type Broker interface {
 	// descending (newest first for ULID ids).
 	ListTasks(ctx context.Context, query TaskQuery) ([]TaskRecord, error)
 
-	// CancelTask cancels a scheduled, pending, or retry task. It returns
-	// ErrInvalidState in any other state; canceling an executing task is
-	// a cooperative concern above the broker.
+	// CancelTask cancels a task still waiting for dispatch — scheduled,
+	// pending, retry, aggregating, or blocked. It returns ErrInvalidState in
+	// any other state; canceling an executing task is a cooperative concern
+	// above the broker.
 	CancelTask(ctx context.Context, id string) error
 
 	// DeleteTask removes a task in any state except active, for which it
