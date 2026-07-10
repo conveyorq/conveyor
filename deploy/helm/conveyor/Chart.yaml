@@ -2,10 +2,13 @@ apiVersion: v2
 name: conveyor
 description: Conveyor distributed task queue server (conveyord)
 type: application
-# version is the chart version; appVersion tracks the conveyord release the
-# default image points at. Both are bumped at release time.
-version: 0.1.0
-appVersion: "0.1.0"
+# The release tag is the single source of truth for both the chart version and
+# appVersion: release.yml pins them to the tag (helm package --version /
+# --app-version) at publish time, so these are never bumped by hand. 0.0.0 is a
+# sentinel used only for local `helm package`/`helm lint` runs; the published
+# chart always carries the release version (e.g. 0.4.0).
+version: 0.0.0
+appVersion: "0.0.0"
 home: https://github.com/conveyorq/conveyor
 sources:
   - https://github.com/conveyorq/conveyor
