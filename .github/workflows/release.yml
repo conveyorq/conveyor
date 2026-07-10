@@ -209,6 +209,14 @@ jobs:
     name: Package & publish Helm chart
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # Set explicitly at the job level: `helm push` needs packages:write and
+    # cosign keyless signing needs id-token:write. Job-level permissions are
+    # guaranteed to reach the runner, avoiding any reliance on workflow-level
+    # inheritance for the OIDC token.
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
     # Only releases publish a chart, and only after the matching image is pushed
     # — the chart's appVersion points at an image that must already exist.
     # !cancelled() is required: without a status-check function GitHub injects an
@@ -267,7 +275,7 @@ jobs:
           digest="$(awk '/Digest: /{print $NF}' push.log)"
           echo "digest=${digest}" >>"${GITHUB_OUTPUT}"
 
-      - uses: sigstore/cosign-installer@v4
+      - uses: sigstore/cosign-installer@v3
         name: Install cosign
       - name: Sign the published chart
         run: cosign sign --yes "${CHART_REPO}/conveyor@${{ steps.push.outputs.digest }}"
