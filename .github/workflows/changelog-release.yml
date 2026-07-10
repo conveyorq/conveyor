@@ -15,11 +15,12 @@ name: changelog-release
 # does not yet exist, so ordinary CHANGELOG edits (a still-`[Unreleased]` top, or
 # re-touching an already-released version) are no-ops.
 #
-# Note on the tag trigger: a release created with the default GITHUB_TOKEN does
-# NOT start tag-triggered workflows (GitHub suppresses recursive runs). Provide a
-# RELEASE_PAT secret (a fine-grained PAT with contents:write) to have the cut tag
-# trigger release.yml automatically; without it the release is still cut, but the
-# image/chart must be built by pushing the tag manually or re-running release.yml.
+# Publishing the image/chart: a release created with the default GITHUB_TOKEN does
+# NOT start tag-triggered workflows (GitHub suppresses recursive runs), so this
+# workflow does not rely on the cut tag firing release.yml. Instead it calls
+# release.yml directly (workflow_call) once the release is cut. A called workflow
+# runs inside this same run rather than as a new tag-push event, so the image and
+# chart are published with the default GITHUB_TOKEN — no PAT required.
 
 on:
   push:
@@ -44,6 +45,11 @@ jobs:
   release:
     name: Cut release from CHANGELOG
     runs-on: ubuntu-latest
+    outputs:
+      # Empty on dispatch dry-runs and non-release CHANGELOG edits; otherwise the
+      # cut version tag (e.g. v0.4.0). The publish job keys off skip/version.
+      version: ${{ steps.parse.outputs.version }}
+      skip: ${{ steps.parse.outputs.skip }}
     env:
       GH_TOKEN: ${{ secrets.RELEASE_PAT || secrets.GITHUB_TOKEN }}
     steps:
@@ -150,3 +156,20 @@ jobs:
             --title "${{ steps.parse.outputs.version }}" \
             --notes-file release-notes.md \
             --verify-tag=false
+
+  # Publish the image and chart for the freshly cut tag. Calling release.yml
+  # (rather than relying on the tag to trigger it) keeps everything inside this
+  # run, so the default GITHUB_TOKEN is enough — see the note at the top of this
+  # file. Skipped on dry-runs and when no release was cut.
+  publish:
+    name: Publish image & chart
+    needs: release
+    if: needs.release.outputs.skip != 'true' && github.event.inputs.dry_run != 'true'
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.release.outputs.version }}
+    secrets: inherit

@@ -1,24 +1,50 @@
 name: release
 
-# Publishes the conveyor container image to the GitHub Container Registry. Each
-# build produces a single multi-arch image (amd64 + arm64). A multi-arch image
-# is an index that references one manifest per architecture, so GHCR always
+# Publishes the conveyor container image to the GitHub Container Registry and,
+# for releases, the Helm chart. This workflow runs in three ways:
+#   - push to main          -> rebuilds the :<short-sha> image when something
+#                              baked into the image changed (see `changes`).
+#   - push of a v* tag       -> publishes the :X.Y.Z image + chart (covers a tag
+#                              pushed manually with git).
+#   - workflow_call/_dispatch with a `tag` input -> publishes the :X.Y.Z image +
+#                              chart for that tag. changelog-release.yml calls it
+#                              this way immediately after cutting a release, so a
+#                              release created with the default GITHUB_TOKEN still
+#                              gets its image and chart — a called/dispatched
+#                              workflow runs inside the current run rather than as
+#                              a new tag-push event, so GitHub's recursive-trigger
+#                              suppression does not apply and no PAT is required.
+#
+# Each build produces a single multi-arch image (amd64 + arm64). A multi-arch
+# image is an index that references one manifest per architecture, so GHCR always
 # lists those per-arch manifests as untagged versions next to the tag:
-#   - every push to main  -> :<short-sha>   (a single tag: the 7-char commit)
-#   - every v* tag         -> :X.Y.Z         (the release version, nothing else)
+#   - branch build -> :<short-sha>   (a single tag: the 7-char commit)
+#   - release build -> :X.Y.Z        (the release version, nothing else)
 # No SBOM/provenance attestations are attached (each would add another untagged
 # manifest); the originating commit is still recorded as the OCI
 # org.opencontainers.image.revision label.
 #
-# On every v* tag it also packages and pushes the Helm chart as an OCI artifact
+# On a release build it also packages and pushes the Helm chart as an OCI artifact
 #   - oci://ghcr.io/conveyorq/charts/conveyor:X.Y.Z
 # with the chart version and appVersion pinned to the tag and signed with
-# cosign (keyless). Branch pushes do not publish a chart.
+# cosign (keyless). Branch builds do not publish a chart.
 
 on:
   push:
     branches: [main]
     tags: ["v*"]
+  workflow_call:
+    inputs:
+      tag:
+        description: "Version tag to build and publish (e.g. v0.4.0). Always publishes the image and chart for that tag."
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Version tag to build and publish (e.g. v0.4.0). Always publishes the image and chart for that tag."
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -32,21 +58,58 @@ env:
   CHART_REPO: ghcr.io/conveyorq/charts
 
 # Coalesce rapid pushes to the same ref (e.g. successive pushes to main); each
-# tag is its own ref, so tag publishes never cancel one another.
+# tag / dispatched release is its own ref, so release publishes never cancel one
+# another.
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.tag || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  # Gate image publishing on the contents of the image. A push to main only
-  # rebuilds the :<sha> image when something that actually ends up inside it
-  # changed — Go sources, dependencies, the embedded dashboard, or the
+  # Resolve, once, what this run is building: a specific version tag (a release)
+  # or the current commit on a branch. Every downstream job keys off these
+  # outputs so the three entry points (branch push, tag push, call/dispatch)
+  # share one code path.
+  setup:
+    name: Resolve build target
+    runs-on: ubuntu-latest
+    outputs:
+      # The git ref to check out and build.
+      ref: ${{ steps.resolve.outputs.ref }}
+      # 'true' for a version release (publish :X.Y.Z image + chart); 'false' for
+      # an ordinary branch build (publish :<short-sha> image only).
+      is_release: ${{ steps.resolve.outputs.is_release }}
+    steps:
+      - id: resolve
+        name: Resolve ref and release flag
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${INPUT_TAG}" ]]; then
+            # Explicit tag from workflow_call (changelog-release) or workflow_dispatch.
+            echo "ref=${INPUT_TAG}" >> "$GITHUB_OUTPUT"
+            echo "is_release=true" >> "$GITHUB_OUTPUT"
+          elif [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            # A v* tag pushed directly with git.
+            echo "ref=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "is_release=true" >> "$GITHUB_OUTPUT"
+          else
+            # Ordinary branch build: pin to the exact commit that triggered it.
+            echo "ref=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+            echo "is_release=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # Gate branch-build image publishing on the contents of the image. A push to
+  # main only rebuilds the :<sha> image when something that actually ends up
+  # inside it changed — Go sources, dependencies, the embedded dashboard, or the
   # Dockerfile. Docs, examples, the Python/TypeScript SDKs, Helm charts, and
   # other tooling never alter the binary, so they skip the build entirely.
-  # Version tags ignore this filter and always publish (see `publish`).
+  # Releases skip this filter and always publish (see `publish`).
   changes:
     name: Changes Detection
     runs-on: ubuntu-latest
+    needs: setup
+    if: needs.setup.outputs.is_release != 'true'
     outputs:
       image: ${{ steps.filter.outputs.image }}
     steps:
@@ -74,14 +137,20 @@ jobs:
     name: Build & publish image
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    needs: changes
-    # Always publish on a version tag — a release must produce its image
-    # regardless of which paths the tag points at. On a branch push, build only
-    # when something baked into the image changed.
-    if: startsWith(github.ref, 'refs/tags/v') || needs.changes.outputs.image == 'true'
+    needs: [setup, changes]
+    # Always publish on a release — it must produce its image regardless of which
+    # paths the tag points at. On a branch push, build only when something baked
+    # into the image changed. !cancelled() lets this run even though `changes` is
+    # skipped on a release.
+    if: >-
+      !cancelled()
+      && needs.setup.result == 'success'
+      && (needs.setup.outputs.is_release == 'true' || needs.changes.outputs.image == 'true')
     steps:
       - uses: actions/checkout@v7
         name: Checkout
+        with:
+          ref: ${{ needs.setup.outputs.ref }}
 
       - uses: actions/setup-go@v6
         name: Setup Go
@@ -113,12 +182,12 @@ jobs:
         uses: docker/metadata-action@v6
         with:
           images: ${{ env.IMAGE }}
-          # main  -> a single tag: the 7-char short commit SHA (no "sha-" prefix)
-          # v* tag -> :X.Y.Z only (latest=false, so no :latest is added)
+          # branch build  -> a single tag: the 7-char short commit SHA (no "sha-" prefix)
+          # release build -> :X.Y.Z only (latest=false, so no :latest is added)
           flavor: latest=false
           tags: |
-            type=sha,format=short,prefix=,enable={{is_default_branch}}
-            type=semver,pattern={{version}}
+            type=sha,format=short,prefix=,enable=${{ needs.setup.outputs.is_release != 'true' }}
+            type=semver,pattern={{version}},value=${{ needs.setup.outputs.ref }},enable=${{ needs.setup.outputs.is_release == 'true' }}
 
       - id: build
         name: Build & push
@@ -140,13 +209,15 @@ jobs:
     name: Package & publish Helm chart
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # Only version tags publish a chart, and only after the matching image is
-    # pushed — the chart's appVersion points at an image that must already exist.
-    needs: publish
-    if: startsWith(github.ref, 'refs/tags/v')
+    # Only releases publish a chart, and only after the matching image is pushed
+    # — the chart's appVersion points at an image that must already exist.
+    needs: [setup, publish]
+    if: needs.setup.outputs.is_release == 'true' && needs.publish.result == 'success'
     steps:
       - uses: actions/checkout@v7
         name: Checkout
+        with:
+          ref: ${{ needs.setup.outputs.ref }}
 
       - uses: azure/setup-helm@v5
         name: Setup Helm
@@ -169,8 +240,11 @@ jobs:
         # Pin both the chart version and the appVersion to the release tag
         # (strip the leading "v") so the published artifact always matches the
         # tag, regardless of what Chart.yaml currently holds.
+        env:
+          RELEASE_REF: ${{ needs.setup.outputs.ref }}
         run: |
-          version="${GITHUB_REF_NAME#v}"
+          set -euo pipefail
+          version="${RELEASE_REF#v}"
           helm package deploy/helm/conveyor \
             --version "${version}" \
             --app-version "${version}" \
@@ -181,6 +255,7 @@ jobs:
         name: Push chart to GHCR
         # helm push prints the pushed digest; capture it for signing.
         run: |
+          set -euo pipefail
           version="${{ steps.package.outputs.version }}"
           helm push "dist/conveyor-${version}.tgz" "oci://${CHART_REPO}" 2>&1 | tee push.log
           digest="$(awk '/Digest: /{print $NF}' push.log)"
@@ -195,10 +270,9 @@ jobs:
     name: Prune untagged package versions
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # Run after the image (and, on a tag, the chart) is published. always() so
-    # it still runs on main where publish-chart is skipped; the guard keeps it
-    # from pruning when the build itself failed.
-    needs: [publish, publish-chart]
+    # Run after the image (and, on a release, the chart) is published. Guard on
+    # the image build actually succeeding so nothing is pruned when it failed.
+    needs: [setup, publish, publish-chart]
     if: always() && needs.publish.result == 'success'
     permissions:
       packages: write
@@ -218,8 +292,8 @@ jobs:
 
       - uses: dataaxiom/ghcr-cleanup-action@v1
         name: Prune the chart package
-        # The chart package only exists once a tag has published it.
-        if: startsWith(github.ref, 'refs/tags/v')
+        # The chart package only exists once a release has published it.
+        if: needs.setup.outputs.is_release == 'true'
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           package: charts/conveyor
