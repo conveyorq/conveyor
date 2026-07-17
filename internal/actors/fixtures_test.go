@@ -227,16 +227,44 @@ func killNode(node *Engine) {
 	_ = node.Stop(killCtx)
 }
 
-// tasksInState counts tasks in one state through the broker. It returns
-// the error instead of failing the test so it can run inside
-// require.Eventually conditions, which poll from a non-test goroutine.
+// tasksInState counts tasks in one state through the broker's queue stats,
+// which carry true counts: a ListTasks-based count silently clips at
+// broker.MaxListLimit, so a high-throughput test would see the count freeze
+// at the cap while the cluster keeps completing work. It returns the error
+// instead of failing the test so it can run inside require.Eventually
+// conditions, which poll from a non-test goroutine.
 func tasksInState(taskLog broker.Broker, state conveyorv1.TaskState) (int, error) {
-	tasks, err := taskLog.ListTasks(context.Background(), broker.TaskQuery{State: state, Limit: broker.MaxListLimit})
+	stats, err := taskLog.QueueStats(context.Background())
 	if err != nil {
 		return 0, err
 	}
 
-	return len(tasks), nil
+	var count int64
+
+	for _, stat := range stats {
+		switch state {
+		case conveyorv1.TaskState_TASK_STATE_SCHEDULED:
+			count += stat.Scheduled
+		case conveyorv1.TaskState_TASK_STATE_PENDING:
+			count += stat.Pending
+		case conveyorv1.TaskState_TASK_STATE_ACTIVE:
+			count += stat.Active
+		case conveyorv1.TaskState_TASK_STATE_RETRY:
+			count += stat.Retry
+		case conveyorv1.TaskState_TASK_STATE_COMPLETED:
+			count += stat.Completed
+		case conveyorv1.TaskState_TASK_STATE_ARCHIVED:
+			count += stat.Archived
+		case conveyorv1.TaskState_TASK_STATE_AGGREGATING:
+			count += stat.Aggregating
+		case conveyorv1.TaskState_TASK_STATE_BLOCKED:
+			count += stat.Blocked
+		default:
+			return 0, fmt.Errorf("tasksInState: state %s is not tracked by queue stats", state)
+		}
+	}
+
+	return int(count), nil
 }
 
 // completedReaches returns a require.Eventually condition that holds once
@@ -379,6 +407,11 @@ func (m *mockGateway) PostStop(_ *goakt.Context) error {
 }
 
 // register announces this gateway and its capacity to the queue grain.
+// Failures are logged, never escalated through ctx.Err: under the default
+// Stop directive an escalation would stop the gateway permanently on a
+// transient resolution error (e.g. a stale grain record mid-failover), while
+// the next reRegisterTick retries anyway. The real Gateway treats
+// registration failures the same way.
 func (m *mockGateway) register(ctx *goakt.ReceiveContext) {
 	background := context.Background()
 	system := ctx.ActorSystem()
@@ -386,7 +419,7 @@ func (m *mockGateway) register(ctx *goakt.ReceiveContext) {
 	identity, err := goakt.GrainOf[*QueueGrain](background, system, QueueGrainName(m.queue),
 		goakt.WithGrainDeactivateAfter(m.runtime.Settings().PassivateAfter))
 	if err != nil {
-		ctx.Err(fmt.Errorf("resolving queue grain: %w", err))
+		m.runtime.Logger().Warn("mock gateway: resolving queue grain failed; next tick retries", "queue", m.queue, "error", err)
 
 		return
 	}
@@ -400,7 +433,7 @@ func (m *mockGateway) register(ctx *goakt.ReceiveContext) {
 		Weight:      m.weight,
 	})
 	if err != nil {
-		ctx.Err(fmt.Errorf("registering gateway: %w", err))
+		m.runtime.Logger().Warn("mock gateway: registration failed; next tick retries", "queue", m.queue, "error", err)
 	}
 }
 

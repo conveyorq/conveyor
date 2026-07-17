@@ -4,7 +4,7 @@ How the three tiers fit together for a Kubernetes deployment with no single poin
 
 "High availability" here means that any one machine can die and the system keeps running with nothing lost. Conveyor has three tiers, and HA means running more than one of each:
 
-1. **Servers** (`conveyord`): three nodes forming one cluster.
+1. **Servers** (`conveyord`): three nodes forming one cluster (the HA floor).
 2. **Broker** (Postgres): the only durable store, so it needs its own HA setup.
 3. **Workers**: your task-running processes, two or more, autoscaled on backlog.
 
@@ -42,7 +42,7 @@ Install the cluster with the [Helm chart](../deploy/helm/conveyor/README.md). It
 
 These are the settings that make it highly available. The chart defaults them sensibly; they are listed here so you know what is doing the work:
 
-- `replicaCount: 3` sets the number of cluster members.
+- `replicaCount: 3` sets the number of cluster members. Three is the floor for an HA cluster, not just a suggestion: the cluster keeps a backup copy of its internal placement registry on a second node, and it takes at least three nodes for that backup to stay placed while one node is down or restarting. A two-node cluster still forms and runs, but during a node loss it is one further failure away from losing placement records. A single node is for development only.
 - `podDisruptionBudget.minAvailable: 2` keeps a quorum during voluntary disruptions.
 - `podAntiAffinity: soft` (or `hard`) spreads nodes across hosts.
 - `cluster.tls.enabled: true` with a `certSecret` turns on mutual TLS between peers.

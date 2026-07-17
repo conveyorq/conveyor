@@ -35,6 +35,13 @@ spec:
           # Cycle a simulated provider outage so the circuit breaker trips and
           # recovers on a schedule, with no shell needed in the pod.
           command: ["/usr/local/bin/worker", "--outage-every=4m", "--outage-for=40s"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
           env:
             # Attach to one node by its stable headless DNS, instead of the
             # load-balanced Service, so the dashboard (forwarded to that same
@@ -70,6 +77,13 @@ spec:
           image: postmark:e2e
           imagePullPolicy: Never
           command: ["/usr/local/bin/producer", "--interval=300ms"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
           env:
             - name: CONVEYOR_ADDR
               value: "http://conveyor.conveyor.svc:8080"

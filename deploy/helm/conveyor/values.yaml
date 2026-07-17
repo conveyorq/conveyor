@@ -7,7 +7,11 @@
 # singletons, and leases rebalance on every membership change). It scales
 # horizontally via replicaCount.
 
-# replicaCount is the number of conveyord nodes (cluster members).
+# replicaCount is the number of conveyord nodes (cluster members). Three is
+# the production floor: the cluster keeps a backup copy of its internal
+# placement registry on a second node, and three nodes keep that backup
+# placed through a single node loss or a rolling restart. Use 1 only for
+# local evaluation.
 replicaCount: 3
 
 image:

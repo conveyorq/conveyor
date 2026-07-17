@@ -110,7 +110,7 @@ separately. Task data persists in Postgres.
 
 | Name | Description | Default |
 |---|---|---|
-| `replicaCount` | Number of `conveyord` cluster nodes | `3` |
+| `replicaCount` | Number of `conveyord` cluster nodes; 3 is the production floor, 1 is for demos only | `3` |
 | `image.repository` | Image repository | `ghcr.io/conveyorq/conveyor` |
 | `image.tag` | Image tag (empty uses the chart `appVersion`) | `""` |
 | `image.pullPolicy` | Image pull policy | `IfNotPresent` |

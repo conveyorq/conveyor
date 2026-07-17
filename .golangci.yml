@@ -53,6 +53,15 @@ linters:
       - linters:
           - revive
         text: "unused-parameter:"
+      # Established package names (internal/metrics, server/api) predate
+      # revive's package-name opinions; renaming them would churn imports
+      # across the repo for no clarity gain.
+      - linters:
+          - revive
+        text: "avoid package names that conflict with Go standard library"
+      - linters:
+          - revive
+        text: "avoid meaningless package names"
 
 formatters:
   enable:

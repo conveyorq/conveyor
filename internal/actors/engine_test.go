@@ -723,9 +723,17 @@ func TestRollingRestartKeepsProcessing(t *testing.T) {
 
 	portsBySlot := [3][]int{freePorts(t, 3), freePorts(t, 3), freePorts(t, 3)}
 
-	peers := make([]string, len(portsBySlot))
-	for slot, ports := range portsBySlot {
-		peers[slot] = fmt.Sprintf("%s:%d", testBindAddr, ports[1])
+	// gossipPeers lists every slot's current gossip address; a (re)starting
+	// node bootstraps by contacting any live member on this list, so it is
+	// recomputed whenever a slot moves to fresh ports.
+	gossipPeers := func() []string {
+		peers := make([]string, len(portsBySlot))
+
+		for slot, ports := range portsBySlot {
+			peers[slot] = fmt.Sprintf("%s:%d", testBindAddr, ports[1])
+		}
+
+		return peers
 	}
 
 	slowHandler := func(*conveyorv1.TaskEnvelope) error {
@@ -737,7 +745,7 @@ func TestRollingRestartKeepsProcessing(t *testing.T) {
 	var nodes [3]*Engine
 
 	start := func(slot int) {
-		node := newNode(taskLog, recoverySettings, portsBySlot[slot], peers)
+		node := newNode(taskLog, recoverySettings, portsBySlot[slot], gossipPeers())
 		require.NoError(t, node.Start(ctx))
 		nodes[slot] = node
 
@@ -811,7 +819,7 @@ func TestRollingRestartKeepsProcessing(t *testing.T) {
 		30*time.Second, 50*time.Millisecond, "load must be flowing before the rolling restart")
 
 	// Roll each node: stop it gracefully, prove the survivors keep completing
-	// work while it is down, then bring a fresh node back on the same ports.
+	// work while it is down, then bring a fresh node back on fresh ports.
 	for slot := range nodes {
 		before, err := tasksInState(taskLog, conveyorv1.TaskState_TASK_STATE_COMPLETED)
 		require.NoError(t, err)
@@ -827,6 +835,13 @@ func TestRollingRestartKeepsProcessing(t *testing.T) {
 
 		require.Eventually(t, completedReaches(taskLog, before+20),
 			30*time.Second, 50*time.Millisecond, "the cluster must keep processing while node %d is down", slot)
+
+		// The replacement joins on fresh ports, as a replacement pod joins
+		// with a fresh IP: peers must never dial the old address expecting
+		// the new instance. Rebinding the old ports in-process would race
+		// the stopped system's SO_REUSEPORT sockets inside this one test
+		// binary, a collision no per-process production node can hit.
+		portsBySlot[slot] = freePorts(t, 3)
 
 		start(slot)
 

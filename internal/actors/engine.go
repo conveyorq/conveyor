@@ -127,8 +127,16 @@ func (e *Engine) Start(ctx context.Context) error {
 			WithDiscovery(e.config.Provider).
 			WithDiscoveryPort(e.config.DiscoveryPort).
 			WithPeersPort(e.config.PeersPort).
+			// A peers quorum of one lets a single node boot, so development
+			// and the quickstart run a cluster of one on the same code path.
 			WithMinimumPeersQuorum(1).
-			WithReplicaCount(1).
+			// Two replicas per registry partition (the GoAkt default) keep a
+			// backup of grain and actor placements on a second node, so
+			// registry-derived crash recovery stays complete when a node is
+			// lost. For that backup to have somewhere to live through a node
+			// loss or a rolling restart, production clusters run at least
+			// three nodes.
+			WithReplicaCount(2).
 			WithKinds(NewScheduler(), NewReaper(), NewGroupSweeper(), NewWebhookManager()).
 			WithGrains(new(QueueGrain))),
 		// Bound the cluster pub/sub dedup window used by the lifecycle event

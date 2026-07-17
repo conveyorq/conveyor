@@ -46,7 +46,7 @@ The Helm chart renders the full configuration into a ConfigMap from [`deploy/hel
 
 **The server is stateless.** Durable state lives in the broker. Scale it horizontally:
 
-- **More server nodes** spread queue ownership and worker sessions across the cluster and survive node loss (a lost node's queues re-activate elsewhere and its in-flight tasks are redelivered). On Kubernetes raise `replicaCount`.
+- **More server nodes** spread queue ownership and worker sessions across the cluster and survive node loss (a lost node's queues re-activate elsewhere and its in-flight tasks are redelivered). On Kubernetes raise `replicaCount`. Run at least three nodes in production; see the [high-availability guide](high-availability.md#server-tier) for why three is the floor.
 - **More worker capacity** comes from running more worker processes or raising a worker's `WithConcurrency`. Workers are independent of the server cluster.
 - **The broker is the throughput ceiling.** Conveyor commits every task to Postgres before dispatch, so sustained throughput is bounded by the database, not the server. Size the connection pool and the database accordingly, and measure the broker first when tuning.
 
