@@ -105,14 +105,14 @@ func (s *Scheduler) PostStop(_ *goakt.Context) error {
 // promote runs one promotion pass and one cron materialization pass, waking
 // the queues that gained work.
 func (s *Scheduler) promote(ctx *goakt.ReceiveContext) {
-	background := context.Background()
+	goCtx := ctx.Context()
 
-	queues, err := s.runtime.Broker().PromoteScheduled(background, s.runtime.Settings().LeaseBatchMax)
+	queues, err := s.runtime.Broker().PromoteScheduled(goCtx, s.runtime.Settings().LeaseBatchMax)
 	if err != nil {
 		s.runtime.Logger().Warn("promoting scheduled tasks failed", "error", err)
 	} else {
 		for _, queue := range queues {
-			wakeQueue(background, ctx.ActorSystem(), s.runtime, queue, 0)
+			wakeQueue(goCtx, ctx.ActorSystem(), s.runtime, queue, 0)
 		}
 	}
 
@@ -127,10 +127,10 @@ func (s *Scheduler) promote(ctx *goakt.ReceiveContext) {
 // cursor advance keeps a stale scheduler from moving the cursor backward and
 // re-firing. A surviving duplicate stays within the at-least-once contract.
 func (s *Scheduler) materializeCron(ctx *goakt.ReceiveContext) {
-	background := context.Background()
+	goCtx := ctx.Context()
 	now := s.runtime.Clock().Now()
 
-	entries, err := s.runtime.Broker().ListDueCronEntries(background, now)
+	entries, err := s.runtime.Broker().ListDueCronEntries(goCtx, now)
 	if err != nil {
 		s.runtime.Logger().Warn("listing due cron entries failed", "error", err)
 
@@ -139,12 +139,12 @@ func (s *Scheduler) materializeCron(ctx *goakt.ReceiveContext) {
 
 	for _, entry := range entries {
 		if entry.NextRunAt.IsZero() {
-			s.armCron(background, entry, now)
+			s.armCron(goCtx, entry, now)
 
 			continue
 		}
 
-		s.fireCron(background, ctx, entry, now)
+		s.fireCron(goCtx, ctx, entry, now)
 	}
 }
 
@@ -167,13 +167,13 @@ func (s *Scheduler) armCron(ctx context.Context, entry *broker.CronEntry, now ti
 // fireCron materializes the due slot and advances the cursor past now. A
 // duplicate-task outcome is success: another scheduler already fired the slot.
 // A real enqueue error leaves the cursor unchanged so the next tick retries.
-func (s *Scheduler) fireCron(background context.Context, ctx *goakt.ReceiveContext, entry *broker.CronEntry, now time.Time) {
+func (s *Scheduler) fireCron(goCtx context.Context, ctx *goakt.ReceiveContext, entry *broker.CronEntry, now time.Time) {
 	task := cron.MaterializeTask(entry, entry.NextRunAt, s.runtime.NewID())
 
-	switch err := s.runtime.Broker().Enqueue(background, task); {
+	switch err := s.runtime.Broker().Enqueue(goCtx, task); {
 	case err == nil:
 		s.runtime.Counters().Enqueued.Add(1)
-		wakeQueue(background, ctx.ActorSystem(), s.runtime, entry.Queue, 0)
+		wakeQueue(goCtx, ctx.ActorSystem(), s.runtime, entry.Queue, 0)
 
 	case errors.Is(err, broker.ErrDuplicateTask):
 		// Slot already materialized (failover/double-tick); advancing is safe.
@@ -193,7 +193,7 @@ func (s *Scheduler) fireCron(background context.Context, ctx *goakt.ReceiveConte
 
 	// Compare-and-set on the slot we just fired: if another scheduler already
 	// advanced, this is a no-op and the cursor never moves backward.
-	if err := s.runtime.Broker().UpdateCronNextRun(background, entry.ID, entry.NextRunAt, next); err != nil {
+	if err := s.runtime.Broker().UpdateCronNextRun(goCtx, entry.ID, entry.NextRunAt, next); err != nil {
 		s.runtime.Logger().Warn("persisting cron next run failed", "id", entry.ID, "error", err)
 	}
 }
