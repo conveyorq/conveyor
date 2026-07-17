@@ -107,7 +107,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         name: Checkout
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         name: Setup Go
         with:
           go-version-file: go.mod
@@ -211,7 +211,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         name: Checkout
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         name: Setup Go
         with:
           go-version-file: go.mod

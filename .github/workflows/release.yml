@@ -152,7 +152,7 @@ jobs:
         with:
           ref: ${{ needs.setup.outputs.ref }}
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         name: Setup Go
         with:
           go-version-file: go.mod
