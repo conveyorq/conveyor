@@ -107,7 +107,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         name: Checkout
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         name: Setup Go
         with:
           go-version-file: go.mod
@@ -131,7 +131,7 @@ jobs:
         name: Setup pnpm
         with:
           version: 11
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         name: Setup Node
         with:
           node-version: "24"
@@ -183,7 +183,7 @@ jobs:
         name: Setup pnpm
         with:
           version: 11
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         name: Setup Node
         with:
           node-version: "24"
@@ -211,7 +211,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         name: Checkout
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         name: Setup Go
         with:
           go-version-file: go.mod

@@ -4,7 +4,7 @@
   "description": "TypeScript SDK for Conveyor — a distributed, push-based task queue.",
   "license": "Apache-2.0",
   "type": "module",
-  "packageManager": "pnpm@11.10.0",
+  "packageManager": "pnpm@11.11.0",
   "engines": {
     "node": ">=20"
   },

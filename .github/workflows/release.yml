@@ -152,7 +152,7 @@ jobs:
         with:
           ref: ${{ needs.setup.outputs.ref }}
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         name: Setup Go
         with:
           go-version-file: go.mod
@@ -293,7 +293,7 @@ jobs:
           digest="$(awk '/Digest: /{print $NF}' push.log)"
           echo "digest=${digest}" >>"${GITHUB_OUTPUT}"
 
-      - uses: sigstore/cosign-installer@v3
+      - uses: sigstore/cosign-installer@v4.1.2
         name: Install cosign
       - name: Sign the published chart
         run: cosign sign --yes "${CHART_REPO}/conveyor@${{ steps.push.outputs.digest }}"
