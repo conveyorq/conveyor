@@ -290,3 +290,15 @@ func TestSessionDrainOnShutdown(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, connect.CodeUnavailable, connect.CodeOf(err))
 }
+
+// TestStreamSenderRejectsSendsAfterClose covers the session teardown
+// contract: the stream is only valid while its handler runs, so a frame
+// from a gateway that is still finishing its last mailbox turn must be
+// refused. The nil stream stands in for the released one: a send that
+// reached it would panic.
+func TestStreamSenderRejectsSendsAfterClose(t *testing.T) {
+	sender := &streamSender{}
+	sender.close()
+
+	require.ErrorIs(t, sender.Send(&conveyorv1.ServerMessage{}), errSessionClosed)
+}

@@ -44,6 +44,10 @@ var errSessionSetupFailed = errors.New("session setup failed")
 // another node.
 var errNodeDraining = errors.New("node is shutting down; reconnect to another node")
 
+// errSessionClosed is returned to a late frame sender once the session
+// handler has released the stream.
+var errSessionClosed = errors.New("worker session is closed")
+
 // SessionSnapshot is the externally visible description of one connected
 // worker session, surfaced by the AdminService worker-topology view.
 type SessionSnapshot struct {
@@ -204,18 +208,38 @@ func (s *WorkerService) unregisterSession(sessionID string) {
 // Dispatch frames arrive from the gateway actor while protocol frames are
 // sent from the session loop, so sends are serialized by a mutex.
 type streamSender struct {
-	// mutex serializes writes to the stream.
+	// mutex serializes writes to the stream and guards closed.
 	mutex sync.Mutex
+	// closed reports that the session handler is returning, after which
+	// the stream must no longer be touched.
+	closed bool
 	// stream is the live session stream.
 	stream *connect.BidiStream[conveyorv1.WorkerMessage, conveyorv1.ServerMessage]
 }
 
-// Send implements actors.FrameSender.
+// Send implements actors.FrameSender. A send after close reports
+// errSessionClosed, which the gateway treats like any broken stream: the
+// task is released for immediate redelivery.
 func (s *streamSender) Send(message *conveyorv1.ServerMessage) error {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
+	if s.closed {
+		return errSessionClosed
+	}
+
 	return s.stream.Send(message)
+}
+
+// close makes every later send fail and waits for an in-flight one to
+// finish. The session handler calls it before returning: the stream is
+// only valid while the handler runs, yet a stopped gateway may still be
+// finishing its mailbox turn on an actor-system worker.
+func (s *streamSender) close() {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	s.closed = true
 }
 
 // Session implements the worker stream protocol: the first frame must be
@@ -266,6 +290,13 @@ func (s *WorkerService) Session(ctx context.Context, stream *connect.BidiStream[
 	// below: an empty registry guarantees every in-flight task has been
 	// released, which is what DrainSessions waits for.
 	defer s.unregisterSession(sessionID)
+
+	// Closing the sender after the gateway stop below keeps the drain's
+	// frames flowing, then severs the stream while the handler still
+	// owns it: a stopped gateway may be finishing its last mailbox turn
+	// on an actor-system worker, and that turn must not write to a
+	// stream the handler has already returned from.
+	defer sender.close()
 
 	handle, err := s.engine.SpawnGateway(ctx, session, sender)
 	if err != nil {
