@@ -1,4 +1,5 @@
 import datetime
+from conveyor.v1 import service_pb2 as _service_pb2
 from conveyor.v1 import task_pb2 as _task_pb2
 from google.protobuf import timestamp_pb2 as _timestamp_pb2
 from google.protobuf.internal import containers as _containers
@@ -248,4 +249,36 @@ class ResolveDependents(_message.Message):
     task_id: str
 
     def __init__(self, task_id: _Optional[str]=...) -> None:
+        ...
+
+class WebhookLeaseHeartbeat(_message.Message):
+    __slots__ = ('task_id', 'lease_id')
+    TASK_ID_FIELD_NUMBER: _ClassVar[int]
+    LEASE_ID_FIELD_NUMBER: _ClassVar[int]
+    task_id: str
+    lease_id: str
+
+    def __init__(self, task_id: _Optional[str]=..., lease_id: _Optional[str]=...) -> None:
+        ...
+
+class WebhookLeaseResult(_message.Message):
+    __slots__ = ('task_id', 'lease_id', 'outcome', 'error_msg', 'result')
+    TASK_ID_FIELD_NUMBER: _ClassVar[int]
+    LEASE_ID_FIELD_NUMBER: _ClassVar[int]
+    OUTCOME_FIELD_NUMBER: _ClassVar[int]
+    ERROR_MSG_FIELD_NUMBER: _ClassVar[int]
+    RESULT_FIELD_NUMBER: _ClassVar[int]
+    task_id: str
+    lease_id: str
+    outcome: _service_pb2.TaskOutcome
+    error_msg: str
+    result: bytes
+
+    def __init__(self, task_id: _Optional[str]=..., lease_id: _Optional[str]=..., outcome: _Optional[_Union[_service_pb2.TaskOutcome, str]]=..., error_msg: _Optional[str]=..., result: _Optional[bytes]=...) -> None:
+        ...
+
+class WebhookReconcile(_message.Message):
+    __slots__ = ()
+
+    def __init__(self) -> None:
         ...

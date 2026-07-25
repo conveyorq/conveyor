@@ -36,7 +36,6 @@ and priorities, backed by Postgres or an in-memory broker, with **no Redis and n
 - [Dashboard](#dashboard)
 - [Documentation](#documentation)
 - [Contributing](#contributing)
-- [License](#license)
 
 ## Features
 
@@ -502,10 +501,3 @@ end-to-end test workflow, and the project conventions. Two checks run on every
 pull request worth knowing up front: commit messages must follow
 [Conventional Commits](https://www.conventionalcommits.org), and every commit
 must be signed off for the [DCO](https://developercertificate.org) (`git commit -s`).
-
-## License
-
-Conveyor is **fully open source** under the [Apache License 2.0](LICENSE): the
-entire project, with no separate enterprise, commercial, or closed-source
-edition. Third-party dependency licenses are inventoried in
-[docs/licenses.md](docs/licenses.md).

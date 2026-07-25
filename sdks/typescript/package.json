@@ -4,7 +4,7 @@
   "description": "TypeScript SDK for Conveyor — a distributed, push-based task queue.",
   "license": "Apache-2.0",
   "type": "module",
-  "packageManager": "pnpm@11.11.0",
+  "packageManager": "pnpm@11.17.0",
   "engines": {
     "node": ">=20"
   },
@@ -26,12 +26,12 @@
     "prepare": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
-    "@bufbuild/protobuf": "^2.12.1",
+    "@bufbuild/protobuf": "^2.13.0",
     "@connectrpc/connect": "^2.1.2",
     "@connectrpc/connect-node": "^2.1.2"
   },
   "devDependencies": {
-    "@bufbuild/protoc-gen-es": "^2.12.1",
+    "@bufbuild/protoc-gen-es": "^2.13.0",
     "@types/node": "^26.1.1",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"

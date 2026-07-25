@@ -130,6 +130,72 @@ class WorkerService:
     def Session(request_iterator, target, options=(), channel_credentials=None, call_credentials=None, insecure=False, compression=None, wait_for_ready=None, timeout=None, metadata=None):
         return grpc.experimental.stream_stream(request_iterator, target, '/conveyor.v1.WorkerService/Session', conveyor_dot_v1_dot_service__pb2.WorkerMessage.SerializeToString, conveyor_dot_v1_dot_service__pb2.ServerMessage.FromString, options, channel_credentials, insecure, call_credentials, compression, wait_for_ready, timeout, metadata, _registered_method=True)
 
+class WebhookServiceStub:
+    """WebhookService is the callback surface for webhook workers completing
+    tasks asynchronously. A delivery that answered "accepted" carries a lease
+    token; the endpoint heartbeats with it to keep its lease and reports the
+    final outcome when done, mirroring the worker stream's Heartbeat and
+    Result frames as unary calls. The token authenticates one delivery only;
+    no API bearer token is needed.
+    """
+
+    def __init__(self, channel):
+        """Constructor.
+
+        Args:
+            channel: A grpc.Channel.
+        """
+        self.Heartbeat = channel.unary_unary('/conveyor.v1.WebhookService/Heartbeat', request_serializer=conveyor_dot_v1_dot_service__pb2.WebhookHeartbeatRequest.SerializeToString, response_deserializer=conveyor_dot_v1_dot_service__pb2.WebhookHeartbeatResponse.FromString, _registered_method=True)
+        self.ReportResult = channel.unary_unary('/conveyor.v1.WebhookService/ReportResult', request_serializer=conveyor_dot_v1_dot_service__pb2.WebhookReportResultRequest.SerializeToString, response_deserializer=conveyor_dot_v1_dot_service__pb2.WebhookReportResultResponse.FromString, _registered_method=True)
+
+class WebhookServiceServicer:
+    """WebhookService is the callback surface for webhook workers completing
+    tasks asynchronously. A delivery that answered "accepted" carries a lease
+    token; the endpoint heartbeats with it to keep its lease and reports the
+    final outcome when done, mirroring the worker stream's Heartbeat and
+    Result frames as unary calls. The token authenticates one delivery only;
+    no API bearer token is needed.
+    """
+
+    def Heartbeat(self, request, context):
+        """Heartbeat extends the delivery's lease. A missed heartbeat lets the
+        lease expire and the task retry elsewhere, exactly like a crashed
+        stream worker.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ReportResult(self, request, context):
+        """ReportResult reports the delivery's final outcome and frees its slot.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+def add_WebhookServiceServicer_to_server(servicer, server):
+    rpc_method_handlers = {'Heartbeat': grpc.unary_unary_rpc_method_handler(servicer.Heartbeat, request_deserializer=conveyor_dot_v1_dot_service__pb2.WebhookHeartbeatRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.WebhookHeartbeatResponse.SerializeToString), 'ReportResult': grpc.unary_unary_rpc_method_handler(servicer.ReportResult, request_deserializer=conveyor_dot_v1_dot_service__pb2.WebhookReportResultRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.WebhookReportResultResponse.SerializeToString)}
+    generic_handler = grpc.method_handlers_generic_handler('conveyor.v1.WebhookService', rpc_method_handlers)
+    server.add_generic_rpc_handlers((generic_handler,))
+    server.add_registered_method_handlers('conveyor.v1.WebhookService', rpc_method_handlers)
+
+class WebhookService:
+    """WebhookService is the callback surface for webhook workers completing
+    tasks asynchronously. A delivery that answered "accepted" carries a lease
+    token; the endpoint heartbeats with it to keep its lease and reports the
+    final outcome when done, mirroring the worker stream's Heartbeat and
+    Result frames as unary calls. The token authenticates one delivery only;
+    no API bearer token is needed.
+    """
+
+    @staticmethod
+    def Heartbeat(request, target, options=(), channel_credentials=None, call_credentials=None, insecure=False, compression=None, wait_for_ready=None, timeout=None, metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/conveyor.v1.WebhookService/Heartbeat', conveyor_dot_v1_dot_service__pb2.WebhookHeartbeatRequest.SerializeToString, conveyor_dot_v1_dot_service__pb2.WebhookHeartbeatResponse.FromString, options, channel_credentials, insecure, call_credentials, compression, wait_for_ready, timeout, metadata, _registered_method=True)
+
+    @staticmethod
+    def ReportResult(request, target, options=(), channel_credentials=None, call_credentials=None, insecure=False, compression=None, wait_for_ready=None, timeout=None, metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/conveyor.v1.WebhookService/ReportResult', conveyor_dot_v1_dot_service__pb2.WebhookReportResultRequest.SerializeToString, conveyor_dot_v1_dot_service__pb2.WebhookReportResultResponse.FromString, options, channel_credentials, insecure, call_credentials, compression, wait_for_ready, timeout, metadata, _registered_method=True)
+
 class AdminServiceStub:
     """AdminService is the inspection and operations API.
     """
@@ -168,6 +234,11 @@ class AdminServiceStub:
         self.ResumeCron = channel.unary_unary('/conveyor.v1.AdminService/ResumeCron', request_serializer=conveyor_dot_v1_dot_service__pb2.ResumeCronRequest.SerializeToString, response_deserializer=conveyor_dot_v1_dot_service__pb2.ResumeCronResponse.FromString, _registered_method=True)
         self.DeleteCron = channel.unary_unary('/conveyor.v1.AdminService/DeleteCron', request_serializer=conveyor_dot_v1_dot_service__pb2.DeleteCronRequest.SerializeToString, response_deserializer=conveyor_dot_v1_dot_service__pb2.DeleteCronResponse.FromString, _registered_method=True)
         self.ClusterInfo = channel.unary_unary('/conveyor.v1.AdminService/ClusterInfo', request_serializer=conveyor_dot_v1_dot_service__pb2.ClusterInfoRequest.SerializeToString, response_deserializer=conveyor_dot_v1_dot_service__pb2.ClusterInfoResponse.FromString, _registered_method=True)
+        self.ListWebhookWorkers = channel.unary_unary('/conveyor.v1.AdminService/ListWebhookWorkers', request_serializer=conveyor_dot_v1_dot_service__pb2.ListWebhookWorkersRequest.SerializeToString, response_deserializer=conveyor_dot_v1_dot_service__pb2.ListWebhookWorkersResponse.FromString, _registered_method=True)
+        self.UpsertWebhookWorker = channel.unary_unary('/conveyor.v1.AdminService/UpsertWebhookWorker', request_serializer=conveyor_dot_v1_dot_service__pb2.UpsertWebhookWorkerRequest.SerializeToString, response_deserializer=conveyor_dot_v1_dot_service__pb2.UpsertWebhookWorkerResponse.FromString, _registered_method=True)
+        self.PauseWebhookWorker = channel.unary_unary('/conveyor.v1.AdminService/PauseWebhookWorker', request_serializer=conveyor_dot_v1_dot_service__pb2.PauseWebhookWorkerRequest.SerializeToString, response_deserializer=conveyor_dot_v1_dot_service__pb2.PauseWebhookWorkerResponse.FromString, _registered_method=True)
+        self.ResumeWebhookWorker = channel.unary_unary('/conveyor.v1.AdminService/ResumeWebhookWorker', request_serializer=conveyor_dot_v1_dot_service__pb2.ResumeWebhookWorkerRequest.SerializeToString, response_deserializer=conveyor_dot_v1_dot_service__pb2.ResumeWebhookWorkerResponse.FromString, _registered_method=True)
+        self.DeleteWebhookWorker = channel.unary_unary('/conveyor.v1.AdminService/DeleteWebhookWorker', request_serializer=conveyor_dot_v1_dot_service__pb2.DeleteWebhookWorkerRequest.SerializeToString, response_deserializer=conveyor_dot_v1_dot_service__pb2.DeleteWebhookWorkerResponse.FromString, _registered_method=True)
         self.ListWorkerSessions = channel.unary_unary('/conveyor.v1.AdminService/ListWorkerSessions', request_serializer=conveyor_dot_v1_dot_service__pb2.ListWorkerSessionsRequest.SerializeToString, response_deserializer=conveyor_dot_v1_dot_service__pb2.ListWorkerSessionsResponse.FromString, _registered_method=True)
         self.BrokerInfo = channel.unary_unary('/conveyor.v1.AdminService/BrokerInfo', request_serializer=conveyor_dot_v1_dot_service__pb2.BrokerInfoRequest.SerializeToString, response_deserializer=conveyor_dot_v1_dot_service__pb2.BrokerInfoResponse.FromString, _registered_method=True)
         self.WatchEvents = channel.unary_stream('/conveyor.v1.AdminService/WatchEvents', request_serializer=conveyor_dot_v1_dot_service__pb2.WatchEventsRequest.SerializeToString, response_deserializer=conveyor_dot_v1_dot_task__pb2.TaskEvent.FromString, _registered_method=True)
@@ -360,6 +431,44 @@ class AdminServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def ListWebhookWorkers(self, request, context):
+        """ListWebhookWorkers returns every webhook worker registration; signing
+        secrets are redacted.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def UpsertWebhookWorker(self, request, context):
+        """UpsertWebhookWorker creates or replaces a webhook worker registration by
+        name and applies it immediately.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def PauseWebhookWorker(self, request, context):
+        """PauseWebhookWorker suspends delivery to a registration without deleting it.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ResumeWebhookWorker(self, request, context):
+        """ResumeWebhookWorker resumes delivery to a paused registration.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def DeleteWebhookWorker(self, request, context):
+        """DeleteWebhookWorker removes a registration; its in-flight deliveries are
+        released for redelivery elsewhere.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def ListWorkerSessions(self, request, context):
         """ListWorkerSessions lists the worker sessions connected to the node serving
         the request, for the operations dashboard's worker-topology view.
@@ -389,7 +498,7 @@ class AdminServiceServicer:
         raise NotImplementedError('Method not implemented!')
 
 def add_AdminServiceServicer_to_server(servicer, server):
-    rpc_method_handlers = {'ListQueues': grpc.unary_unary_rpc_method_handler(servicer.ListQueues, request_deserializer=conveyor_dot_v1_dot_service__pb2.ListQueuesRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.ListQueuesResponse.SerializeToString), 'PauseQueue': grpc.unary_unary_rpc_method_handler(servicer.PauseQueue, request_deserializer=conveyor_dot_v1_dot_service__pb2.PauseQueueRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.PauseQueueResponse.SerializeToString), 'ResumeQueue': grpc.unary_unary_rpc_method_handler(servicer.ResumeQueue, request_deserializer=conveyor_dot_v1_dot_service__pb2.ResumeQueueRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.ResumeQueueResponse.SerializeToString), 'ListRateLimits': grpc.unary_unary_rpc_method_handler(servicer.ListRateLimits, request_deserializer=conveyor_dot_v1_dot_service__pb2.ListRateLimitsRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.ListRateLimitsResponse.SerializeToString), 'SetQueueRateLimit': grpc.unary_unary_rpc_method_handler(servicer.SetQueueRateLimit, request_deserializer=conveyor_dot_v1_dot_service__pb2.SetQueueRateLimitRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.SetQueueRateLimitResponse.SerializeToString), 'DeleteQueueRateLimit': grpc.unary_unary_rpc_method_handler(servicer.DeleteQueueRateLimit, request_deserializer=conveyor_dot_v1_dot_service__pb2.DeleteQueueRateLimitRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.DeleteQueueRateLimitResponse.SerializeToString), 'ListConcurrencyLimits': grpc.unary_unary_rpc_method_handler(servicer.ListConcurrencyLimits, request_deserializer=conveyor_dot_v1_dot_service__pb2.ListConcurrencyLimitsRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.ListConcurrencyLimitsResponse.SerializeToString), 'SetQueueConcurrencyLimit': grpc.unary_unary_rpc_method_handler(servicer.SetQueueConcurrencyLimit, request_deserializer=conveyor_dot_v1_dot_service__pb2.SetQueueConcurrencyLimitRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.SetQueueConcurrencyLimitResponse.SerializeToString), 'DeleteQueueConcurrencyLimit': grpc.unary_unary_rpc_method_handler(servicer.DeleteQueueConcurrencyLimit, request_deserializer=conveyor_dot_v1_dot_service__pb2.DeleteQueueConcurrencyLimitRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.DeleteQueueConcurrencyLimitResponse.SerializeToString), 'ListGroupConfigs': grpc.unary_unary_rpc_method_handler(servicer.ListGroupConfigs, request_deserializer=conveyor_dot_v1_dot_service__pb2.ListGroupConfigsRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.ListGroupConfigsResponse.SerializeToString), 'SetGroupConfig': grpc.unary_unary_rpc_method_handler(servicer.SetGroupConfig, request_deserializer=conveyor_dot_v1_dot_service__pb2.SetGroupConfigRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.SetGroupConfigResponse.SerializeToString), 'DeleteGroupConfig': grpc.unary_unary_rpc_method_handler(servicer.DeleteGroupConfig, request_deserializer=conveyor_dot_v1_dot_service__pb2.DeleteGroupConfigRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.DeleteGroupConfigResponse.SerializeToString), 'ListTasks': grpc.unary_unary_rpc_method_handler(servicer.ListTasks, request_deserializer=conveyor_dot_v1_dot_service__pb2.ListTasksRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.ListTasksResponse.SerializeToString), 'CancelTask': grpc.unary_unary_rpc_method_handler(servicer.CancelTask, request_deserializer=conveyor_dot_v1_dot_service__pb2.CancelTaskRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.CancelTaskResponse.SerializeToString), 'DeleteTask': grpc.unary_unary_rpc_method_handler(servicer.DeleteTask, request_deserializer=conveyor_dot_v1_dot_service__pb2.DeleteTaskRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.DeleteTaskResponse.SerializeToString), 'RunTask': grpc.unary_unary_rpc_method_handler(servicer.RunTask, request_deserializer=conveyor_dot_v1_dot_service__pb2.RunTaskRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.RunTaskResponse.SerializeToString), 'RescheduleTask': grpc.unary_unary_rpc_method_handler(servicer.RescheduleTask, request_deserializer=conveyor_dot_v1_dot_service__pb2.RescheduleTaskRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.RescheduleTaskResponse.SerializeToString), 'ArchiveTask': grpc.unary_unary_rpc_method_handler(servicer.ArchiveTask, request_deserializer=conveyor_dot_v1_dot_service__pb2.ArchiveTaskRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.ArchiveTaskResponse.SerializeToString), 'BatchDeleteTasks': grpc.unary_unary_rpc_method_handler(servicer.BatchDeleteTasks, request_deserializer=conveyor_dot_v1_dot_service__pb2.BatchTasksRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.BatchTasksResponse.SerializeToString), 'BatchRunTasks': grpc.unary_unary_rpc_method_handler(servicer.BatchRunTasks, request_deserializer=conveyor_dot_v1_dot_service__pb2.BatchTasksRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.BatchTasksResponse.SerializeToString), 'BatchCancelTasks': grpc.unary_unary_rpc_method_handler(servicer.BatchCancelTasks, request_deserializer=conveyor_dot_v1_dot_service__pb2.BatchTasksRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.BatchTasksResponse.SerializeToString), 'BatchArchiveTasks': grpc.unary_unary_rpc_method_handler(servicer.BatchArchiveTasks, request_deserializer=conveyor_dot_v1_dot_service__pb2.BatchTasksRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.BatchTasksResponse.SerializeToString), 'ListCron': grpc.unary_unary_rpc_method_handler(servicer.ListCron, request_deserializer=conveyor_dot_v1_dot_service__pb2.ListCronRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.ListCronResponse.SerializeToString), 'UpsertCron': grpc.unary_unary_rpc_method_handler(servicer.UpsertCron, request_deserializer=conveyor_dot_v1_dot_service__pb2.UpsertCronRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.UpsertCronResponse.SerializeToString), 'PauseCron': grpc.unary_unary_rpc_method_handler(servicer.PauseCron, request_deserializer=conveyor_dot_v1_dot_service__pb2.PauseCronRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.PauseCronResponse.SerializeToString), 'ResumeCron': grpc.unary_unary_rpc_method_handler(servicer.ResumeCron, request_deserializer=conveyor_dot_v1_dot_service__pb2.ResumeCronRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.ResumeCronResponse.SerializeToString), 'DeleteCron': grpc.unary_unary_rpc_method_handler(servicer.DeleteCron, request_deserializer=conveyor_dot_v1_dot_service__pb2.DeleteCronRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.DeleteCronResponse.SerializeToString), 'ClusterInfo': grpc.unary_unary_rpc_method_handler(servicer.ClusterInfo, request_deserializer=conveyor_dot_v1_dot_service__pb2.ClusterInfoRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.ClusterInfoResponse.SerializeToString), 'ListWorkerSessions': grpc.unary_unary_rpc_method_handler(servicer.ListWorkerSessions, request_deserializer=conveyor_dot_v1_dot_service__pb2.ListWorkerSessionsRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.ListWorkerSessionsResponse.SerializeToString), 'BrokerInfo': grpc.unary_unary_rpc_method_handler(servicer.BrokerInfo, request_deserializer=conveyor_dot_v1_dot_service__pb2.BrokerInfoRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.BrokerInfoResponse.SerializeToString), 'WatchEvents': grpc.unary_stream_rpc_method_handler(servicer.WatchEvents, request_deserializer=conveyor_dot_v1_dot_service__pb2.WatchEventsRequest.FromString, response_serializer=conveyor_dot_v1_dot_task__pb2.TaskEvent.SerializeToString)}
+    rpc_method_handlers = {'ListQueues': grpc.unary_unary_rpc_method_handler(servicer.ListQueues, request_deserializer=conveyor_dot_v1_dot_service__pb2.ListQueuesRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.ListQueuesResponse.SerializeToString), 'PauseQueue': grpc.unary_unary_rpc_method_handler(servicer.PauseQueue, request_deserializer=conveyor_dot_v1_dot_service__pb2.PauseQueueRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.PauseQueueResponse.SerializeToString), 'ResumeQueue': grpc.unary_unary_rpc_method_handler(servicer.ResumeQueue, request_deserializer=conveyor_dot_v1_dot_service__pb2.ResumeQueueRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.ResumeQueueResponse.SerializeToString), 'ListRateLimits': grpc.unary_unary_rpc_method_handler(servicer.ListRateLimits, request_deserializer=conveyor_dot_v1_dot_service__pb2.ListRateLimitsRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.ListRateLimitsResponse.SerializeToString), 'SetQueueRateLimit': grpc.unary_unary_rpc_method_handler(servicer.SetQueueRateLimit, request_deserializer=conveyor_dot_v1_dot_service__pb2.SetQueueRateLimitRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.SetQueueRateLimitResponse.SerializeToString), 'DeleteQueueRateLimit': grpc.unary_unary_rpc_method_handler(servicer.DeleteQueueRateLimit, request_deserializer=conveyor_dot_v1_dot_service__pb2.DeleteQueueRateLimitRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.DeleteQueueRateLimitResponse.SerializeToString), 'ListConcurrencyLimits': grpc.unary_unary_rpc_method_handler(servicer.ListConcurrencyLimits, request_deserializer=conveyor_dot_v1_dot_service__pb2.ListConcurrencyLimitsRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.ListConcurrencyLimitsResponse.SerializeToString), 'SetQueueConcurrencyLimit': grpc.unary_unary_rpc_method_handler(servicer.SetQueueConcurrencyLimit, request_deserializer=conveyor_dot_v1_dot_service__pb2.SetQueueConcurrencyLimitRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.SetQueueConcurrencyLimitResponse.SerializeToString), 'DeleteQueueConcurrencyLimit': grpc.unary_unary_rpc_method_handler(servicer.DeleteQueueConcurrencyLimit, request_deserializer=conveyor_dot_v1_dot_service__pb2.DeleteQueueConcurrencyLimitRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.DeleteQueueConcurrencyLimitResponse.SerializeToString), 'ListGroupConfigs': grpc.unary_unary_rpc_method_handler(servicer.ListGroupConfigs, request_deserializer=conveyor_dot_v1_dot_service__pb2.ListGroupConfigsRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.ListGroupConfigsResponse.SerializeToString), 'SetGroupConfig': grpc.unary_unary_rpc_method_handler(servicer.SetGroupConfig, request_deserializer=conveyor_dot_v1_dot_service__pb2.SetGroupConfigRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.SetGroupConfigResponse.SerializeToString), 'DeleteGroupConfig': grpc.unary_unary_rpc_method_handler(servicer.DeleteGroupConfig, request_deserializer=conveyor_dot_v1_dot_service__pb2.DeleteGroupConfigRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.DeleteGroupConfigResponse.SerializeToString), 'ListTasks': grpc.unary_unary_rpc_method_handler(servicer.ListTasks, request_deserializer=conveyor_dot_v1_dot_service__pb2.ListTasksRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.ListTasksResponse.SerializeToString), 'CancelTask': grpc.unary_unary_rpc_method_handler(servicer.CancelTask, request_deserializer=conveyor_dot_v1_dot_service__pb2.CancelTaskRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.CancelTaskResponse.SerializeToString), 'DeleteTask': grpc.unary_unary_rpc_method_handler(servicer.DeleteTask, request_deserializer=conveyor_dot_v1_dot_service__pb2.DeleteTaskRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.DeleteTaskResponse.SerializeToString), 'RunTask': grpc.unary_unary_rpc_method_handler(servicer.RunTask, request_deserializer=conveyor_dot_v1_dot_service__pb2.RunTaskRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.RunTaskResponse.SerializeToString), 'RescheduleTask': grpc.unary_unary_rpc_method_handler(servicer.RescheduleTask, request_deserializer=conveyor_dot_v1_dot_service__pb2.RescheduleTaskRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.RescheduleTaskResponse.SerializeToString), 'ArchiveTask': grpc.unary_unary_rpc_method_handler(servicer.ArchiveTask, request_deserializer=conveyor_dot_v1_dot_service__pb2.ArchiveTaskRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.ArchiveTaskResponse.SerializeToString), 'BatchDeleteTasks': grpc.unary_unary_rpc_method_handler(servicer.BatchDeleteTasks, request_deserializer=conveyor_dot_v1_dot_service__pb2.BatchTasksRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.BatchTasksResponse.SerializeToString), 'BatchRunTasks': grpc.unary_unary_rpc_method_handler(servicer.BatchRunTasks, request_deserializer=conveyor_dot_v1_dot_service__pb2.BatchTasksRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.BatchTasksResponse.SerializeToString), 'BatchCancelTasks': grpc.unary_unary_rpc_method_handler(servicer.BatchCancelTasks, request_deserializer=conveyor_dot_v1_dot_service__pb2.BatchTasksRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.BatchTasksResponse.SerializeToString), 'BatchArchiveTasks': grpc.unary_unary_rpc_method_handler(servicer.BatchArchiveTasks, request_deserializer=conveyor_dot_v1_dot_service__pb2.BatchTasksRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.BatchTasksResponse.SerializeToString), 'ListCron': grpc.unary_unary_rpc_method_handler(servicer.ListCron, request_deserializer=conveyor_dot_v1_dot_service__pb2.ListCronRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.ListCronResponse.SerializeToString), 'UpsertCron': grpc.unary_unary_rpc_method_handler(servicer.UpsertCron, request_deserializer=conveyor_dot_v1_dot_service__pb2.UpsertCronRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.UpsertCronResponse.SerializeToString), 'PauseCron': grpc.unary_unary_rpc_method_handler(servicer.PauseCron, request_deserializer=conveyor_dot_v1_dot_service__pb2.PauseCronRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.PauseCronResponse.SerializeToString), 'ResumeCron': grpc.unary_unary_rpc_method_handler(servicer.ResumeCron, request_deserializer=conveyor_dot_v1_dot_service__pb2.ResumeCronRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.ResumeCronResponse.SerializeToString), 'DeleteCron': grpc.unary_unary_rpc_method_handler(servicer.DeleteCron, request_deserializer=conveyor_dot_v1_dot_service__pb2.DeleteCronRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.DeleteCronResponse.SerializeToString), 'ClusterInfo': grpc.unary_unary_rpc_method_handler(servicer.ClusterInfo, request_deserializer=conveyor_dot_v1_dot_service__pb2.ClusterInfoRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.ClusterInfoResponse.SerializeToString), 'ListWebhookWorkers': grpc.unary_unary_rpc_method_handler(servicer.ListWebhookWorkers, request_deserializer=conveyor_dot_v1_dot_service__pb2.ListWebhookWorkersRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.ListWebhookWorkersResponse.SerializeToString), 'UpsertWebhookWorker': grpc.unary_unary_rpc_method_handler(servicer.UpsertWebhookWorker, request_deserializer=conveyor_dot_v1_dot_service__pb2.UpsertWebhookWorkerRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.UpsertWebhookWorkerResponse.SerializeToString), 'PauseWebhookWorker': grpc.unary_unary_rpc_method_handler(servicer.PauseWebhookWorker, request_deserializer=conveyor_dot_v1_dot_service__pb2.PauseWebhookWorkerRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.PauseWebhookWorkerResponse.SerializeToString), 'ResumeWebhookWorker': grpc.unary_unary_rpc_method_handler(servicer.ResumeWebhookWorker, request_deserializer=conveyor_dot_v1_dot_service__pb2.ResumeWebhookWorkerRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.ResumeWebhookWorkerResponse.SerializeToString), 'DeleteWebhookWorker': grpc.unary_unary_rpc_method_handler(servicer.DeleteWebhookWorker, request_deserializer=conveyor_dot_v1_dot_service__pb2.DeleteWebhookWorkerRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.DeleteWebhookWorkerResponse.SerializeToString), 'ListWorkerSessions': grpc.unary_unary_rpc_method_handler(servicer.ListWorkerSessions, request_deserializer=conveyor_dot_v1_dot_service__pb2.ListWorkerSessionsRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.ListWorkerSessionsResponse.SerializeToString), 'BrokerInfo': grpc.unary_unary_rpc_method_handler(servicer.BrokerInfo, request_deserializer=conveyor_dot_v1_dot_service__pb2.BrokerInfoRequest.FromString, response_serializer=conveyor_dot_v1_dot_service__pb2.BrokerInfoResponse.SerializeToString), 'WatchEvents': grpc.unary_stream_rpc_method_handler(servicer.WatchEvents, request_deserializer=conveyor_dot_v1_dot_service__pb2.WatchEventsRequest.FromString, response_serializer=conveyor_dot_v1_dot_task__pb2.TaskEvent.SerializeToString)}
     generic_handler = grpc.method_handlers_generic_handler('conveyor.v1.AdminService', rpc_method_handlers)
     server.add_generic_rpc_handlers((generic_handler,))
     server.add_registered_method_handlers('conveyor.v1.AdminService', rpc_method_handlers)
@@ -509,6 +618,26 @@ class AdminService:
     @staticmethod
     def ClusterInfo(request, target, options=(), channel_credentials=None, call_credentials=None, insecure=False, compression=None, wait_for_ready=None, timeout=None, metadata=None):
         return grpc.experimental.unary_unary(request, target, '/conveyor.v1.AdminService/ClusterInfo', conveyor_dot_v1_dot_service__pb2.ClusterInfoRequest.SerializeToString, conveyor_dot_v1_dot_service__pb2.ClusterInfoResponse.FromString, options, channel_credentials, insecure, call_credentials, compression, wait_for_ready, timeout, metadata, _registered_method=True)
+
+    @staticmethod
+    def ListWebhookWorkers(request, target, options=(), channel_credentials=None, call_credentials=None, insecure=False, compression=None, wait_for_ready=None, timeout=None, metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/conveyor.v1.AdminService/ListWebhookWorkers', conveyor_dot_v1_dot_service__pb2.ListWebhookWorkersRequest.SerializeToString, conveyor_dot_v1_dot_service__pb2.ListWebhookWorkersResponse.FromString, options, channel_credentials, insecure, call_credentials, compression, wait_for_ready, timeout, metadata, _registered_method=True)
+
+    @staticmethod
+    def UpsertWebhookWorker(request, target, options=(), channel_credentials=None, call_credentials=None, insecure=False, compression=None, wait_for_ready=None, timeout=None, metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/conveyor.v1.AdminService/UpsertWebhookWorker', conveyor_dot_v1_dot_service__pb2.UpsertWebhookWorkerRequest.SerializeToString, conveyor_dot_v1_dot_service__pb2.UpsertWebhookWorkerResponse.FromString, options, channel_credentials, insecure, call_credentials, compression, wait_for_ready, timeout, metadata, _registered_method=True)
+
+    @staticmethod
+    def PauseWebhookWorker(request, target, options=(), channel_credentials=None, call_credentials=None, insecure=False, compression=None, wait_for_ready=None, timeout=None, metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/conveyor.v1.AdminService/PauseWebhookWorker', conveyor_dot_v1_dot_service__pb2.PauseWebhookWorkerRequest.SerializeToString, conveyor_dot_v1_dot_service__pb2.PauseWebhookWorkerResponse.FromString, options, channel_credentials, insecure, call_credentials, compression, wait_for_ready, timeout, metadata, _registered_method=True)
+
+    @staticmethod
+    def ResumeWebhookWorker(request, target, options=(), channel_credentials=None, call_credentials=None, insecure=False, compression=None, wait_for_ready=None, timeout=None, metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/conveyor.v1.AdminService/ResumeWebhookWorker', conveyor_dot_v1_dot_service__pb2.ResumeWebhookWorkerRequest.SerializeToString, conveyor_dot_v1_dot_service__pb2.ResumeWebhookWorkerResponse.FromString, options, channel_credentials, insecure, call_credentials, compression, wait_for_ready, timeout, metadata, _registered_method=True)
+
+    @staticmethod
+    def DeleteWebhookWorker(request, target, options=(), channel_credentials=None, call_credentials=None, insecure=False, compression=None, wait_for_ready=None, timeout=None, metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/conveyor.v1.AdminService/DeleteWebhookWorker', conveyor_dot_v1_dot_service__pb2.DeleteWebhookWorkerRequest.SerializeToString, conveyor_dot_v1_dot_service__pb2.DeleteWebhookWorkerResponse.FromString, options, channel_credentials, insecure, call_credentials, compression, wait_for_ready, timeout, metadata, _registered_method=True)
 
     @staticmethod
     def ListWorkerSessions(request, target, options=(), channel_credentials=None, call_credentials=None, insecure=False, compression=None, wait_for_ready=None, timeout=None, metadata=None):

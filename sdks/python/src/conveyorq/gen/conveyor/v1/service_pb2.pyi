@@ -287,6 +287,40 @@ class Heartbeat(_message.Message):
     def __init__(self, active_task_ids: _Optional[_Iterable[str]]=...) -> None:
         ...
 
+class WebhookHeartbeatRequest(_message.Message):
+    __slots__ = ('lease_token',)
+    LEASE_TOKEN_FIELD_NUMBER: _ClassVar[int]
+    lease_token: str
+
+    def __init__(self, lease_token: _Optional[str]=...) -> None:
+        ...
+
+class WebhookHeartbeatResponse(_message.Message):
+    __slots__ = ()
+
+    def __init__(self) -> None:
+        ...
+
+class WebhookReportResultRequest(_message.Message):
+    __slots__ = ('lease_token', 'outcome', 'error_msg', 'result')
+    LEASE_TOKEN_FIELD_NUMBER: _ClassVar[int]
+    OUTCOME_FIELD_NUMBER: _ClassVar[int]
+    ERROR_MSG_FIELD_NUMBER: _ClassVar[int]
+    RESULT_FIELD_NUMBER: _ClassVar[int]
+    lease_token: str
+    outcome: TaskOutcome
+    error_msg: str
+    result: bytes
+
+    def __init__(self, lease_token: _Optional[str]=..., outcome: _Optional[_Union[TaskOutcome, str]]=..., error_msg: _Optional[str]=..., result: _Optional[bytes]=...) -> None:
+        ...
+
+class WebhookReportResultResponse(_message.Message):
+    __slots__ = ()
+
+    def __init__(self) -> None:
+        ...
+
 class Progress(_message.Message):
     __slots__ = ('task_id', 'percent', 'message')
     TASK_ID_FIELD_NUMBER: _ClassVar[int]
@@ -913,4 +947,106 @@ class WatchEventsRequest(_message.Message):
     event_types: _containers.RepeatedScalarFieldContainer[_task_pb2.TaskEventType]
 
     def __init__(self, queues: _Optional[_Iterable[str]]=..., event_types: _Optional[_Iterable[_Union[_task_pb2.TaskEventType, str]]]=...) -> None:
+        ...
+
+class WebhookWorker(_message.Message):
+    __slots__ = ('name', 'url', 'queues', 'concurrency', 'secrets', 'batch_types', 'request_timeout', 'paused')
+
+    class QueuesEntry(_message.Message):
+        __slots__ = ('key', 'value')
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: int
+
+        def __init__(self, key: _Optional[str]=..., value: _Optional[int]=...) -> None:
+            ...
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    URL_FIELD_NUMBER: _ClassVar[int]
+    QUEUES_FIELD_NUMBER: _ClassVar[int]
+    CONCURRENCY_FIELD_NUMBER: _ClassVar[int]
+    SECRETS_FIELD_NUMBER: _ClassVar[int]
+    BATCH_TYPES_FIELD_NUMBER: _ClassVar[int]
+    REQUEST_TIMEOUT_FIELD_NUMBER: _ClassVar[int]
+    PAUSED_FIELD_NUMBER: _ClassVar[int]
+    name: str
+    url: str
+    queues: _containers.ScalarMap[str, int]
+    concurrency: int
+    secrets: _containers.RepeatedScalarFieldContainer[str]
+    batch_types: _containers.RepeatedScalarFieldContainer[str]
+    request_timeout: _duration_pb2.Duration
+    paused: bool
+
+    def __init__(self, name: _Optional[str]=..., url: _Optional[str]=..., queues: _Optional[_Mapping[str, int]]=..., concurrency: _Optional[int]=..., secrets: _Optional[_Iterable[str]]=..., batch_types: _Optional[_Iterable[str]]=..., request_timeout: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]]=..., paused: _Optional[bool]=...) -> None:
+        ...
+
+class ListWebhookWorkersRequest(_message.Message):
+    __slots__ = ()
+
+    def __init__(self) -> None:
+        ...
+
+class ListWebhookWorkersResponse(_message.Message):
+    __slots__ = ('workers',)
+    WORKERS_FIELD_NUMBER: _ClassVar[int]
+    workers: _containers.RepeatedCompositeFieldContainer[WebhookWorker]
+
+    def __init__(self, workers: _Optional[_Iterable[_Union[WebhookWorker, _Mapping]]]=...) -> None:
+        ...
+
+class UpsertWebhookWorkerRequest(_message.Message):
+    __slots__ = ('worker',)
+    WORKER_FIELD_NUMBER: _ClassVar[int]
+    worker: WebhookWorker
+
+    def __init__(self, worker: _Optional[_Union[WebhookWorker, _Mapping]]=...) -> None:
+        ...
+
+class UpsertWebhookWorkerResponse(_message.Message):
+    __slots__ = ()
+
+    def __init__(self) -> None:
+        ...
+
+class PauseWebhookWorkerRequest(_message.Message):
+    __slots__ = ('name',)
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    name: str
+
+    def __init__(self, name: _Optional[str]=...) -> None:
+        ...
+
+class PauseWebhookWorkerResponse(_message.Message):
+    __slots__ = ()
+
+    def __init__(self) -> None:
+        ...
+
+class ResumeWebhookWorkerRequest(_message.Message):
+    __slots__ = ('name',)
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    name: str
+
+    def __init__(self, name: _Optional[str]=...) -> None:
+        ...
+
+class ResumeWebhookWorkerResponse(_message.Message):
+    __slots__ = ()
+
+    def __init__(self) -> None:
+        ...
+
+class DeleteWebhookWorkerRequest(_message.Message):
+    __slots__ = ('name',)
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    name: str
+
+    def __init__(self, name: _Optional[str]=...) -> None:
+        ...
+
+class DeleteWebhookWorkerResponse(_message.Message):
+    __slots__ = ()
+
+    def __init__(self) -> None:
         ...

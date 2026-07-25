@@ -115,6 +115,11 @@ func (e *Engine) Start(ctx context.Context) error {
 		return fmt.Errorf("engine config: discovery provider is required")
 	}
 
+	remotingOptions := []remote.Option{}
+	if e.config.TLS != nil {
+		remotingOptions = append(remotingOptions, remote.WithTLS(e.config.TLS))
+	}
+
 	options := []goakt.Option{
 		goakt.WithLogger(goaktlog.NewSlogFrom(e.runtime.Logger(), goaktlog.InfoLevel)),
 		goakt.WithExtensions(e.runtime),
@@ -122,7 +127,7 @@ func (e *Engine) Start(ctx context.Context) error {
 		// meter provider; the server installs a Prometheus-backed provider,
 		// and without one this is a no-op.
 		goakt.WithMetrics(),
-		goakt.WithRemote(remote.NewConfig(e.config.BindAddr, e.config.RemotingPort)),
+		goakt.WithRemote(remote.NewConfig(e.config.BindAddr, e.config.RemotingPort, remotingOptions...)),
 		goakt.WithCluster(goakt.NewClusterConfig().
 			WithDiscovery(e.config.Provider).
 			WithDiscoveryPort(e.config.DiscoveryPort).
@@ -142,10 +147,6 @@ func (e *Engine) Start(ctx context.Context) error {
 		// Bound the cluster pub/sub dedup window used by the lifecycle event
 		// stream, so its memory stays flat under sustained publishing.
 		goakt.WithMessageRetention(eventDedupWindow),
-	}
-
-	if e.config.TLS != nil {
-		options = append(options, goakt.WithTLS(e.config.TLS))
 	}
 
 	system, err := goakt.NewActorSystem(e.config.Name, options...)

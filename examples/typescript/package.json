@@ -5,7 +5,7 @@
   "description": "Production-shaped email-delivery service built on the Conveyor TypeScript SDK.",
   "license": "Apache-2.0",
   "type": "module",
-  "packageManager": "pnpm@11.10.0",
+  "packageManager": "pnpm@11.17.0",
   "engines": {
     "node": ">=20"
   },
@@ -19,8 +19,8 @@
     "@conveyorq/conveyor": "file:../../sdks/typescript"
   },
   "devDependencies": {
-    "@types/node": "^26.1.0",
-    "tsx": "^4.23.0",
-    "typescript": "^6.0.3"
+    "@types/node": "^26.1.1",
+    "tsx": "^4.23.1",
+    "typescript": "^7.0.2"
   }
 }

@@ -12,5 +12,5 @@ plugins:
     out: sdks/python/src/conveyorq/gen
   - remote: buf.build/protocolbuffers/pyi:v35.1
     out: sdks/python/src/conveyorq/gen
-  - remote: buf.build/grpc/python:v1.82.1
+  - remote: buf.build/grpc/python:v1.83.0
     out: sdks/python/src/conveyorq/gen
