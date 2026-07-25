@@ -44,7 +44,11 @@ func TestMetricsRecordsExecutionTiming(t *testing.T) {
 	require.NoError(t, err)
 
 	// The histograms are synchronous instruments — they appear only after the
-	// task has been dispatched and completed.
+	// task has been dispatched and completed. The enqueue races the worker's
+	// session registration: when it lands first the wake-up has no session to
+	// dispatch to, and the task waits for the reaper's pending sweep, one
+	// defaultReapInterval (15s) later. The deadline must clear that recovery
+	// window, matching the tracing end-to-end test.
 	require.Eventually(t, func() bool {
 		resp, scrapeErr := http.Get(fmt.Sprintf("http://%s%s", node.MetricsAddr(), metricsPath))
 		if scrapeErr != nil {
@@ -55,7 +59,7 @@ func TestMetricsRecordsExecutionTiming(t *testing.T) {
 		body, _ := io.ReadAll(resp.Body)
 
 		return strings.Contains(string(body), "conveyor_process_duration_seconds")
-	}, 15*time.Second, 100*time.Millisecond, "process-duration histogram must appear after a task runs")
+	}, 30*time.Second, 100*time.Millisecond, "process-duration histogram must appear after a task runs")
 
 	require.Contains(t, scrapeMetrics(t, node), "conveyor_queue_latency_seconds")
 }
