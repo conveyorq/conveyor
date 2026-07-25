@@ -6,7 +6,6 @@ package actors
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -14,7 +13,6 @@ import (
 
 	goakt "github.com/tochemey/goakt/v4/actor"
 	"github.com/tochemey/goakt/v4/discovery"
-	gerrors "github.com/tochemey/goakt/v4/errors"
 	goaktlog "github.com/tochemey/goakt/v4/log"
 	"github.com/tochemey/goakt/v4/remote"
 	gtls "github.com/tochemey/goakt/v4/tls"
@@ -237,17 +235,16 @@ func (e *Engine) EventsEnabled() bool {
 	return e.runtime.Settings().EventsEnabled
 }
 
-// spawnSingleton spawns a cluster singleton, tolerating the already-exists
-// outcome. Every node calls this with the same name on start; the leader
-// hosts the singleton and the rest see ErrSingletonAlreadyExists, which is
-// the desired state — exactly one instance runs cluster-wide. GoAkt's
-// relocator re-spawns it on a survivor when the host node is lost.
+// spawnSingleton spawns a cluster singleton, discarding the PID the engine has
+// no use for. Every node calls this with the same name on start; the leader
+// hosts the singleton and the rest resolve the existing one, so exactly one
+// instance runs cluster-wide. GoAkt's relocator re-spawns it on a survivor when
+// the host node is lost. A name already bound to a different actor is a genuine
+// misconfiguration and surfaces as an error.
 func spawnSingleton(ctx context.Context, system goakt.ActorSystem, name string, actor goakt.Actor) error {
-	if _, err := system.SpawnSingleton(ctx, name, actor); err != nil && !errors.Is(err, gerrors.ErrSingletonAlreadyExists) {
-		return err
-	}
+	_, err := system.SpawnSingleton(ctx, name, actor)
 
-	return nil
+	return err
 }
 
 // Stop shuts the actor system down. Worker sessions must be drained
