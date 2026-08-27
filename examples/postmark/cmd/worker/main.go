@@ -85,8 +85,14 @@ func main() {
 // toggleOutageOnSignal flips the simulated provider between healthy and down
 // each time the process receives SIGUSR1, until ctx is canceled.
 func toggleOutageOnSignal(ctx context.Context, provider *postmark.Provider, logger *slog.Logger) {
+	if len(outageToggleSignals) == 0 {
+		// No portable user-defined signal on this platform (e.g. Windows).
+		logger.Info("manual outage toggle unavailable on this platform; use --outage-every/--outage-for")
+		return
+	}
+
 	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, syscall.SIGUSR1)
+	signal.Notify(signals, outageToggleSignals...)
 
 	defer signal.Stop(signals)
 
