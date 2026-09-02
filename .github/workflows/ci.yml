@@ -143,7 +143,7 @@ jobs:
         if: matrix.os == 'linux'
         uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.12.2
+          version: v2.13.2
           args: --timeout 10m --config .golangci.yml
       - name: License headers
         if: matrix.os == 'linux'
