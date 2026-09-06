@@ -5,9 +5,9 @@
 #   docker build -f examples/typescript/Dockerfile -t conveyor-email-worker .
 #
 # docker-compose.yml builds it for you.
-FROM node:22-alpine
+FROM node:24-alpine
 
-# Enable pnpm via Corepack (bundled with Node 22). The npm bundled with the
+# Enable pnpm via Corepack (bundled with Node 24). The npm bundled with the
 # base image is unused here; drop it so its vulnerable transitive dependencies
 # (e.g. undici, CVE-2026-12151) leave the image.
 RUN corepack enable \

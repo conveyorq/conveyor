@@ -5,7 +5,7 @@ and submit changes.
 
 ## Prerequisites
 
-- **Go 1.26+**, the toolchain for the server, SDK, and CLI.
+- **Go 1.27+**, the toolchain for the server, SDK, and CLI.
 - **Docker**, required for several workflows: the lint/proto tools run in a
   pinned image, the Postgres tests start a database through testcontainers, and
   the end-to-end test builds the container image.

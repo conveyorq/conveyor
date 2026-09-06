@@ -8,7 +8,7 @@
 # Build from the repository root so the vendor tree is in context:
 #   docker build -f examples/postmark/deploy/Dockerfile -t postmark:e2e .
 
-FROM golang:1.26.4-alpine AS build
+FROM golang:1.27.1-alpine AS build
 
 WORKDIR /src
 

@@ -211,7 +211,7 @@ sdk-ts-test: ## Run the TypeScript SDK unit tests (needs Node)
 
 sdk-gen: sdk-ts-gen sdk-py-gen ## Regenerate both SDKs' protobuf stubs from the protos
 
-# Generation runs buf with the protobuf-35-pinned remote plugins, then rewrites
+# Generation runs buf with the protobuf-36-pinned remote plugins, then rewrites
 # the generated cross-module imports to package-relative form (protoletariat) and
 # restores the gen tree's __init__.py package markers (buf's clean step drops
 # them). Needs Python + uv. Protoletariat caps protobuf at <6 while the SDK
