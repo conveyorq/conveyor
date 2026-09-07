@@ -2,6 +2,32 @@
 
 All notable changes to Conveyor are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow [Semantic Versioning](https://semver.org/).
 
+## [v0.4.1] - 2026-09-07
+
+A maintenance release: a worker-session teardown fix, a replicated cluster placement registry, a repaired release pipeline, regenerated SDK stubs, and a broad dependency refresh. The wire protocol, the Go SDK, and the CLI are unchanged.
+
+### Fixed
+
+- **Worker session teardown race**: when a worker disconnected or a node drained, the session's dispatch path could still write a frame to a stream the RPC handler had already released. A frame sent after the handler returns is now refused and handled like any broken stream: the task is released for immediate redelivery to another worker instead of touching a dead stream.
+- **Image and chart publish on every release**: a release cut by the changelog workflow with the default `GITHUB_TOKEN` never started the tag-triggered publish (GitHub suppresses recursive workflow runs), so the `:X.Y.Z` image and the Helm chart had to be pushed by hand or with a personal access token. The changelog workflow now calls the release workflow directly once the tag is cut, so both publish in the same run with no extra secret. The chart job also gained the `id-token` permission that cosign keyless signing needs, a pinned `cosign-installer@v3`, and a guard so it is no longer silently skipped on the release path.
+- **SDK stubs missing the webhook RPCs**: the committed TypeScript and Python protobuf stubs were not regenerated for v0.4.0, so `WebhookService` (`Heartbeat`, `ReportResult`) and the `AdminService` webhook-worker RPCs (`ListWebhookWorkers`, `UpsertWebhookWorker`, `PauseWebhookWorker`, `ResumeWebhookWorker`, `DeleteWebhookWorker`) were absent from both gen trees. They are regenerated and back in sync with the protos.
+- **Postmark example builds on Windows**: the worker's manual outage toggle listened for `SIGUSR1`, which does not exist on Windows and broke the cross-platform build. The signal is now chosen per platform; on Windows the manual toggle is unavailable and `--outage-every`/`--outage-for` drive outages on a schedule instead.
+
+### Changed
+
+- **Cluster placement registry is now replicated**: the cluster keeps a backup copy of its internal placement registry (the record of which node hosts each queue and worker session) on a second node, so crash recovery derived from that registry stays complete when a node is lost. For the backup to have somewhere to live through a node loss or a rolling restart, **three nodes is the production floor**. A two-node cluster still forms and runs, but during a node loss it is one further failure away from losing placement records; a single node remains fine for development and the quickstart. The Helm chart already defaults `replicaCount` to 3, and `docs/high-availability.md`, `docs/operations.md`, and the chart README now explain why.
+- **Helm chart version is tag-driven**: `Chart.yaml` carries a `0.0.0` sentinel for local `helm package` and `helm lint` runs; the release job pins both `version` and `appVersion` to the release tag and fails before pushing if the packaged metadata does not match, so a published chart always points at an image that exists.
+- **Go 1.27 is the minimum toolchain** for the server, Go SDK, and CLI (`go.mod` declares `go 1.27.0`; the container images build on `golang:1.27.1`).
+- The Postmark example's Kubernetes manifests now set CPU and memory requests and limits on the worker and producer.
+
+### Dependencies
+
+- **Go**: GoAkt v4.3.0 to v4.5.4; OpenTelemetry v1.44.0 to v1.46.0 with the Prometheus exporter at v0.68.0; `prometheus/client_golang` v1.24.1; `testcontainers-go` v0.44.0; `testify` v1.12.1; `koanf` and `ulid` patch releases; `google.golang.org/protobuf` on the v1.36.12 stable release instead of a pre-release pin.
+- **TypeScript SDK**: `@bufbuild/protobuf` and `protoc-gen-es` ^2.14.1, Vitest 5, and pnpm 12.3.4 as the `packageManager` pin shared by the SDK, the dashboard, and the example. The TypeScript example moves to TypeScript 7 and a Node 24 base image.
+- **Python SDK**: runtime floors raised to `grpcio>=1.83`, `protobuf>=7.36.1,<8`, and `cryptography>=50`; stubs regenerated with the protobuf 36.1 and grpc 1.83.1 plugins so the generated code matches the supported runtime.
+- **Dashboard**: React 19.2.8, Vite 8.2.2, Vitest 5, jsdom 30, Tailwind 4.3.3, and Testing Library jest-dom 7.
+- **Toolchain and CI**: golangci-lint v2.13.2, buf v1.72.0, `protoc-gen-go` v1.36.12; `setup-go@v7`, `setup-node@v7`, `setup-uv` v10.0.1, and `actions/stale@v11`.
+
 ## [v0.4.0] - 2026-07-10
 
 ### Features
