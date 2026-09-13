@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -20,9 +21,10 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/conveyorq/conveyor/internal/broker"
 	"github.com/conveyorq/conveyor/internal/clock"
 	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
+
+	"github.com/conveyorq/conveyor/internal/broker"
 )
 
 // Factory builds a fresh, empty broker reading time from the given clock.
@@ -71,6 +73,9 @@ func Run(t *testing.T, factory Factory) {
 		{"ReapArchivesExhaustedRetries", testReapArchivesExhaustedRetries},
 		{"PromoteScheduled", testPromoteScheduled},
 		{"PurgeCompletedHonorsRetention", testPurgeCompletedHonorsRetention},
+		{"AckBatchCompletesMembersAndSkipsLostLeases", testAckBatchCompletesMembersAndSkipsLostLeases},
+		{"PurgeArchivedHonorsArchiveRetention", testPurgeArchivedHonorsArchiveRetention},
+		{"PurgeDropsStaleEdgesOfTerminalDependents", testPurgeDropsStaleEdgesOfTerminalDependents},
 		{"ExpiredTaskNotLeasedAndArchived", testExpiredTaskNotLeasedAndArchived},
 		{"PendingCount", testPendingCount},
 		{"UniqueTasks", testUniqueTasks},
@@ -101,6 +106,7 @@ func Run(t *testing.T, factory Factory) {
 		{"DependencyFailurePolicyBlock", testDependencyFailurePolicyBlock},
 		{"DependencyFailurePolicyContinue", testDependencyFailurePolicyContinue},
 		{"DependencyFailureCascadeCancels", testDependencyFailureCascadeCancels},
+		{"DeleteDependencyRefused", testDeleteDependencyRefused},
 		{"PromoteReadyDependentsSafetyNet", testPromoteReadyDependentsSafetyNet},
 		{"ConcurrentFanInResolves", testConcurrentFanInResolves},
 		{"DependencyCycleStaysBlocked", testDependencyCycleStaysBlocked},
@@ -820,7 +826,7 @@ func testPurgeCompletedHonorsRetention(t *testing.T, b broker.Broker, fake *cloc
 		}
 	}
 
-	purged, err := b.PurgeCompleted(context.Background(), batchLimit)
+	purged, err := b.PurgeTerminal(context.Background(), 0, batchLimit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -832,7 +838,7 @@ func testPurgeCompletedHonorsRetention(t *testing.T, b broker.Broker, fake *cloc
 	mustState(t, b, "task-002", conveyorv1.TaskState_TASK_STATE_COMPLETED)
 	fake.Advance(time.Hour)
 
-	purged, err = b.PurgeCompleted(context.Background(), batchLimit)
+	purged, err = b.PurgeTerminal(context.Background(), 0, batchLimit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -843,6 +849,136 @@ func testPurgeCompletedHonorsRetention(t *testing.T, b broker.Broker, fake *cloc
 
 	if _, _, err := b.GetTask(context.Background(), "task-002"); !errors.Is(err, broker.ErrTaskNotFound) {
 		t.Fatalf("purged task still present: %v", err)
+	}
+}
+
+// testAckBatchCompletesMembersAndSkipsLostLeases proves a batch ack completes
+// every member held under the caller's lease in one call, reports exactly those
+// ids, and skips (rather than fails on) a member whose lease is wrong or whose
+// task is unknown, so the caller can tell a lost lease from a completion.
+func testAckBatchCompletesMembersAndSkipsLostLeases(t *testing.T, b broker.Broker, _ *clock.Fake) {
+	mustEnqueue(t, b, newTask("task-001"))
+	mustEnqueue(t, b, newTask("task-002"))
+	mustEnqueue(t, b, newTask("task-003"))
+	mustLease(t, b, queueName, 3, "lease-1")
+
+	acked, err := b.AckBatch(context.Background(), []broker.AckItem{
+		{TaskID: "task-001", LeaseID: "lease-1", Result: []byte("one")},
+		{TaskID: "task-003", LeaseID: "lease-1"},
+		{TaskID: "task-002", LeaseID: "wrong-lease"},
+		{TaskID: "absent", LeaseID: "lease-1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	slices.Sort(acked)
+
+	if want := []string{"task-001", "task-003"}; !slices.Equal(acked, want) {
+		t.Fatalf("AckBatch acked %v, want %v", acked, want)
+	}
+
+	mustState(t, b, "task-001", conveyorv1.TaskState_TASK_STATE_COMPLETED)
+	mustState(t, b, "task-003", conveyorv1.TaskState_TASK_STATE_COMPLETED)
+	mustState(t, b, "task-002", conveyorv1.TaskState_TASK_STATE_ACTIVE)
+
+	acked, err = b.AckBatch(context.Background(), nil)
+	if err != nil || len(acked) != 0 {
+		t.Fatalf("AckBatch(empty) = %v, %v; want no ids and no error", acked, err)
+	}
+}
+
+// testPurgeArchivedHonorsArchiveRetention proves archived and canceled rows
+// follow the server-wide archive retention rather than the per-task one: a zero
+// retention keeps them forever, and a positive one purges them only once it has
+// lapsed since their terminal transition.
+func testPurgeArchivedHonorsArchiveRetention(t *testing.T, b broker.Broker, fake *clock.Fake) {
+	mustEnqueue(t, b, newTask("task-001"))
+	mustEnqueue(t, b, newTask("task-002", withProcessAt(start.Add(time.Hour))))
+
+	mustLease(t, b, queueName, 1, "lease-1")
+
+	if err := b.Archive(context.Background(), "task-001", "lease-1", "boom"); err != nil {
+		t.Fatalf("Archive(task-001): %v", err)
+	}
+
+	if err := b.CancelTask(context.Background(), "task-002"); err != nil {
+		t.Fatalf("CancelTask(task-002): %v", err)
+	}
+
+	purged, err := b.PurgeTerminal(context.Background(), 0, batchLimit)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if purged != 0 {
+		t.Fatalf("purged %d with archive retention disabled, want 0", purged)
+	}
+
+	fake.Advance(30 * time.Minute)
+
+	purged, err = b.PurgeTerminal(context.Background(), time.Hour, batchLimit)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if purged != 0 {
+		t.Fatalf("purged %d before the archive retention lapsed, want 0", purged)
+	}
+
+	mustState(t, b, "task-001", conveyorv1.TaskState_TASK_STATE_ARCHIVED)
+	mustState(t, b, "task-002", conveyorv1.TaskState_TASK_STATE_CANCELED)
+	fake.Advance(30 * time.Minute)
+
+	purged, err = b.PurgeTerminal(context.Background(), time.Hour, batchLimit)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if purged != 2 {
+		t.Fatalf("purged %d after the archive retention lapsed, want 2", purged)
+	}
+
+	for _, id := range []string{"task-001", "task-002"} {
+		if _, _, err := b.GetTask(context.Background(), id); !errors.Is(err, broker.ErrTaskNotFound) {
+			t.Fatalf("purged %s still present: %v", id, err)
+		}
+	}
+}
+
+// testPurgeDropsStaleEdgesOfTerminalDependents proves a dependency is not
+// pinned against purge by an edge whose dependent has itself gone terminal: a
+// blocked dependent that expires is archived with its edge left behind, and the
+// next purge drops that stale edge and removes the completed dependency.
+func testPurgeDropsStaleEdgesOfTerminalDependents(t *testing.T, b broker.Broker, fake *clock.Fake) {
+	mustEnqueue(t, b, newTask("task-001"))
+	mustEnqueue(t, b, newTask("task-002", withDependsOn(dependsOn("task-001")), withExpiresAt(start.Add(time.Hour))))
+	mustState(t, b, "task-002", conveyorv1.TaskState_TASK_STATE_BLOCKED)
+
+	fake.Advance(time.Hour)
+
+	if _, err := b.ArchiveExpired(context.Background(), batchLimit); err != nil {
+		t.Fatal(err)
+	}
+
+	mustState(t, b, "task-002", conveyorv1.TaskState_TASK_STATE_ARCHIVED)
+
+	leased := mustLease(t, b, queueName, 1, "lease-1")
+	if err := b.Ack(context.Background(), leased[0].GetId(), "lease-1", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	purged, err := b.PurgeTerminal(context.Background(), 0, batchLimit)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if purged != 1 {
+		t.Fatalf("purged %d, want the completed dependency freed from its stale edge", purged)
+	}
+
+	if _, _, err := b.GetTask(context.Background(), "task-001"); !errors.Is(err, broker.ErrTaskNotFound) {
+		t.Fatalf("dependency still present after its stale edge was dropped: %v", err)
 	}
 }
 
@@ -984,6 +1120,38 @@ func testDeleteTask(t *testing.T, b broker.Broker, _ *clock.Fake) {
 
 	if _, _, err := b.GetTask(context.Background(), "task-002"); !errors.Is(err, broker.ErrTaskNotFound) {
 		t.Fatalf("deleted task still present: %v", err)
+	}
+}
+
+// testDeleteDependencyRefused verifies DeleteTask refuses to remove a task other
+// tasks still depend on, so a dependent is never stranded blocked on an edge
+// whose dependency no longer exists. Once the dependency resolves and its edge
+// drains, the task deletes normally.
+func testDeleteDependencyRefused(t *testing.T, b broker.Broker, _ *clock.Fake) {
+	mustEnqueue(t, b, newTask("task-001"))
+	mustEnqueue(t, b, newTask("task-002", withDependsOn(dependsOn("task-001"))))
+
+	mustState(t, b, "task-002", conveyorv1.TaskState_TASK_STATE_BLOCKED)
+
+	// task-001 is depended on: deleting it would orphan task-002.
+	if err := b.DeleteTask(context.Background(), "task-001"); !errors.Is(err, broker.ErrTaskHasDependents) {
+		t.Fatalf("delete depended-on task: err = %v, want ErrTaskHasDependents", err)
+	}
+
+	// The refusal left the dependency in place and the dependent still resolvable.
+	if _, _, err := b.GetTask(context.Background(), "task-001"); err != nil {
+		t.Fatalf("refused delete removed the task anyway: %v", err)
+	}
+
+	mustState(t, b, "task-002", conveyorv1.TaskState_TASK_STATE_BLOCKED)
+
+	// Completing the dependency drains the edge and promotes the dependent.
+	completeOnly(t, b, "task-001")
+	mustState(t, b, "task-002", conveyorv1.TaskState_TASK_STATE_PENDING)
+
+	// With no dependent left, the resolved dependency deletes normally.
+	if err := b.DeleteTask(context.Background(), "task-001"); err != nil {
+		t.Fatalf("delete after dependents cleared: %v", err)
 	}
 }
 
@@ -1518,8 +1686,12 @@ func testInfo(t *testing.T, b broker.Broker, _ *clock.Fake) {
 		t.Fatal(err)
 	}
 
-	if info.Metrics["tasks"] != "1" {
-		t.Fatalf("Info tasks = %q after one enqueue, want 1", info.Metrics["tasks"])
+	// The task count is display data, not a contract: the Postgres broker
+	// reports the planner's estimate (constant time on a large task log) rather
+	// than an exact count, so only its shape is asserted.
+	tasks, err := strconv.Atoi(info.Metrics["tasks"])
+	if err != nil || tasks < 0 {
+		t.Fatalf("Info tasks = %q, want a non-negative integer", info.Metrics["tasks"])
 	}
 }
 

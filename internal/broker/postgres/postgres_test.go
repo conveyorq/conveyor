@@ -394,8 +394,32 @@ func TestWaitingMutationsExplainMiss(t *testing.T) {
 func TestDeleteTaskPaths(t *testing.T) {
 	ctx := context.Background()
 
+	// noDependents is the has-dependents pre-check answering "no dependents", so
+	// the delete proceeds. It runs before every delete path below.
+	noDependents := func() *pgxmock.Rows {
+		return pgxmock.NewRows([]string{"exists"}).AddRow(false)
+	}
+
+	t.Run("check dependents error", func(t *testing.T) {
+		b, mock := newMockBroker(t)
+		mock.ExpectQuery("").WithArgs(anyArgs(1)...).WillReturnError(errBoom)
+
+		require.ErrorIs(t, b.DeleteTask(ctx, "t"), errBoom)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("has dependents", func(t *testing.T) {
+		b, mock := newMockBroker(t)
+		mock.ExpectQuery("").WithArgs(anyArgs(1)...).WillReturnRows(
+			pgxmock.NewRows([]string{"exists"}).AddRow(true))
+
+		require.ErrorIs(t, b.DeleteTask(ctx, "t"), broker.ErrTaskHasDependents)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
 	t.Run("exec error", func(t *testing.T) {
 		b, mock := newMockBroker(t)
+		mock.ExpectQuery("").WithArgs(anyArgs(1)...).WillReturnRows(noDependents())
 		mock.ExpectExec("").WithArgs(anyArgs(1)...).WillReturnError(errBoom)
 
 		require.ErrorIs(t, b.DeleteTask(ctx, "t"), errBoom)
@@ -404,6 +428,7 @@ func TestDeleteTaskPaths(t *testing.T) {
 
 	t.Run("missing task", func(t *testing.T) {
 		b, mock := newMockBroker(t)
+		mock.ExpectQuery("").WithArgs(anyArgs(1)...).WillReturnRows(noDependents())
 		mock.ExpectExec("").WithArgs(anyArgs(1)...).WillReturnResult(pgxmock.NewResult("DELETE", 0))
 		mock.ExpectQuery("").WithArgs(anyArgs(1)...).WillReturnError(pgx.ErrNoRows)
 
@@ -413,6 +438,7 @@ func TestDeleteTaskPaths(t *testing.T) {
 
 	t.Run("drop edges error", func(t *testing.T) {
 		b, mock := newMockBroker(t)
+		mock.ExpectQuery("").WithArgs(anyArgs(1)...).WillReturnRows(noDependents())
 		mock.ExpectExec("").WithArgs(anyArgs(1)...).WillReturnResult(pgxmock.NewResult("DELETE", 1))
 		mock.ExpectExec("").WithArgs(anyArgs(1)...).WillReturnError(errBoom)
 
@@ -793,4 +819,113 @@ func BenchmarkLease100(b *testing.B) {
 			b.Fatalf("leased %d, want %d", len(leased), batchSize)
 		}
 	}
+}
+
+func TestPoolConfigAppliesSettings(t *testing.T) {
+	// The DSN's own pool parameter is the baseline a zero setting leaves alone
+	// and a set one overrides.
+	const dsn = "postgres://localhost:5432/conveyor?pool_max_conns=3"
+
+	untouched, err := poolConfig(dsn, PoolSettings{})
+	require.NoError(t, err)
+	require.EqualValues(t, 3, untouched.MaxConns, "a zero setting keeps the DSN's pool_max_conns")
+	require.NotContains(t, untouched.ConnConfig.RuntimeParams, statementTimeoutParam, "no statement timeout is set unless asked")
+
+	tuned, err := poolConfig(dsn, PoolSettings{
+		MaxConns:         20,
+		MinConns:         2,
+		ConnectTimeout:   5 * time.Second,
+		StatementTimeout: 30 * time.Second,
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 20, tuned.MaxConns)
+	require.EqualValues(t, 2, tuned.MinConns)
+	require.Equal(t, 5*time.Second, tuned.ConnConfig.ConnectTimeout)
+	require.Equal(t, "30000", tuned.ConnConfig.RuntimeParams[statementTimeoutParam], "statement_timeout is sent in milliseconds")
+
+	_, err = poolConfig("://not-a-dsn", PoolSettings{})
+	require.Error(t, err)
+}
+
+// TestPurgeTerminalPaths drives every statement of the purge pass through a
+// mocked pool: the lapsed-claim release, the stale-edge drop, the completed
+// purge, and the archive purge that only runs with a positive retention.
+func TestPurgeTerminalPaths(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("release claims error", func(t *testing.T) {
+		b, mock := newMockBroker(t)
+		mock.ExpectExec("").WithArgs(anyArgs(1)...).WillReturnError(errBoom)
+
+		_, err := b.PurgeTerminal(ctx, time.Hour, 10)
+		require.ErrorIs(t, err, errBoom)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("drop stale edges error", func(t *testing.T) {
+		b, mock := newMockBroker(t)
+		mock.ExpectExec("").WithArgs(anyArgs(1)...).WillReturnResult(pgxmock.NewResult("UPDATE", 0))
+		mock.ExpectExec("").WillReturnError(errBoom)
+
+		_, err := b.PurgeTerminal(ctx, time.Hour, 10)
+		require.ErrorIs(t, err, errBoom)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("purge completed error", func(t *testing.T) {
+		b, mock := newMockBroker(t)
+		mock.ExpectExec("").WithArgs(anyArgs(1)...).WillReturnResult(pgxmock.NewResult("UPDATE", 0))
+		mock.ExpectExec("").WillReturnResult(pgxmock.NewResult("DELETE", 0))
+		mock.ExpectExec("").WithArgs(anyArgs(2)...).WillReturnError(errBoom)
+
+		_, err := b.PurgeTerminal(ctx, time.Hour, 10)
+		require.ErrorIs(t, err, errBoom)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("zero archive retention skips the archive purge", func(t *testing.T) {
+		b, mock := newMockBroker(t)
+		mock.ExpectExec("").WithArgs(anyArgs(1)...).WillReturnResult(pgxmock.NewResult("UPDATE", 0))
+		mock.ExpectExec("").WillReturnResult(pgxmock.NewResult("DELETE", 1))
+		mock.ExpectExec("").WithArgs(anyArgs(2)...).WillReturnResult(pgxmock.NewResult("DELETE", 4))
+
+		purged, err := b.PurgeTerminal(ctx, 0, 10)
+		require.NoError(t, err)
+		require.Equal(t, 4, purged, "only completed rows count; no archive statement runs")
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("purge archived error", func(t *testing.T) {
+		b, mock := newMockBroker(t)
+		mock.ExpectExec("").WithArgs(anyArgs(1)...).WillReturnResult(pgxmock.NewResult("UPDATE", 0))
+		mock.ExpectExec("").WillReturnResult(pgxmock.NewResult("DELETE", 0))
+		mock.ExpectExec("").WithArgs(anyArgs(2)...).WillReturnResult(pgxmock.NewResult("DELETE", 1))
+		mock.ExpectExec("").WithArgs(anyArgs(2)...).WillReturnError(errBoom)
+
+		_, err := b.PurgeTerminal(ctx, time.Hour, 10)
+		require.ErrorIs(t, err, errBoom)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("sums completed and archived rows", func(t *testing.T) {
+		b, mock := newMockBroker(t)
+		mock.ExpectExec("").WithArgs(anyArgs(1)...).WillReturnResult(pgxmock.NewResult("UPDATE", 0))
+		mock.ExpectExec("").WillReturnResult(pgxmock.NewResult("DELETE", 0))
+		mock.ExpectExec("").WithArgs(anyArgs(2)...).WillReturnResult(pgxmock.NewResult("DELETE", 4))
+		mock.ExpectExec("").WithArgs(anyArgs(2)...).WillReturnResult(pgxmock.NewResult("DELETE", 3))
+
+		purged, err := b.PurgeTerminal(ctx, time.Hour, 10)
+		require.NoError(t, err)
+		require.Equal(t, 7, purged)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestAckBatchQueryError(t *testing.T) {
+	b, mock := newMockBroker(t)
+	mock.ExpectQuery("").WithArgs(anyArgs(4)...).WillReturnError(errBoom)
+
+	_, err := b.AckBatch(context.Background(), []broker.AckItem{{TaskID: "t", LeaseID: "l"}})
+	require.ErrorIs(t, err, errBoom)
+	require.NoError(t, mock.ExpectationsWereMet())
 }

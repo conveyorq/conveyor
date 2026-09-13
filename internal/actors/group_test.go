@@ -7,6 +7,7 @@ package actors
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -380,6 +381,108 @@ func TestGatewayBatchDispatchSendFailureReleases(t *testing.T) {
 	for _, id := range []string{"bb-001", "bb-002"} {
 		requireTaskState(t, engine, id, conveyorv1.TaskState_TASK_STATE_PENDING)
 	}
+}
+
+// failRecorder wraps a broker and captures the process_at each Fail schedules,
+// so a test can assert a retried task's next attempt is delayed by its backoff
+// rather than scheduled immediately.
+type failRecorder struct {
+	broker.Broker
+
+	// mutex guards processAt.
+	mutex sync.Mutex
+	// processAt maps a task id to the process_at of its most recent Fail.
+	processAt map[string]time.Time
+}
+
+// newFailRecorder wraps inner, recording every Fail's process_at.
+func newFailRecorder(inner broker.Broker) *failRecorder {
+	return &failRecorder{Broker: inner, processAt: make(map[string]time.Time)}
+}
+
+// Fail records the scheduled process_at, then delegates.
+func (r *failRecorder) Fail(ctx context.Context, taskID, leaseID, errMsg string, processAt time.Time) error {
+	r.mutex.Lock()
+	r.processAt[taskID] = processAt
+	r.mutex.Unlock()
+
+	return r.Broker.Fail(ctx, taskID, leaseID, errMsg, processAt)
+}
+
+// failedAt returns the process_at of a task's most recent Fail, if any.
+func (r *failRecorder) failedAt(taskID string) (time.Time, bool) {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+
+	at, ok := r.processAt[taskID]
+
+	return at, ok
+}
+
+// TestGatewayBatchRetryHonorsBackoff proves a failing batch member is
+// rescheduled with its retry backoff, not immediately: dispatchBatch must carry
+// the per-task strategy the same way dispatch does. A member with a fixed one
+// hour backoff that fails is scheduled at least one hour out; without the
+// strategy the delay would be zero and the member would retry instantly.
+func TestGatewayBatchRetryHonorsBackoff(t *testing.T) {
+	const (
+		queue    = "manual-batch-backoff"
+		taskType = "test:batch"
+		leaseID  = "batch-lease-backoff"
+		base     = time.Hour
+	)
+
+	ctx := context.Background()
+	taskLog := newFailRecorder(memory.New(clock.System()))
+	pauseQueue(t, taskLog, queue)
+	engine := startEngine(t, taskLog)
+	recorder := newFrameRecorder()
+
+	handle, err := engine.SpawnGateway(ctx, GatewaySession{
+		SessionID:   "session-batch-backoff",
+		Queues:      []string{queue},
+		Concurrency: 4,
+		BatchTypes:  []string{taskType},
+	}, recorder)
+	require.NoError(t, err)
+
+	t.Cleanup(func() { _ = handle.Stop(ctx) })
+
+	// A fixed backoff removes jitter, so the retry delay is exactly base.
+	member := groupedTask("bo-001", queue, taskType, "G")
+	member.Options.RetryPolicy = &conveyorv1.RetryPolicy{
+		Strategy: conveyorv1.RetryStrategy_RETRY_STRATEGY_FIXED,
+		Base:     durationpb.New(base),
+		Max:      durationpb.New(base),
+	}
+	require.NoError(t, taskLog.Enqueue(ctx, member))
+
+	batch, err := taskLog.LeaseGroup(ctx, queue, "G", 10, 30*time.Second, leaseID)
+	require.NoError(t, err)
+	require.Len(t, batch, 1)
+
+	expiresAt := timestamppb.New(engine.runtime.Clock().Now().Add(30 * time.Second))
+	require.NoError(t, handle.Tell(ctx, &conveyorv1.ExecuteBatch{
+		Tasks: batch, LeaseId: leaseID, LeaseExpiresAt: expiresAt, Group: "G",
+	}))
+
+	require.Eventually(t, func() bool {
+		frame := batchDispatchFor(recorder, "G")
+
+		return frame != nil && len(frame.GetTasks()) == 1
+	}, 2*time.Second, 20*time.Millisecond, "the batch is delivered as one BatchDispatch")
+
+	before := engine.runtime.Clock().Now()
+	require.NoError(t, handle.Tell(ctx, &conveyorv1.BatchResult{Results: []*conveyorv1.Result{
+		{TaskId: "bo-001", Outcome: conveyorv1.TaskOutcome_TASK_OUTCOME_RETRY, ErrorMsg: "boom"},
+	}}))
+
+	requireTaskState(t, engine, "bo-001", conveyorv1.TaskState_TASK_STATE_RETRY)
+
+	processAt, ok := taskLog.failedAt("bo-001")
+	require.True(t, ok, "the failing batch member is scheduled through Fail")
+	require.GreaterOrEqual(t, processAt.Sub(before), base,
+		"a batch member's retry honors its backoff instead of retrying immediately")
 }
 
 // TestGatewayBatchReleaseBrokerError covers the release-failure branch of

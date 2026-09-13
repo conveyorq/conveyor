@@ -17,7 +17,10 @@ import (
 )
 
 func TestAuthorizeHeaderHandling(t *testing.T) {
-	interceptor, ok := NewAuthInterceptor([]string{"alpha", "beta"}).(*authInterceptor)
+	interceptor, ok := NewAuthInterceptor([]ScopedToken{
+		{Token: "alpha", Scopes: AllScopes()},
+		{Token: "beta", Scopes: AllScopes()},
+	}).(*authInterceptor)
 	require.True(t, ok)
 
 	cases := map[string]struct {
@@ -40,7 +43,7 @@ func TestAuthorizeHeaderHandling(t *testing.T) {
 			header.Set(authorizationHeader, testCase.header)
 		}
 
-		err := interceptor.authorize(header)
+		err := interceptor.authorize(header, conveyorv1connect.TaskServiceEnqueueProcedure)
 
 		if testCase.valid {
 			require.NoError(t, err, "case %s", name)
@@ -48,6 +51,54 @@ func TestAuthorizeHeaderHandling(t *testing.T) {
 			require.Error(t, err, "case %s", name)
 			require.Equal(t, connect.CodeUnauthenticated, connect.CodeOf(err), "case %s", name)
 		}
+	}
+}
+
+func TestAuthorizeEnforcesScopes(t *testing.T) {
+	interceptor, ok := NewAuthInterceptor([]ScopedToken{
+		{Token: "producer", Scopes: []Scope{ScopeProduce}},
+		{Token: "worker", Scopes: []Scope{ScopeConsume}},
+		{Token: "operator", Scopes: []Scope{ScopeAdmin}},
+		{Token: "root", Scopes: AllScopes()},
+	}).(*authInterceptor)
+	require.True(t, ok)
+
+	// A zero connect.Code marks a case that must be allowed: the enum starts at
+	// CodeCanceled (1), so 0 is never a real code.
+	const allowed connect.Code = 0
+
+	cases := map[string]struct {
+		token     string
+		procedure string
+		want      connect.Code
+	}{
+		"produce token enqueues":            {"producer", conveyorv1connect.TaskServiceEnqueueProcedure, allowed},
+		"produce token denied on worker":    {"producer", conveyorv1connect.WorkerServiceSessionProcedure, connect.CodePermissionDenied},
+		"produce token denied on admin":     {"producer", conveyorv1connect.AdminServiceListQueuesProcedure, connect.CodePermissionDenied},
+		"consume token runs worker stream":  {"worker", conveyorv1connect.WorkerServiceSessionProcedure, allowed},
+		"consume token denied on enqueue":   {"worker", conveyorv1connect.TaskServiceEnqueueProcedure, connect.CodePermissionDenied},
+		"admin token reaches admin":         {"operator", conveyorv1connect.AdminServiceListQueuesProcedure, allowed},
+		"admin token denied on enqueue":     {"operator", conveyorv1connect.TaskServiceEnqueueProcedure, connect.CodePermissionDenied},
+		"full token enqueues":               {"root", conveyorv1connect.TaskServiceEnqueueProcedure, allowed},
+		"full token runs worker stream":     {"root", conveyorv1connect.WorkerServiceSessionProcedure, allowed},
+		"full token reaches admin":          {"root", conveyorv1connect.AdminServiceListQueuesProcedure, allowed},
+		"full token denied on unmapped":     {"root", conveyorv1connect.WebhookServiceHeartbeatProcedure, connect.CodePermissionDenied},
+		"unknown token stays unauthentic'd": {"ghost", conveyorv1connect.TaskServiceEnqueueProcedure, connect.CodeUnauthenticated},
+	}
+
+	for name, testCase := range cases {
+		header := http.Header{}
+		header.Set(authorizationHeader, bearerPrefix+testCase.token)
+
+		err := interceptor.authorize(header, testCase.procedure)
+
+		if testCase.want == allowed {
+			require.NoError(t, err, "case %s", name)
+
+			continue
+		}
+
+		require.Equal(t, testCase.want, connect.CodeOf(err), "case %s", name)
 	}
 }
 

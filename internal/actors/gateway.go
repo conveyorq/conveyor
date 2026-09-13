@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"time"
 
 	goakt "github.com/tochemey/goakt/v4/actor"
@@ -102,8 +103,9 @@ type GatewaySession struct {
 	// grain distributes leased tasks across gateways in proportion to these
 	// weights, so a higher weight draws proportionally more work.
 	Weights map[string]int32
-	// Concurrency is the worker's declared total execution slots; it is
-	// the dispatch capacity granted to each declared queue.
+	// Concurrency is the worker's declared total execution slots. It is split
+	// across the worker's declared queues by weight (see splitCapacity), so the
+	// worker holds at most this many tasks in flight across all its queues.
 	Concurrency int32
 	// BatchTypes are the task types this worker handles as batches, advertised
 	// to queue grains so a fired group dispatches only to a capable gateway.
@@ -159,6 +161,11 @@ type Gateway struct {
 	name string
 	// identities caches the queue grain identity per declared queue.
 	identities map[string]*goakt.GrainIdentity
+	// capacities is the dispatch capacity registered with each declared queue:
+	// the worker's total concurrency split across its queues by weight, so the
+	// worker holds at most `concurrency` tasks in flight across all its queues
+	// rather than that many per queue. Computed once in PreStart.
+	capacities map[string]int32
 	// inflight tracks dispatched tasks by id until their result arrives.
 	inflight map[string]*inflightTask
 	// batches maps a batch lease id to its member task ids, so a BatchResult
@@ -194,11 +201,82 @@ func (g *Gateway) PreStart(ctx *goakt.Context) error {
 		g.strategy = backoff.New(backoff.DefaultBase, backoff.DefaultCap)
 	}
 	g.identities = make(map[string]*goakt.GrainIdentity, len(g.session.Queues))
+	g.capacities = splitCapacity(g.session.Concurrency, g.session.Queues, g.session.Weights)
 	g.inflight = make(map[string]*inflightTask)
 	g.batches = make(map[string][]string)
 	g.breakers = make(map[string]*breaker.CircuitBreaker)
 
 	return nil
+}
+
+// splitCapacity divides a worker's total concurrency across the queues it
+// serves in proportion to their weights, so the worker holds at most
+// `concurrency` tasks in flight across all its queues instead of that many per
+// queue. This is what gives cross-queue fairness: each queue receives a
+// guaranteed capacity share, so a busy low-weight queue cannot consume the
+// slots a high-weight queue relies on. A missing or non-positive weight is
+// treated as one, matching the grain's neutral-weight rule.
+//
+// Largest-remainder rounding keeps the shares summing to concurrency; every
+// served queue is then floored at one slot so none is starved. The floor can
+// lift the total above concurrency only when a worker serves more queues than
+// it has slots — a degenerate setup whose over-grant is bounded by the queue
+// count and still capped by the worker's own concurrency gate.
+func splitCapacity(concurrency int32, queues []string, weights map[string]int32) map[string]int32 {
+	capacities := make(map[string]int32, len(queues))
+	if len(queues) == 0 {
+		return capacities
+	}
+
+	var totalWeight int64
+	for _, queue := range queues {
+		totalWeight += int64(max(weights[queue], 1))
+	}
+
+	// share carries one queue's floored allocation and the remainder that ranks
+	// it for a leftover slot.
+	type share struct {
+		queue     string
+		base      int32
+		remainder int64
+	}
+
+	var assigned int32
+
+	shares := make([]share, 0, len(queues))
+	for _, queue := range queues {
+		product := int64(concurrency) * int64(max(weights[queue], 1))
+		base := int32(product / totalWeight)
+		assigned += base
+
+		shares = append(shares, share{queue: queue, base: base, remainder: product % totalWeight})
+	}
+
+	// Hand the leftover slots to the largest remainders, breaking ties by queue
+	// name so the split is deterministic across re-registrations.
+	sort.Slice(shares, func(i, j int) bool {
+		if shares[i].remainder != shares[j].remainder {
+			return shares[i].remainder > shares[j].remainder
+		}
+
+		return shares[i].queue < shares[j].queue
+	})
+
+	leftover := concurrency - assigned
+	for index := range shares {
+		if leftover <= 0 {
+			break
+		}
+
+		shares[index].base++
+		leftover--
+	}
+
+	for _, entry := range shares {
+		capacities[entry.queue] = max(entry.base, 1)
+	}
+
+	return capacities
 }
 
 // Receive bridges queue grain dispatches and worker frames.
@@ -300,7 +378,7 @@ func (g *Gateway) register(ctx *goakt.ReceiveContext) {
 		err = system.TellGrain(goCtx, identity, &conveyorv1.RegisterGateway{
 			Queue:       queue,
 			GatewayName: g.name,
-			Capacity:    g.session.Concurrency,
+			Capacity:    g.capacities[queue],
 			BatchTypes:  g.session.BatchTypes,
 			Weight:      g.session.Weights[queue],
 		})

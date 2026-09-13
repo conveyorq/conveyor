@@ -135,6 +135,43 @@ describe("integration against a live conveyord", () => {
     await running;
   }, 30_000);
 
+  it("never runs more handlers at once than the declared concurrency", async () => {
+    const client = new Client(baseUrl);
+    const concurrency = 2;
+    const perQueue = 4;
+
+    let active = 0;
+    let peak = 0;
+    let done = 0;
+
+    const handler = async (): Promise<void> => {
+      active += 1;
+      peak = Math.max(peak, active);
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      active -= 1;
+      done += 1;
+    };
+
+    // Two queues: with one credit granted per queue, the server can offer more
+    // dispatches than the declared concurrency, so only the local gate keeps the
+    // worker from running more handlers than it advertised.
+    const mux = new Mux().handle("gate:a", handler).handle("gate:b", handler);
+    const worker = new Worker(baseUrl, { queues: { gatea: 1, gateb: 1 }, concurrency });
+    const stop = new AbortController();
+    const running = worker.run(mux, stop.signal);
+
+    for (let i = 0; i < perQueue; i += 1) {
+      await client.enqueue(newTask("gate:a", json({})), { queue: "gatea", retention: 3_600_000 });
+      await client.enqueue(newTask("gate:b", json({})), { queue: "gateb", retention: 3_600_000 });
+    }
+
+    await waitUntil(async () => done >= perQueue * 2, 20_000);
+    expect(peak).toBeLessThanOrEqual(concurrency);
+
+    stop.abort();
+    await running;
+  }, 40_000);
+
   it("round-trips an end-to-end encrypted task", async () => {
     const secret = new Uint8Array(32).fill(7);
     const codec = newAESGCM("k1", { id: "k1", secret });

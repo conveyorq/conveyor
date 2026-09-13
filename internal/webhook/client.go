@@ -43,10 +43,20 @@ type Client struct {
 	http *http.Client
 }
 
-// NewClient returns a delivery client.
-func NewClient() *Client {
+// NewClient returns a delivery client. When allowPrivate is false the client
+// dials only public addresses, pinning the resolved IP so a hostname cannot be
+// rebound to an internal target between the check and the connection; set it
+// true to permit private and loopback endpoints (a development or in-cluster
+// deployment).
+func NewClient(allowPrivate bool) *Client {
+	transport, _ := http.DefaultTransport.(*http.Transport)
+
+	guarded := transport.Clone()
+	guarded.DialContext = guardedDialContext(allowPrivate)
+
 	return &Client{
 		http: &http.Client{
+			Transport: guarded,
 			CheckRedirect: func(*http.Request, []*http.Request) error {
 				return errRedirect
 			},

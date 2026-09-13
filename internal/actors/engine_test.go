@@ -30,7 +30,9 @@ import (
 // queues on the memory broker, with a slice of flaky tasks that fail twice
 // before succeeding.
 func TestEngineProcessesWeightedQueues(t *testing.T) {
-	t.Skip("10k drain exceeds the test deadline under -race on a 4-vCPU CI runner; passes on 8 vCPUs — re-enable when CI runs on the larger runner")
+	if raceEnabled {
+		t.Skip("10k drain exceeds the test deadline under -race on a 4-vCPU CI runner; the nightly non-race job runs it")
+	}
 
 	const (
 		totalTasks   = 10_000
@@ -223,7 +225,9 @@ func TestQueueGrainDispatchThroughput(t *testing.T) {
 	// the t.Skip below and run on an uninstrumented build:
 	//
 	//	go test ./internal/actors -run TestQueueGrainDispatchThroughput -v
-	t.Skip("throughput gate: comment out to run uninstrumented (no -race); the CI -race pass cannot meet the 5k rate")
+	if raceEnabled {
+		t.Skip("throughput gate: the -race pass cannot meet the 5k rate; the nightly non-race job runs it")
+	}
 
 	const (
 		totalTasks        = 20_000
@@ -498,7 +502,7 @@ func TestMaintenanceLoopsSurviveBrokerFaults(t *testing.T) {
 	engine := startEngine(t, taskLog)
 
 	maintenanceMethods := []string{
-		methodReapExpiredLeases, methodPurgeCompleted, methodArchiveExpired,
+		methodReapExpiredLeases, methodPurgeTerminal, methodArchiveExpired,
 		methodPendingCount, methodPromoteScheduled, methodListDueCronEntries,
 		methodGroupStats,
 	}

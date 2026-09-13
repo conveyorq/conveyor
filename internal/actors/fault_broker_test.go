@@ -21,7 +21,7 @@ const (
 	methodRelease            = "Release"
 	methodSetQueuePaused     = "SetQueuePaused"
 	methodReapExpiredLeases  = "ReapExpiredLeases"
-	methodPurgeCompleted     = "PurgeCompleted"
+	methodPurgeTerminal      = "PurgeTerminal"
 	methodArchiveExpired     = "ArchiveExpired"
 	methodPendingCount       = "PendingCount"
 	methodPromoteScheduled   = "PromoteScheduled"
@@ -116,13 +116,13 @@ func (f *faultBroker) ReapExpiredLeases(ctx context.Context, limit int) ([]strin
 	return f.Broker.ReapExpiredLeases(ctx, limit)
 }
 
-// PurgeCompleted fails when armed, otherwise delegates.
-func (f *faultBroker) PurgeCompleted(ctx context.Context, limit int) (int, error) {
-	if err := f.armed(methodPurgeCompleted); err != nil {
+// PurgeTerminal fails when armed, otherwise delegates.
+func (f *faultBroker) PurgeTerminal(ctx context.Context, archiveRetention time.Duration, limit int) (int, error) {
+	if err := f.armed(methodPurgeTerminal); err != nil {
 		return 0, err
 	}
 
-	return f.Broker.PurgeCompleted(ctx, limit)
+	return f.Broker.PurgeTerminal(ctx, archiveRetention, limit)
 }
 
 // ArchiveExpired fails when armed, otherwise delegates.

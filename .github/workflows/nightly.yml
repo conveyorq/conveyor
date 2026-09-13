@@ -1,0 +1,43 @@
+name: nightly
+
+# The performance gates cannot run in the main ci.yml race suite: race
+# instrumentation slows the actor sync paths roughly tenfold, so their rate
+# targets are unreachable on a CI runner. They skip themselves under -race (see
+# raceEnabled in internal/actors). This nightly job runs them uninstrumented so a
+# throughput or weighted-drain regression is still caught, just not on every PR.
+on:
+  schedule:
+    - cron: "0 6 * * *" # 06:00 UTC daily
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  perf-gates:
+    name: Performance gates (no race)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TZ: UTC
+      GOTOOLCHAIN: local
+      GOFLAGS: -mod=readonly
+    steps:
+      - uses: actions/checkout@v7
+        name: Checkout
+      - uses: actions/setup-go@v7
+        name: Setup Go
+        with:
+          go-version-file: go.mod
+          check-latest: false
+          cache-dependency-path: "**/*.sum"
+      - name: Vendoring
+        run: go mod tidy && go mod vendor
+      - name: Download dependencies
+        run: go mod download
+      # No -race: the gates run only here, uninstrumented, where the actor tier
+      # can meet its dispatch-rate and drain targets.
+      - name: Throughput and weighted-drain gates
+        run: |
+          go test -v -count=1 -timeout 15m ./internal/actors/ \
+            -run '^(TestEngineProcessesWeightedQueues|TestQueueGrainDispatchThroughput)$'

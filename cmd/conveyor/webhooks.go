@@ -26,7 +26,7 @@ const queueWeightSeparator = "="
 // newWebhooksCommand groups the webhook worker subcommands.
 func newWebhooksCommand(conn *connection) *cobra.Command {
 	command := &cobra.Command{
-		Use:   "webhooks",
+		Use:   cmdWebhooks,
 		Short: "Inspect and control webhook worker registrations",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_ = cmd.Usage()
@@ -42,7 +42,7 @@ func newWebhooksCommand(conn *connection) *cobra.Command {
 	command.AddCommand(newWebhooksAddCommand(conn))
 
 	list := &cobra.Command{
-		Use:   "list",
+		Use:   cmdList,
 		Short: "List webhook worker registrations",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -51,7 +51,7 @@ func newWebhooksCommand(conn *connection) *cobra.Command {
 	}
 
 	pause := &cobra.Command{
-		Use:   "pause <name>",
+		Use:   cmdPause + " <name>",
 		Short: "Suspend delivery to one registration",
 		Args:  exactWebhookName("webhooks pause"),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -67,7 +67,7 @@ func newWebhooksCommand(conn *connection) *cobra.Command {
 	}
 
 	resume := &cobra.Command{
-		Use:   "resume <name>",
+		Use:   cmdResume + " <name>",
 		Short: "Resume delivery to one paused registration",
 		Args:  exactWebhookName("webhooks resume"),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -83,7 +83,7 @@ func newWebhooksCommand(conn *connection) *cobra.Command {
 	}
 
 	remove := &cobra.Command{
-		Use:   "delete <name>",
+		Use:   cmdDelete + " <name>",
 		Short: "Remove one registration",
 		Args:  exactWebhookName("webhooks delete"),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -115,7 +115,7 @@ func newWebhooksAddCommand(conn *connection) *cobra.Command {
 	)
 
 	command := &cobra.Command{
-		Use:   "add <name> <url>",
+		Use:   cmdAdd + " <name> <url>",
 		Short: "Create or replace a webhook worker registration",
 		Example: `  conveyor webhooks add billing-hooks https://hooks.example.com/tasks \
     --queue billing=3 --queue default=1 --secret "$WEBHOOK_SECRET" --concurrency 8`,
@@ -158,12 +158,12 @@ func newWebhooksAddCommand(conn *connection) *cobra.Command {
 	}
 
 	flags := command.Flags()
-	flags.StringArrayVar(&queues, "queue", nil, "served queue as name or name=weight; repeatable")
-	flags.StringArrayVar(&secrets, "secret", nil, "delivery-signing secret, newest first; repeatable (two during rotation)")
-	flags.StringArrayVar(&batchTypes, "batch-type", nil, "task type delivered as one batch when its group fires; repeatable")
-	flags.IntVar(&concurrency, "concurrency", 1, "max in-flight tasks on this endpoint")
-	flags.DurationVar(&requestTimeout, "request-timeout", 0, "synchronous delivery timeout (server default when 0)")
-	flags.BoolVar(&paused, "paused", false, "register without delivering")
+	flags.StringArrayVar(&queues, flagQueue, nil, "served queue as name or name=weight; repeatable")
+	flags.StringArrayVar(&secrets, flagSecret, nil, "delivery-signing secret, newest first; repeatable (two during rotation)")
+	flags.StringArrayVar(&batchTypes, flagBatchType, nil, "task type delivered as one batch when its group fires; repeatable")
+	flags.IntVar(&concurrency, flagConcurrency, 1, "max in-flight tasks on this endpoint")
+	flags.DurationVar(&requestTimeout, flagRequestTimeout, 0, "synchronous delivery timeout (server default when 0)")
+	flags.BoolVar(&paused, flagPaused, false, "register without delivering")
 
 	return command
 }
@@ -211,6 +211,10 @@ func runWebhooksList(conn *connection, stdout io.Writer) error {
 	response, err := conn.admin().ListWebhookWorkers(context.Background(), connect.NewRequest(&conveyorv1.ListWebhookWorkersRequest{}))
 	if err != nil {
 		return err
+	}
+
+	if conn.jsonOutput() {
+		return printJSON(stdout, response.Msg)
 	}
 
 	table := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)

@@ -40,6 +40,11 @@ var (
 	// group and a future process_at: aggregation and scheduling are mutually
 	// exclusive in v1.
 	ErrGroupedSchedule = errors.New("broker: a grouped task cannot be scheduled")
+
+	// ErrTaskHasDependents is returned by DeleteTask when other tasks still
+	// depend on the task: deleting it would strand those dependents blocked on
+	// an edge whose dependency no longer exists.
+	ErrTaskHasDependents = errors.New("broker: task has dependents")
 )
 
 // BatchError reports which task in an EnqueueBatch caused the whole batch to be
@@ -154,6 +159,17 @@ type WebhookWorker struct {
 	RequestTimeout time.Duration
 	// Paused suspends delivery without deleting the registration.
 	Paused bool
+}
+
+// AckItem is one member of an AckBatch: the task to complete, the lease the
+// caller holds on it, and the optional result bytes to retain.
+type AckItem struct {
+	// TaskID identifies the active task.
+	TaskID string
+	// LeaseID is the lease the caller holds; a mismatch skips the item.
+	LeaseID string
+	// Result is the optional result retained on the completed row.
+	Result []byte
 }
 
 // Info reports the storage engine backing a broker for the dashboard's
@@ -374,6 +390,13 @@ type Broker interface {
 	// leaseID.
 	Ack(ctx context.Context, taskID, leaseID string, result []byte) error
 
+	// AckBatch applies Ack to many tasks in one round trip, for results that
+	// arrive together (a batch handler's members). It returns the ids that
+	// completed; an item whose task is not active under its lease is skipped
+	// rather than failing the batch, so the caller compares the returned ids
+	// against its input to find lost leases. An empty batch is a no-op.
+	AckBatch(ctx context.Context, items []AckItem) (acked []string, err error)
+
 	// Fail records a failed attempt: state becomes retry, the retry
 	// counter increments, errMsg is stored, and the task becomes due again
 	// at processAt. It returns ErrLeaseLost when the task is not active
@@ -426,10 +449,15 @@ type Broker interface {
 	// nothing.
 	PromoteReadyDependents(ctx context.Context, limit int) (queues []string, err error)
 
-	// PurgeCompleted deletes up to limit completed tasks whose retention
-	// has lapsed and releases lapsed unique-key claims. It returns the
-	// number of rows deleted. A non-positive limit purges nothing.
-	PurgeCompleted(ctx context.Context, limit int) (int, error)
+	// PurgeTerminal deletes up to limit completed tasks whose per-task
+	// retention has lapsed and, when archiveRetention is positive, up to limit
+	// archived or canceled tasks that reached their terminal state more than
+	// archiveRetention ago (a zero archiveRetention keeps them forever). It also
+	// drops dependency edges whose dependent is already terminal or gone, so a
+	// stale edge never pins a dependency against purge, and releases lapsed
+	// unique-key claims. It returns the number of task rows deleted. A
+	// non-positive limit purges nothing.
+	PurgeTerminal(ctx context.Context, archiveRetention time.Duration, limit int) (int, error)
 
 	// ArchiveExpired archives up to limit still-waiting tasks (scheduled,
 	// pending, or retry) whose expires_at has passed, so a task that was
@@ -517,7 +545,9 @@ type Broker interface {
 	CancelTask(ctx context.Context, id string) error
 
 	// DeleteTask removes a task in any state except active, for which it
-	// returns ErrInvalidState.
+	// returns ErrInvalidState. It returns ErrTaskHasDependents when other tasks
+	// still depend on this one, since deleting it would strand those dependents
+	// blocked on an edge whose dependency no longer exists.
 	DeleteTask(ctx context.Context, id string) error
 
 	// RunTaskNow makes a scheduled, pending, retry, or archived task due

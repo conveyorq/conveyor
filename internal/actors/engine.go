@@ -266,6 +266,13 @@ func (e *Engine) Counters() *Counters {
 	return e.runtime.Counters()
 }
 
+// Logger returns the engine's process logger, so the API layer can record a
+// best-effort action against the engine (a wake hint, a reconcile nudge) that
+// missed, instead of discarding the error.
+func (e *Engine) Logger() *slog.Logger {
+	return e.runtime.Logger()
+}
+
 // Settings returns the engine settings.
 func (e *Engine) Settings() Settings {
 	return e.runtime.Settings()

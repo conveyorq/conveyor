@@ -26,6 +26,55 @@ import (
 	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 )
 
+func TestSplitCapacity(t *testing.T) {
+	// sum returns the total capacity across queues.
+	sum := func(capacities map[string]int32) int32 {
+		var total int32
+		for _, capacity := range capacities {
+			total += capacity
+		}
+
+		return total
+	}
+
+	t.Run("single queue takes the whole concurrency", func(t *testing.T) {
+		got := splitCapacity(8, []string{"default"}, map[string]int32{"default": 1})
+		require.Equal(t, map[string]int32{"default": 8}, got)
+	})
+
+	t.Run("equal weights split evenly and sum to concurrency", func(t *testing.T) {
+		got := splitCapacity(8, []string{"a", "b"}, map[string]int32{"a": 1, "b": 1})
+		require.Equal(t, map[string]int32{"a": 4, "b": 4}, got)
+		require.EqualValues(t, 8, sum(got), "total in-flight must not exceed the declared concurrency")
+	})
+
+	t.Run("weights bias the split proportionally", func(t *testing.T) {
+		got := splitCapacity(8, []string{"high", "low"}, map[string]int32{"high": 3, "low": 1})
+		require.Equal(t, map[string]int32{"high": 6, "low": 2}, got)
+		require.EqualValues(t, 8, sum(got))
+	})
+
+	t.Run("largest-remainder distributes the leftover deterministically", func(t *testing.T) {
+		// 10 split by 1:1:1 is 3,3,3 with one leftover; it goes to the
+		// lowest queue name on the remainder tie so the result is stable.
+		got := splitCapacity(10, []string{"a", "b", "c"}, map[string]int32{"a": 1, "b": 1, "c": 1})
+		require.EqualValues(t, 10, sum(got))
+		require.Equal(t, map[string]int32{"a": 4, "b": 3, "c": 3}, got)
+	})
+
+	t.Run("missing weight is treated as one", func(t *testing.T) {
+		got := splitCapacity(4, []string{"a", "b"}, nil)
+		require.Equal(t, map[string]int32{"a": 2, "b": 2}, got)
+	})
+
+	t.Run("every served queue is floored at one slot", func(t *testing.T) {
+		// Concurrency below the queue count cannot give every queue a full
+		// share, but none is starved: each keeps at least one slot.
+		got := splitCapacity(1, []string{"a", "b", "c"}, map[string]int32{"a": 1, "b": 1, "c": 1})
+		require.Equal(t, map[string]int32{"a": 1, "b": 1, "c": 1}, got)
+	})
+}
+
 // faultGateway builds a bare gateway (the fields PreStart would set) over a
 // fault broker and a fake clock, so its durable-transition and deadline logic
 // can be driven directly without a worker session.

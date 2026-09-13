@@ -114,6 +114,8 @@ spec:
         threshold: "100"                      # ~tasks pending per worker replica
 ```
 
+The Helm chart ships this ScaledObject as an opt-in: set `workerAutoscaling.enabled=true` and `workerAutoscaling.scaleTargetRef` to your worker Deployment's name (the other fields above map to `workerAutoscaling.*` values). It needs KEDA installed.
+
 ## Failure scenarios (all zero-loss)
 
 - **A server node is lost.** Its queue grains and singletons relocate to surviving nodes and recover their leases.

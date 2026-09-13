@@ -355,7 +355,7 @@ func (w *WebhookGateway) PreStart(ctx *goakt.Context) error {
 		w.strategy = backoff.New(backoff.DefaultBase, backoff.DefaultCap)
 	}
 
-	w.client = webhook.NewClient()
+	w.client = webhook.NewClient(runtime.Settings().AllowPrivateWebhookTargets)
 	w.signer = webhook.NewHMACSigner(w.registration.Secrets[0], runtime.Clock())
 	w.identities = make(map[string]*goakt.GrainIdentity, len(w.registration.Queues))
 	w.inflight = make(map[string]*inflightTask)

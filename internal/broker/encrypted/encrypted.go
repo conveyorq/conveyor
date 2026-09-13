@@ -140,6 +140,29 @@ func (e *encryptedBroker) Ack(ctx context.Context, taskID, leaseID string, resul
 	return e.inner.Ack(ctx, taskID, leaseID, sealed)
 }
 
+// AckBatch encrypts every non-empty result before delegating, so batch
+// completions retain their results sealed exactly as single acks do.
+func (e *encryptedBroker) AckBatch(ctx context.Context, items []broker.AckItem) ([]string, error) {
+	sealedItems := make([]broker.AckItem, len(items))
+
+	for index, item := range items {
+		sealedItems[index] = item
+
+		if len(item.Result) == 0 {
+			continue
+		}
+
+		sealed, err := e.encryptor.Encrypt(ctx, item.Result)
+		if err != nil {
+			return nil, fmt.Errorf("broker/encrypted: encrypting batch result: %w", err)
+		}
+
+		sealedItems[index].Result = sealed
+	}
+
+	return e.inner.AckBatch(ctx, sealedItems)
+}
+
 // GetTask decrypts the returned task's payload.
 func (e *encryptedBroker) GetTask(ctx context.Context, id string) (*conveyorv1.TaskEnvelope, conveyorv1.TaskState, error) {
 	task, state, err := e.inner.GetTask(ctx, id)
@@ -262,9 +285,9 @@ func (e *encryptedBroker) PromoteReadyDependents(ctx context.Context, limit int)
 	return e.inner.PromoteReadyDependents(ctx, limit)
 }
 
-// PurgeCompleted delegates to the wrapped broker.
-func (e *encryptedBroker) PurgeCompleted(ctx context.Context, limit int) (int, error) {
-	return e.inner.PurgeCompleted(ctx, limit)
+// PurgeTerminal delegates to the wrapped broker.
+func (e *encryptedBroker) PurgeTerminal(ctx context.Context, archiveRetention time.Duration, limit int) (int, error) {
+	return e.inner.PurgeTerminal(ctx, archiveRetention, limit)
 }
 
 // ArchiveExpired delegates to the wrapped broker.

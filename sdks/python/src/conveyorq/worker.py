@@ -39,19 +39,26 @@ _DEFAULT_HEARTBEAT = 20.0
 # How long graceful drain waits for in-flight tasks before closing the stream.
 _DRAIN_GRACE = 25.0
 
+# After the grace window expires, how long to let the handlers that were aborted
+# report RELEASED before the stream closes. Anything still unreported is released
+# by the server on stream close.
+_DRAIN_SETTLE = 2.0
+
 # After half-closing on drain, how long to let the server end the stream cleanly
 # before forcing the call down so run() cannot hang.
 _CLOSE_GRACE = 5.0
 
 # gRPC status codes that must stop the worker rather than trigger a reconnect:
 # bad auth, or a server-side rejection of the session contract (an outdated SDK
-# version, a malformed Hello, an unmet minimum server version). gRPC does not
-# synthesize INVALID_ARGUMENT for a severed connection (that surfaces as
-# UNAVAILABLE), so an INVALID_ARGUMENT here always came from the server.
+# version, a malformed Hello, an unmet minimum server version). This set matches
+# the Go and TypeScript SDKs. gRPC does not synthesize INVALID_ARGUMENT for a
+# severed connection (that surfaces as UNAVAILABLE), so an INVALID_ARGUMENT here
+# always came from the server.
 _FATAL_CODES = frozenset(
     {
         grpc.StatusCode.UNAUTHENTICATED,
         grpc.StatusCode.PERMISSION_DENIED,
+        grpc.StatusCode.FAILED_PRECONDITION,
         grpc.StatusCode.INVALID_ARGUMENT,
     }
 )
@@ -213,6 +220,10 @@ class _Session:
 
         self._outbound: "asyncio.Queue[Optional[service_pb2.WorkerMessage]]" = asyncio.Queue()
         self._inflight: Dict[str, asyncio.Event] = {}
+        # Ids of tasks the drain aborted after the grace window: their outcome is
+        # reported RELEASED (returned to the queue, no retry penalty) rather than
+        # RETRY. A server cancel or a deadline is not recorded here and so retries.
+        self._released_ids: Set[str] = set()
         self._tasks: Set[asyncio.Task[None]] = set()
         self._sem = asyncio.Semaphore(config.concurrency)
         self._call: Optional["grpc.aio.StreamStreamCall"] = None
@@ -300,6 +311,8 @@ class _Session:
         try:
             async with self._sem:
                 if self._draining:
+                    # Never started before drain: released, no retry penalty.
+                    self._report(envelope.id, service_pb2.TASK_OUTCOME_RELEASED, "")
                     return
 
                 task = self._open_task(envelope)
@@ -312,9 +325,18 @@ class _Session:
 
                 ctx = HandlerContext(cancelled, deadline, self._progress_reporter(envelope.id))
                 outcome, error_msg = await _run_handler(handler, task, ctx, self._executor)
+
+                # A task the drain interrupted is released, not retried; a task
+                # that still succeeded (or asked to skip) keeps that outcome.
+                if outcome == service_pb2.TASK_OUTCOME_RETRY and envelope.id in self._released_ids:
+                    outcome, error_msg = service_pb2.TASK_OUTCOME_RELEASED, ""
+
                 self._report(envelope.id, outcome, error_msg)
         except Exception as error:  # noqa: BLE001 -- undecryptable/decoding failure → retryable
-            self._report(envelope.id, service_pb2.TASK_OUTCOME_RETRY, str(error))
+            if envelope.id in self._released_ids:
+                self._report(envelope.id, service_pb2.TASK_OUTCOME_RELEASED, "")
+            else:
+                self._report(envelope.id, service_pb2.TASK_OUTCOME_RETRY, str(error))
         finally:
             if timer is not None:
                 timer.cancel()
@@ -338,6 +360,8 @@ class _Session:
         try:
             async with self._sem:
                 if self._draining:
+                    # Never started before drain: released, no retry penalty.
+                    self._report_each(ids, service_pb2.TASK_OUTCOME_RELEASED, "")
                     return
 
                 handler = self._mux.resolve_batch(envelopes[0].type if envelopes else "")
@@ -350,7 +374,10 @@ class _Session:
                 tasks = [self._open_task(envelope) for envelope in envelopes]
                 await self._run_batch_handler(handler, tasks, ids, HandlerContext(cancelled, deadline))
         except Exception as error:  # noqa: BLE001
-            self._report_each(ids, service_pb2.TASK_OUTCOME_RETRY, str(error))
+            if self._is_released(ids):
+                self._report_each(ids, service_pb2.TASK_OUTCOME_RELEASED, "")
+            else:
+                self._report_each(ids, service_pb2.TASK_OUTCOME_RETRY, str(error))
         finally:
             if timer is not None:
                 timer.cancel()
@@ -365,6 +392,12 @@ class _Session:
             await _invoke(handler, tasks, ctx, self._executor)
             self._report_each(ids, service_pb2.TASK_OUTCOME_SUCCESS, "")
         except BatchError as batch_error:
+            # A drain interrupted the whole batch: every member is released, no
+            # retry penalty, regardless of any partial-failure detail raised.
+            if self._is_released(ids):
+                self._report_each(ids, service_pb2.TASK_OUTCOME_RELEASED, "")
+                return
+
             for task_id in ids:
                 failure = batch_error.failures.get(task_id)
 
@@ -375,7 +408,10 @@ class _Session:
                 else:
                     self._report(task_id, service_pb2.TASK_OUTCOME_RETRY, str(failure))
         except Exception as error:  # noqa: BLE001 -- whole-batch failure retries each member
-            self._report_each(ids, service_pb2.TASK_OUTCOME_RETRY, str(error))
+            if self._is_released(ids):
+                self._report_each(ids, service_pb2.TASK_OUTCOME_RELEASED, "")
+            else:
+                self._report_each(ids, service_pb2.TASK_OUTCOME_RETRY, str(error))
 
     def _open_task(self, envelope: "task_pb2.TaskEnvelope") -> Task:
         """Decode a dispatched envelope into a Task, decrypting if it is marked."""
@@ -468,15 +504,33 @@ class _Session:
             )
 
     async def _drain_on_stop(self, stop: asyncio.Event) -> None:
-        """Wait for the stop signal, then drain in-flight work and close the stream."""
+        """Wait for the stop signal, then drain in-flight work and close the stream.
+
+        The heartbeat keeps running through the grace window, so a task still
+        executing does not lose its lease mid-drain and get redelivered at the
+        cost of a retry. When the grace window expires, any handler still running
+        is aborted so it reports RELEASED (no retry penalty) and given a brief
+        settle window to send it; the server releases anything still held on
+        stream close.
+        """
         await stop.wait()
 
         self._draining = True
-        self._stop_heartbeat()
 
         deadline = time.monotonic() + _DRAIN_GRACE
         while self._inflight and time.monotonic() < deadline:
             await asyncio.sleep(0.05)
+
+        if self._inflight:
+            self._released_ids.update(self._inflight.keys())
+            for event in list(self._inflight.values()):
+                event.set()
+
+            settle = time.monotonic() + _DRAIN_SETTLE
+            while self._inflight and time.monotonic() < settle:
+                await asyncio.sleep(0.02)
+
+        self._stop_heartbeat()
 
         # End the request stream; the server releases any still-held leases with
         # no retry penalty (a deploy is therefore free).
@@ -489,6 +543,11 @@ class _Session:
         await asyncio.sleep(_CLOSE_GRACE)
         if self._call is not None:
             self._call.cancel()
+
+    def _is_released(self, ids: List[str]) -> bool:
+        """Report whether the drain aborted this delivery (all members share one
+        cancellation, so any member being marked released marks the batch)."""
+        return any(task_id in self._released_ids for task_id in ids)
 
     def _cancel_inflight(self) -> None:
         for event in self._inflight.values():

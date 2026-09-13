@@ -33,8 +33,11 @@ Every command accepts these, and the same two settings cover the whole session:
 |---------|------|-------------|---------|
 | Server URL | `--addr` | `CONVEYOR_ADDR` | `http://localhost:8080` |
 | Bearer token | `--token` | `CONVEYOR_TOKEN` | empty (dev servers only) |
+| Output format | `--output` / `-o` | — | `table` |
 
 A flag wins over its environment variable. Outside `--dev`, a server requires a token, so set `--token`/`CONVEYOR_TOKEN`. When the server runs with `api.read_only`, the mutating commands return `permission denied` while reads, enqueue, and the event stream still work.
+
+`--output json` renders the listing and inspection commands (`stats`, `tasks list`, `ratelimit ls`, `concurrency ls`, `group ls`, `cron list`, `cluster info`, `cluster sessions`, `broker info`, `webhooks list`, and batch task actions) as JSON for scripting; the default `table` is human-readable.
 
 ```sh
 export CONVEYOR_ADDR=https://conveyor.internal:8080
@@ -49,14 +52,16 @@ conveyor stats
 |---------|---------|
 | `enqueue` | Commit one task |
 | `enqueue-tx` | Commit many tasks atomically (all-or-nothing) |
-| `tasks` | Inspect and operate on tasks (get, list, run, cancel, delete, reschedule) |
+| `tasks` | Inspect and operate on tasks (get, list, run, cancel, delete, archive, reschedule) |
 | `stats` | Per-queue state counts and pause flags |
 | `queues` | Pause and resume queues |
 | `ratelimit` | Per-queue dispatch rate limits (set, rm, ls) |
 | `concurrency` | Per-queue per-key concurrency limits (set, rm, ls) |
 | `group` | Per-group aggregation overrides (set, rm, ls) |
-| `cron` | Cron entries (add, list, pause, resume) |
-| `cluster` | Cluster membership (info) |
+| `cron` | Cron entries (add, list, pause, resume, delete) |
+| `webhooks` | Webhook worker registrations (add, list, pause, resume, delete) |
+| `cluster` | Cluster membership and worker sessions (info, sessions) |
+| `broker` | Storage backend inspection (info) |
 | `events` | Stream task lifecycle events until interrupted |
 | `completion` | Generate a shell autocompletion script |
 
@@ -159,13 +164,22 @@ conveyor tasks list [--queue NAME] [--state STATE] [--limit N]
 conveyor tasks list --state retry --queue critical --limit 50
 ```
 
-### `cluster info`
+### `cluster info` / `cluster sessions`
 
 ```sh
 conveyor cluster info
+conveyor cluster sessions
 ```
 
-Reports the nodes in the cluster (a debugging aid; a single-node server reports one node).
+`cluster info` reports the nodes in the cluster (a debugging aid; a single-node server reports one node). `cluster sessions` lists the worker sessions connected to the reachable node, with their served queues, declared concurrency, SDK version, and connect time.
+
+### `broker info`
+
+```sh
+conveyor broker info
+```
+
+Reports the broker driver (`memory` or `postgres`) and its engine statistics (connection-pool counters, row counts, server version).
 
 ### `events`
 
@@ -183,14 +197,18 @@ conveyor events --queue billing --type completed --type archived
 
 | Command | Effect |
 |---------|--------|
-| `conveyor tasks run <id>` | Make a scheduled or retry task due immediately |
-| `conveyor tasks cancel <id>` | Cancel a task (best-effort for an executing one) |
-| `conveyor tasks delete <id>` | Delete a non-active task |
+| `conveyor tasks run <id>...` | Make one or more scheduled or retry tasks due immediately |
+| `conveyor tasks cancel <id>...` | Cancel one or more tasks (best-effort for an executing one) |
+| `conveyor tasks delete <id>...` | Delete one or more non-active tasks |
+| `conveyor tasks archive <id>...` | Move one or more tasks to the archive (dead-letter) |
 | `conveyor tasks reschedule <id> --in DUR` (or `--at RFC3339`) | Move a scheduled, pending, or retry task's due time |
+
+`run`, `cancel`, `delete`, and `archive` take one or more ids: a single id runs the unary call, several run the batch call and report the per-id outcome (use `--output json` to script it).
 
 ```sh
 conveyor tasks reschedule 01J... --in 30m
 conveyor tasks run 01J...
+conveyor tasks delete 01JA... 01JB... 01JC...
 ```
 
 ## Queues, limits, and aggregation
@@ -253,12 +271,29 @@ conveyor cron add <id> "<spec>" <type> [--queue NAME] [--json PAYLOAD] [--priori
 conveyor cron list
 conveyor cron pause <id>
 conveyor cron resume <id>
+conveyor cron delete <id>
 ```
 
 `<spec>` is a 6-field cron expression. Cron entries are server-persisted, so they survive restarts and failover.
 
 ```sh
 conveyor cron add nightly-report "0 0 2 * * *" report:daily --queue reports
+```
+
+## Webhook workers
+
+```sh
+conveyor webhooks add <name> <url> --queue name[=weight]... --secret SECRET... [--concurrency N] [--batch-type TYPE...] [--request-timeout DUR] [--paused]
+conveyor webhooks list
+conveyor webhooks pause <name>
+conveyor webhooks resume <name>
+conveyor webhooks delete <name>
+```
+
+Registers an HTTP endpoint that receives tasks as signed JSON-RPC calls, with no SDK. `--queue` and `--secret` are repeatable (two secrets during a rotation). See [webhook workers](webhook-workers.md).
+
+```sh
+conveyor webhooks add billing https://hooks.internal/tasks --queue billing=2 --queue default --secret "$WEBHOOK_SECRET"
 ```
 
 ## Shell completion

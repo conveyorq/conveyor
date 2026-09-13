@@ -26,7 +26,7 @@ func TestCallReturnsParsedResponse(t *testing.T) {
 	}))
 	defer endpoint.Close()
 
-	response, err := NewClient().Call(context.Background(), endpoint.URL, nil, NewExecuteRequest("lease-1", &TaskParams{TaskID: "t1"}))
+	response, err := NewClient(true).Call(context.Background(), endpoint.URL, nil, NewExecuteRequest("lease-1", &TaskParams{TaskID: "t1"}))
 	require.NoError(t, err)
 
 	outcome, _ := response.Classify()
@@ -47,7 +47,7 @@ func TestCallBatchKeysResponsesByID(t *testing.T) {
 		NewExecuteRequest("lease-b", &TaskParams{TaskID: "b"}),
 	}
 
-	responses, err := NewClient().CallBatch(context.Background(), endpoint.URL, nil, requests)
+	responses, err := NewClient(true).CallBatch(context.Background(), endpoint.URL, nil, requests)
 	require.NoError(t, err)
 	require.Len(t, responses, 2)
 
@@ -76,7 +76,7 @@ func TestCallTransportFailures(t *testing.T) {
 			endpoint := httptest.NewServer(tc.handler)
 			defer endpoint.Close()
 
-			_, err := NewClient().Call(context.Background(), endpoint.URL, nil, NewExecuteRequest("l", &TaskParams{}))
+			_, err := NewClient(true).Call(context.Background(), endpoint.URL, nil, NewExecuteRequest("l", &TaskParams{}))
 			require.Error(t, err, "expected a transport failure")
 		})
 	}
@@ -91,7 +91,7 @@ func TestCallRejectsMultipleResponses(t *testing.T) {
 	}))
 	defer endpoint.Close()
 
-	_, err := NewClient().Call(context.Background(), endpoint.URL, nil, NewExecuteRequest("l", &TaskParams{}))
+	_, err := NewClient(true).Call(context.Background(), endpoint.URL, nil, NewExecuteRequest("l", &TaskParams{}))
 	require.Error(t, err, "a single Call expects exactly one response")
 }
 
@@ -103,7 +103,7 @@ func TestCallBatchReportsTransportFailure(t *testing.T) {
 
 	requests := []*Request{NewExecuteRequest("a", &TaskParams{TaskID: "a"})}
 
-	_, err := NewClient().CallBatch(context.Background(), endpoint.URL, nil, requests)
+	_, err := NewClient(true).CallBatch(context.Background(), endpoint.URL, nil, requests)
 	require.Error(t, err, "a non-200 answer fails the whole batch POST")
 }
 
@@ -123,7 +123,7 @@ func TestCallBatchDropsResponsesWithoutID(t *testing.T) {
 		NewExecuteRequest("b", &TaskParams{TaskID: "b"}),
 	}
 
-	responses, err := NewClient().CallBatch(context.Background(), endpoint.URL, nil, requests)
+	responses, err := NewClient(true).CallBatch(context.Background(), endpoint.URL, nil, requests)
 	require.NoError(t, err)
 	require.Len(t, responses, 1, "an id-less response cannot be correlated")
 	require.Contains(t, responses, "a")
@@ -136,7 +136,7 @@ func TestCallReportsConnectionFailure(t *testing.T) {
 	url := endpoint.URL
 	endpoint.Close() // Nothing listens now; the dial fails.
 
-	_, err := NewClient().Call(context.Background(), url, nil, NewExecuteRequest("l", &TaskParams{}))
+	_, err := NewClient(true).Call(context.Background(), url, nil, NewExecuteRequest("l", &TaskParams{}))
 	require.Error(t, err, "a dial to a closed endpoint must fail")
 }
 
@@ -147,14 +147,14 @@ func TestNotifyReportsTransportFailure(t *testing.T) {
 	url := endpoint.URL
 	endpoint.Close()
 
-	err := NewClient().Notify(context.Background(), url, nil, NewCancelNotification("t1"))
+	err := NewClient(true).Notify(context.Background(), url, nil, NewCancelNotification("t1"))
 	require.Error(t, err, "a dial to a closed endpoint must fail the notification")
 }
 
 // TestSendRejectsInvalidURL proves a malformed URL fails at request building,
 // before any dial.
 func TestSendRejectsInvalidURL(t *testing.T) {
-	_, err := NewClient().Call(context.Background(), "://not-a-url", nil, NewExecuteRequest("l", &TaskParams{}))
+	_, err := NewClient(true).Call(context.Background(), "://not-a-url", nil, NewExecuteRequest("l", &TaskParams{}))
 	require.Error(t, err, "a malformed URL must fail request construction")
 }
 
@@ -173,7 +173,7 @@ func TestCallHonorsContextDeadline(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
-	_, err := NewClient().Call(ctx, endpoint.URL, nil, NewExecuteRequest("l", &TaskParams{}))
+	_, err := NewClient(true).Call(ctx, endpoint.URL, nil, NewExecuteRequest("l", &TaskParams{}))
 	require.Error(t, err, "expected a deadline failure")
 }
 
@@ -188,7 +188,7 @@ func TestNotifyIgnoresResponseBody(t *testing.T) {
 	}))
 	defer endpoint.Close()
 
-	require.NoError(t, NewClient().Notify(context.Background(), endpoint.URL, nil, NewCancelNotification("t1")))
+	require.NoError(t, NewClient(true).Notify(context.Background(), endpoint.URL, nil, NewCancelNotification("t1")))
 	require.Equal(t, MethodCancel, method)
 }
 
@@ -210,7 +210,7 @@ func TestCallAppliesSigner(t *testing.T) {
 	}))
 	defer endpoint.Close()
 
-	_, err := NewClient().Call(context.Background(), endpoint.URL, headerSigner{value: "sig"}, NewExecuteRequest("l", &TaskParams{}))
+	_, err := NewClient(true).Call(context.Background(), endpoint.URL, headerSigner{value: "sig"}, NewExecuteRequest("l", &TaskParams{}))
 	require.NoError(t, err)
 	require.Equal(t, "sig", signature, "signer headers must reach the endpoint")
 }

@@ -31,10 +31,10 @@ Environment keys mirror the file with `CONVEYOR_` and `__` between levels. `brok
 
 Key groups:
 
-- `broker.driver` (`postgres` | `memory`) and `broker.dsn`.
+- `broker.driver` (`postgres` | `memory`), `broker.dsn`, and `broker.pool.{max_conns,min_conns,connect_timeout,statement_timeout}`.
 - `api.listen` (default `:8080`), `api.auth_tokens`, `api.tls`.
 - `cluster.discovery`, `cluster.bind_addr`, the remoting/discovery/peers ports, `cluster.tls`, and `cluster.kubernetes` (namespace + pod labels).
-- `engine.lease_ttl`, `reap_interval`, `lease_batch_max`, `promote_interval`, `passivate_after`, `default_max_retry`, `shutdown_timeout`.
+- `engine.lease_ttl`, `reap_interval`, `lease_batch_max`, `promote_interval`, `passivate_after`, `default_max_retry`, `archive_retention`, `shutdown_timeout`.
 - `engine.rate_limit_enabled` (master switch, default `true`), `engine.rate_limit_rate_per_sec` and `engine.rate_limit_burst` (the global default per-queue dispatch limit; per-queue overrides are set at runtime, see [rate limiting](rate-limiting.md)).
 - `metrics.listen` (default `:9464`; empty disables the endpoint).
 - `otel.endpoint` (OTLP push for metrics + traces), `otel.service_name`.
@@ -54,8 +54,8 @@ Priorities and weights shape *what* runs first: per-task `Priority(1..9)` orders
 
 ## Broker sizing (Postgres)
 
-- Give `conveyord` a connection pool sized for its concurrency; every replica opens its own pool against the same database.
-- Tasks accumulate rows in the task log. Use `Retention` so completed tasks are purged, and inspect archived (dead-lettered) tasks via the Admin API/CLI.
+- Size the connection pool with `broker.pool.max_conns` (and `min_conns`, `connect_timeout`, `statement_timeout`); every replica opens its own pool against the same database, so the database must admit `replicas × max_conns`. A zero value keeps the driver default. `statement_timeout` makes a runaway query fail instead of holding a pool slot and stalling dispatch.
+- Tasks accumulate rows in the task log. Completed tasks are purged once their per-task `Retention` lapses (the default is immediate). Archived (dead-lettered) and canceled tasks are kept for `engine.archive_retention` (default 7 days; `0` keeps them forever) so they can be inspected via the Admin API/CLI before the reaper purges them.
 - `engine.lease_ttl` bounds how long a crashed worker's task waits before redelivery; `engine.reap_interval` is how often the reaper reclaims expired leases (recovery time after a failure is roughly `2 × reap_interval`).
 - `engine.lease_batch_max` caps how many tasks one dispatch cycle claims. Raise it for high-throughput queues, lower it to smooth load.
 
@@ -76,7 +76,7 @@ Priorities and weights shape *what* runs first: per-task `Priority(1..9)` orders
 ## Observability
 
 - **Health.** `/healthz` (liveness) and `/readyz` (readiness: broker reachable and engine running) on the API port. Wired into the chart's probes.
-- **Metrics.** Prometheus exposition at `/metrics` on `metrics.listen` (`:9464`): `conveyor_enqueued_total`, `…_completed_total`, `…_failed_total`, `…_retried_total`, `…_archived_total`, `…_released_total`, `conveyor_active`, `conveyor_sessions_active`, `conveyor_pending`, plus runtime metrics. The chart stamps `prometheus.io/scrape` annotations and ships an opt-in ServiceMonitor; `deploy/grafana/` has a dashboard and scrape config.
+- **Metrics.** Prometheus exposition at `/metrics` on `metrics.listen` (`:9464`): `conveyor_enqueued_total`, `…_completed_total`, `…_failed_total`, `…_retried_total`, `…_archived_total`, `…_released_total`, `conveyor_active`, `conveyor_sessions_active`, `conveyor_pending`, plus the health canaries `conveyor_lease_expired_total` (workers losing leases), `conveyor_breaker_open_total` (a failing task type), `conveyor_events_dropped_total` (a slow watcher), and `conveyor_maintenance_failures_total{pass}` (a reaper, scheduler, or sweeper pass that failed and was skipped until its next tick), and runtime metrics. The chart stamps `prometheus.io/scrape` annotations and ships an opt-in ServiceMonitor and an opt-in `PrometheusRule` (`prometheusRule.enabled`) that alerts on those canaries, pending backlog, and no node exposing metrics; `deploy/grafana/` has a dashboard and scrape config.
 - **Tracing.** Set `otel.endpoint` to push OTLP traces to a collector. Each enqueue opens a span and stamps a W3C `traceparent` into the task; if your worker process has OpenTelemetry configured, its execution span links back to the enqueue.
 - **Lifecycle events.** A push stream of per-task state transitions for live dashboards, alerting, audit logs, and event-driven chaining; see [lifecycle events](events.md).
 - `conveyor cluster info` reports cluster membership.

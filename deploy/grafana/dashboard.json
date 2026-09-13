@@ -130,6 +130,29 @@
       "targets": [
         { "refId": "A", "expr": "sum(rate(actor_restart_count_total[$__rate_interval]))", "legendFormat": "restarts" }
       ]
+    },
+    {
+      "title": "Maintenance failures",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "description": "Maintenance passes (reap, purge, promotion, sweep, cron) that failed and were skipped until their next tick. Any sustained rate means a broker fault is starving maintenance.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum by (pass) (rate(conveyor_maintenance_failures_total[$__rate_interval]))", "legendFormat": "{{pass}}" }
+      ]
+    },
+    {
+      "title": "Lease expiry and dropped events",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "description": "Expired leases reclaimed by the reaper (workers crashing or missing heartbeats; each spends a retry) and lifecycle events dropped by a slow watcher.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(conveyor_lease_expired_total[$__rate_interval]))", "legendFormat": "leases expired" },
+        { "refId": "B", "expr": "sum(rate(conveyor_events_dropped_total[$__rate_interval]))", "legendFormat": "events dropped" }
+      ]
     }
   ]
 }

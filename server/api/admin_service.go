@@ -49,19 +49,24 @@ type AdminService struct {
 	// allowInsecureWebhooks admits plaintext http webhook URLs; only an
 	// unauthenticated development server sets it.
 	allowInsecureWebhooks bool
+	// allowPrivateWebhookTargets admits webhook URLs pointing at private,
+	// loopback, and link-local addresses; it defaults off so a registration
+	// cannot make the server call internal endpoints.
+	allowPrivateWebhookTargets bool
 }
 
 // enforce interface compliance at compile time.
 var _ conveyorv1connect.AdminServiceHandler = (*AdminService)(nil)
 
 // NewAdminService assembles the admin API service.
-func NewAdminService(engine *actors.Engine, taskLog broker.Broker, timeSource clock.Clock, sessions SessionLister, allowInsecureWebhooks bool) *AdminService {
+func NewAdminService(engine *actors.Engine, taskLog broker.Broker, timeSource clock.Clock, sessions SessionLister, allowInsecureWebhooks bool, allowPrivateWebhookTargets bool) *AdminService {
 	return &AdminService{
-		engine:                engine,
-		taskLog:               taskLog,
-		timeSource:            timeSource,
-		sessions:              sessions,
-		allowInsecureWebhooks: allowInsecureWebhooks,
+		engine:                     engine,
+		taskLog:                    taskLog,
+		timeSource:                 timeSource,
+		sessions:                   sessions,
+		allowInsecureWebhooks:      allowInsecureWebhooks,
+		allowPrivateWebhookTargets: allowPrivateWebhookTargets,
 	}
 }
 
@@ -572,7 +577,9 @@ func (s *AdminService) runTask(ctx context.Context, id string) error {
 
 	// The wake-up is a best-effort hint; the reaper sweep recovers lost ones.
 	queue := envelope.GetQueue()
-	_ = s.engine.TellQueue(ctx, queue, &conveyorv1.TaskEnqueued{Queue: queue})
+	if err := s.engine.TellQueue(ctx, queue, &conveyorv1.TaskEnqueued{Queue: queue}); err != nil {
+		s.engine.Logger().Debug("wake after run failed; the reaper sweep recovers", "queue", queue, "error", err)
+	}
 
 	return nil
 }
@@ -594,7 +601,9 @@ func (s *AdminService) rescheduleTask(ctx context.Context, id string, processAt 
 	// failure here does not undo the reschedule that already committed.
 	if envelope, _, err := s.taskLog.GetTask(ctx, id); err == nil {
 		queue := envelope.GetQueue()
-		_ = s.engine.TellQueue(ctx, queue, &conveyorv1.TaskEnqueued{Queue: queue})
+		if err := s.engine.TellQueue(ctx, queue, &conveyorv1.TaskEnqueued{Queue: queue}); err != nil {
+			s.engine.Logger().Debug("wake after reschedule failed; the reaper sweep recovers", "queue", queue, "error", err)
+		}
 	}
 
 	return nil
@@ -850,6 +859,9 @@ func adminTaskError(err error) error {
 		return connect.NewError(connect.CodeNotFound, err)
 
 	case errors.Is(err, broker.ErrInvalidState):
+		return connect.NewError(connect.CodeFailedPrecondition, err)
+
+	case errors.Is(err, broker.ErrTaskHasDependents):
 		return connect.NewError(connect.CodeFailedPrecondition, err)
 
 	default:

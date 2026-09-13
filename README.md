@@ -6,7 +6,6 @@
 [![codecov](https://codecov.io/gh/conveyorq/conveyor/graph/badge.svg?token=UD2KFGYOZS)](https://codecov.io/gh/conveyorq/conveyor)
 [![Go Reference](https://pkg.go.dev/badge/github.com/conveyorq/conveyor.svg)](https://pkg.go.dev/github.com/conveyorq/conveyor)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![Open Source AI Manifesto](https://human-oss.dev/badge.svg)](https://human-oss.dev)
 
 **A distributed, push-based task queue with Go, TypeScript, and Python SDKs.**
 
@@ -84,9 +83,8 @@ and priorities, backed by Postgres or an in-memory broker, with **no Redis and n
 - **Cron**: server-persisted schedules that survive restarts and failover,
   pausable at runtime.
 - **Built-in clustering / HA**: multi-node by default; a lost node's work
-  re-activates elsewhere with zero task loss. Kubernetes discovery works out of
-  the box, with a pluggable provider (static, DNS, NATS, Consul, etcd) for
-  everywhere else.
+  re-activates elsewhere with zero task loss. Kubernetes and static discovery
+  work out of the box, with a pluggable provider interface for everywhere else.
 - **Four ways to run it**: standalone, cluster, Kubernetes, or
   [embedded](#embedded-mode) in a Go process.
 - **Secure by default**, with bearer-token auth that fails closed: outside `--dev`
@@ -117,7 +115,7 @@ process.
 | Primary store                 |                                                                     Postgres or in-memory                                                                      |            Redis             |                Postgres                |
 | Runs as                       |                                                                  Server and embedded library                                                                   |           Library            |                Library                 |
 | Dispatch                      |                                                                        Push (streaming)                                                                        |             Poll             |      Poll plus `LISTEN`/`NOTIFY`       |
-| HA / failover                 | Built-in clustering; a lost node's work re-activates elsewhere. Kubernetes discovery out of the box, or a pluggable provider (static, DNS, NATS, Consul, etcd) | Via Redis (Sentinel/Cluster) | Postgres advisory-lock leader election |
+| HA / failover                 | Built-in clustering; a lost node's work re-activates elsewhere. Kubernetes and static discovery out of the box, or a pluggable provider interface | Via Redis (Sentinel/Cluster) | Postgres advisory-lock leader election |
 | Transactional enqueue         |                                                                               ✗                                                                                |              ✗               |                  ✓ ¹                   |
 | Atomic multi-task enqueue     |                                                                        ✓ (`EnqueueTx`)                                                                         |              ✗               |            ✓ (`InsertMany`)            |
 | SDK languages                 |                                                                     Go, TypeScript, Python                                                                     |              Go              |                   Go                   |

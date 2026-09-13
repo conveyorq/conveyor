@@ -70,6 +70,7 @@ jobs:
               - 'sdks/python/**'
               - 'examples/typescript/**'
               - 'examples/python/**'
+              - 'conformance/**'
               - 'Makefile'
               - '.github/workflows/ci.yml'
 
@@ -197,6 +198,57 @@ jobs:
         run: make lint-ts
       - name: Lint Python (ruff + mypy)
         run: make lint-py
+      # Unit tests for the non-Go code. These are Node/Python only (the SDK
+      # integration suites that need a running conveyord are excluded and run
+      # via the cross-SDK conformance harness in the Go build job instead), so
+      # they belong in this lightweight job rather than the race matrix.
+      - name: Test dashboard (vitest)
+        run: make dashboard-test
+      - name: Test TypeScript SDK (vitest)
+        run: make sdk-ts-test
+      - name: Test Python SDK (pytest)
+        run: make sdk-py-test
+
+  # Cross-SDK protocol conformance: start a real conveyord and drive the Go,
+  # TypeScript, and Python workers through one checklist, asserting each honors
+  # the wire contract (lease-keeping heartbeats, batch member ids, drain without
+  # a burned retry, local Hello validation). It needs all three toolchains, so
+  # it runs in its own job rather than the Go race matrix or the lightweight
+  # lint job. Runs when Go code, an SDK, an example, or the suite changed.
+  conformance:
+    name: Cross-SDK conformance
+    needs: changes
+    if: (needs.changes.outputs.build == 'true' || needs.changes.outputs.ts_py == 'true') && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TZ: UTC
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@v7
+        name: Checkout
+      - uses: actions/setup-go@v7
+        name: Setup Go
+        with:
+          go-version-file: go.mod
+          check-latest: false
+          cache-dependency-path: "**/*.sum"
+      - name: Vendoring
+        run: go mod tidy && go mod vendor
+      - uses: pnpm/action-setup@v6
+        name: Setup pnpm
+        with:
+          version: 12
+      - uses: actions/setup-node@v7
+        name: Setup Node
+        with:
+          node-version: "24"
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        name: Setup uv
+        with:
+          python-version: "3.12"
+      - name: Conformance suite
+        run: make conformance
 
   # Packaging gate: build the image, install the Helm chart on a throwaway kind
   # cluster, and assert the StatefulSet rolls out, the nodes form a cluster

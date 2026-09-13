@@ -142,7 +142,7 @@ func TestLimitGuardsReturnEmpty(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, ready)
 
-	purged, err := store.PurgeCompleted(ctx, 0)
+	purged, err := store.PurgeTerminal(ctx, 0, 0)
 	require.NoError(t, err)
 	require.Zero(t, purged)
 
@@ -314,7 +314,7 @@ func TestPromoteReadyDependentsStopsAtLimit(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestPurgeCompletedClearsLapsedKeysAndStopsAtLimit(t *testing.T) {
+func TestPurgeTerminalClearsLapsedKeysAndStopsAtLimit(t *testing.T) {
 	store, fake := newCoverageBroker(t)
 	now := fake.Now()
 
@@ -327,10 +327,32 @@ func TestPurgeCompletedClearsLapsedKeysAndStopsAtLimit(t *testing.T) {
 		store.tasks[id] = &taskRow{envelope: envelope(id, "q"), state: conveyorv1.TaskState_TASK_STATE_COMPLETED, completedAt: now.Add(-time.Hour)}
 	}
 
-	purged, err := store.PurgeCompleted(context.Background(), 1)
+	purged, err := store.PurgeTerminal(context.Background(), 0, 1)
 	require.NoError(t, err)
 	require.Equal(t, 1, purged)
 	require.Empty(t, store.tasks["lapsed"].uniqueKey)
+}
+
+func TestPurgeTerminalArchivedRowsFollowArchiveRetention(t *testing.T) {
+	store, fake := newCoverageBroker(t)
+	now := fake.Now()
+
+	store.tasks["dead"] = &taskRow{envelope: envelope("dead", "q"), state: conveyorv1.TaskState_TASK_STATE_ARCHIVED, completedAt: now.Add(-2 * time.Hour)}
+	store.tasks["gone"] = &taskRow{envelope: envelope("gone", "q"), state: conveyorv1.TaskState_TASK_STATE_CANCELED, completedAt: now.Add(-2 * time.Hour)}
+	store.tasks["fresh"] = &taskRow{envelope: envelope("fresh", "q"), state: conveyorv1.TaskState_TASK_STATE_ARCHIVED, completedAt: now.Add(-time.Minute)}
+
+	// A zero archive retention keeps dead-lettered and canceled rows forever.
+	purged, err := store.PurgeTerminal(context.Background(), 0, 10)
+	require.NoError(t, err)
+	require.Zero(t, purged)
+
+	// With a retention, only the rows past it go; the fresh one stays.
+	purged, err = store.PurgeTerminal(context.Background(), time.Hour, 10)
+	require.NoError(t, err)
+	require.Equal(t, 2, purged)
+	require.Contains(t, store.tasks, "fresh")
+	require.NotContains(t, store.tasks, "dead")
+	require.NotContains(t, store.tasks, "gone")
 }
 
 func TestArchiveExpiredSkipsAndStopsAtLimit(t *testing.T) {

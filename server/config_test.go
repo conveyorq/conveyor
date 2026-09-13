@@ -79,11 +79,17 @@ mode: cluster
 broker:
   driver: postgres
   dsn: postgres://localhost/conveyor
+  pool:
+    max_conns: 20
+    min_conns: 2
+    connect_timeout: 5s
+    statement_timeout: 30s
 api:
   listen: :9090
   auth_tokens: [secret]
 engine:
   lease_ttl: 90s
+  archive_retention: 48h
 `)
 
 	config, err := LoadConfig(path)
@@ -97,6 +103,15 @@ engine:
 
 	if config.Engine.LeaseTTL != 90*time.Second {
 		t.Errorf("lease_ttl = %s, want 90s", config.Engine.LeaseTTL)
+	}
+
+	if config.Engine.ArchiveRetention != 48*time.Hour {
+		t.Errorf("archive_retention = %s, want 48h", config.Engine.ArchiveRetention)
+	}
+
+	wantPool := PoolConfig{MaxConns: 20, MinConns: 2, ConnectTimeout: 5 * time.Second, StatementTimeout: 30 * time.Second}
+	if config.Broker.Pool != wantPool {
+		t.Errorf("broker.pool = %+v, want %+v", config.Broker.Pool, wantPool)
 	}
 
 	// Untouched keys keep their defaults.
@@ -215,6 +230,12 @@ func TestLoadConfigMissingFile(t *testing.T) {
 	}
 }
 
+func TestArchiveRetentionDefaultKeepsDeadLettersAWeek(t *testing.T) {
+	if got := DefaultConfig().Engine.ArchiveRetention; got != 7*24*time.Hour {
+		t.Errorf("archive_retention default = %s, want 168h so dead-lettered tasks stay inspectable before purge", got)
+	}
+}
+
 func TestEventsEnabledDefaults(t *testing.T) {
 	if DefaultConfig().Events.Enabled {
 		t.Error("events must be off by default in production")
@@ -236,6 +257,7 @@ func TestValidateRejections(t *testing.T) {
 		{"empty listen", func(c *Config) { c.API.Listen = "" }, "api.listen"},
 		{"half tls", func(c *Config) { c.API.TLS.CertFile = "cert.pem" }, "api.tls"},
 		{"bad discovery", func(c *Config) { c.Cluster.Discovery = "zookeeper" }, "cluster.discovery"},
+		{"unwired discovery", func(c *Config) { c.Cluster.Discovery = "nats" }, "cluster.discovery"},
 		{"empty bind addr", func(c *Config) { c.Cluster.BindAddr = "" }, "cluster.bind_addr"},
 		{"k8s without namespace", func(c *Config) {
 			c.Cluster.Discovery = DiscoveryKubernetes
@@ -249,6 +271,12 @@ func TestValidateRejections(t *testing.T) {
 		{"zero lease ttl", func(c *Config) { c.Engine.LeaseTTL = 0 }, "engine.lease_ttl"},
 		{"zero batch", func(c *Config) { c.Engine.LeaseBatchMax = 0 }, "engine.lease_batch_max"},
 		{"negative retry", func(c *Config) { c.Engine.DefaultMaxRetry = -1 }, "engine.default_max_retry"},
+		{"negative archive retention", func(c *Config) { c.Engine.ArchiveRetention = -time.Second }, "engine.archive_retention"},
+		{"negative pool max", func(c *Config) { c.Broker.Pool.MaxConns = -1 }, "broker.pool.max_conns"},
+		{"negative pool min", func(c *Config) { c.Broker.Pool.MinConns = -1 }, "broker.pool.min_conns"},
+		{"pool min above max", func(c *Config) { c.Broker.Pool = PoolConfig{MaxConns: 2, MinConns: 3} }, "broker.pool.min_conns"},
+		{"negative connect timeout", func(c *Config) { c.Broker.Pool.ConnectTimeout = -time.Second }, "broker.pool.connect_timeout"},
+		{"negative statement timeout", func(c *Config) { c.Broker.Pool.StatementTimeout = -time.Second }, "broker.pool.statement_timeout"},
 		{"negative rate", func(c *Config) { c.Engine.RateLimitRatePerSec = -1 }, "engine.rate_limit_rate_per_sec"},
 		{"rate without burst", func(c *Config) { c.Engine.RateLimitRatePerSec = 50 }, "engine.rate_limit_burst"},
 		{"bad retry strategy", func(c *Config) { c.Engine.RetryBackoffStrategy = "quadratic" }, "engine.retry_backoff_strategy"},
@@ -297,6 +325,19 @@ func TestValidateRejections(t *testing.T) {
 			c.API.AllowUnauthenticated = false
 			c.WebhookWorkers = []WebhookWorkerConfig{validWebhookWorker(func(w *WebhookWorkerConfig) { w.URL = "http://example.com/tasks" })}
 		}, "webhook_workers[0].url"},
+		{"webhook worker private ip target", func(c *Config) {
+			c.Webhooks.AllowPrivateTargets = false
+			c.WebhookWorkers = []WebhookWorkerConfig{validWebhookWorker(func(w *WebhookWorkerConfig) { w.URL = "https://10.0.0.5/tasks" })}
+		}, "webhook_workers[0].url"},
+		{"scoped token empty value", func(c *Config) {
+			c.API.ScopedTokens = []ScopedTokenConfig{{Token: "", Scopes: []string{"produce"}}}
+		}, "api.scoped_tokens[0].token"},
+		{"scoped token no scopes", func(c *Config) {
+			c.API.ScopedTokens = []ScopedTokenConfig{{Token: "t", Scopes: nil}}
+		}, "api.scoped_tokens[0].scopes"},
+		{"scoped token unknown scope", func(c *Config) {
+			c.API.ScopedTokens = []ScopedTokenConfig{{Token: "t", Scopes: []string{"delete"}}}
+		}, "api.scoped_tokens[0].scopes"},
 	}
 
 	for _, tc := range cases {
@@ -347,6 +388,22 @@ func TestValidateWebhookWorkersAcceptsValidEntries(t *testing.T) {
 	}
 }
 
+func TestValidateAcceptsScopedTokensAndPrivateTargets(t *testing.T) {
+	config := DevConfig()
+	config.API.ScopedTokens = []ScopedTokenConfig{
+		{Token: "producer", Scopes: []string{"produce"}},
+		{Token: "operator", Scopes: []string{"consume", "admin"}},
+	}
+	config.Webhooks.AllowPrivateTargets = true
+	config.WebhookWorkers = []WebhookWorkerConfig{
+		validWebhookWorker(func(w *WebhookWorkerConfig) { w.URL = "https://10.0.0.5/tasks" }),
+	}
+
+	if err := config.Validate(); err != nil {
+		t.Fatalf("scoped tokens and a private target with the flag set must validate: %v", err)
+	}
+}
+
 func TestValidateAcceptsAllModesAndProviders(t *testing.T) {
 	for _, mode := range []string{ModeStandalone, ModeCluster, ModeKubernetes} {
 		config := DevConfig()
@@ -357,10 +414,7 @@ func TestValidateAcceptsAllModesAndProviders(t *testing.T) {
 		}
 	}
 
-	providers := []string{
-		DiscoveryStatic, DiscoveryNATS, DiscoveryConsul, DiscoveryEtcd,
-		DiscoveryMDNS, DiscoveryDNSSD, DiscoveryKubernetes,
-	}
+	providers := []string{DiscoveryStatic, DiscoveryKubernetes}
 
 	for _, p := range providers {
 		config := DevConfig()

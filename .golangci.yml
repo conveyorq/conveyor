@@ -62,6 +62,13 @@ linters:
       - linters:
           - revive
         text: "avoid meaningless package names"
+      # The cross-SDK conformance suite is a black-box integration harness that
+      # drives real subprocesses (conveyord and the SDK workers) over real
+      # wall-clock time; it has no injected clock, so time.Now is the correct
+      # source there. It is still linted for everything else.
+      - linters:
+          - forbidigo
+        path: conformance/
 
 formatters:
   enable:

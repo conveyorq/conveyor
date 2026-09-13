@@ -184,13 +184,13 @@ func TestBuildBrokerRejectsUnknownDriver(t *testing.T) {
 }
 
 func TestBuildDiscoveryRejectsUnwiredProviders(t *testing.T) {
+	// Construct the node directly so Validate (which now rejects an unwired
+	// name up front) does not intercept it: this asserts buildDiscovery's own
+	// rejection of a name that is neither wired nor a registered custom provider.
 	config := DevConfig()
-	config.Cluster.Discovery = DiscoveryNATS
+	config.Cluster.Discovery = "nats"
 
-	node, err := New(config, NewLogger(config.Log))
-	if err != nil {
-		t.Fatal(err)
-	}
+	node := &Server{config: config, logger: NewLogger(config.Log)}
 
 	if _, err := node.buildDiscovery(); err == nil {
 		t.Fatal("expected an error for a provider that is not wired yet")

@@ -92,7 +92,7 @@ For a **worker session**, an SDK MUST classify the terminal stream error:
 A worker holds exactly one `Session` stream: `rpc Session(stream WorkerMessage) returns (stream ServerMessage)`.
 
 ```
-WorkerMessage.frame = { Hello | Credit | Result | Heartbeat | BatchResult }
+WorkerMessage.frame = { Hello | Credit | Result | Heartbeat | BatchResult | Progress }
 ServerMessage.frame = { Welcome | Dispatch | Cancel | Ping | BatchDispatch }
 ```
 
@@ -207,6 +207,8 @@ Mapping guidance for SDK authors (how the Go SDK derives the outcome):
 - Handler returns any other error, **or panics/raises an uncaught exception** (which the SDK MUST recover and convert to a retryable error) → `RETRY`.
 - Worker is draining and chooses to hand a task back un-run → `RELEASED`.
 
+**Progress (worker → server), OPTIONAL.** While a task runs, a worker MAY send `Progress { task_id, percent, message }` to record how far along it is. It is advisory: it never gates execution, the server persists the latest value for inspection, and an unknown `task_id` is dropped. SDKs SHOULD coalesce frequent updates rather than sending one per tick.
+
 ### 5.9 Reconnection
 
 On a transient stream end (§4), the worker SHOULD reconnect with **exponential backoff and full jitter**:
@@ -270,6 +272,9 @@ Unary RPCs. All inputs validated server-side; violations return `invalid_argumen
 | `retention`                 | OPTIONAL how long to keep the completed row before purge.                                                                                |
 | `group`                     | OPTIONAL aggregation group key (§5.11). The task accumulates as `aggregating` and is batch-delivered when its group fires. **Mutually exclusive** with `process_at`/`process_in`. |
 | `expires_in` / `expires_at` | OPTIONAL pre-dispatch TTL: a task still waiting (scheduled/pending/retry) when it passes is **archived** instead of run. **Mutually exclusive** (both set → error); `expires_in` resolves to `now + expires_in`. Distinct from `deadline` (cancels a *running* task) and `retention` (purges a *completed* one). |
+| `depends_on`                | OPTIONAL list of `TaskDependency { task_id, failure_policy }`. The task stays **`BLOCKED`** and is not eligible to lease until every dependency reaches terminal success; each dependency's `failure_policy` (`BLOCK` (default), `CASCADE_CANCEL`, or `CONTINUE`) governs what happens if it fails terminally instead. |
+| `concurrency_key`           | OPTIONAL key that caps how many tasks sharing it run at once, up to the queue's configured concurrency limit (§5 / `docs/concurrency.md`). **Mutually exclusive** with `group`. |
+| `retry_policy`              | OPTIONAL `RetryPolicy { strategy, base, max }` overriding the server's default retry backoff for this task; unset uses the server default. |
 
 - `EnqueueResponse.task` is a `TaskInfo` reflecting the committed task and its initial state (`SCHEDULED` if delayed, else `PENDING`).
 - `EnqueueBatch` accepts **1..1000** items. Items fail **independently**: `EnqueueBatchResponse.results[i]` carries either the committed `task` or a non-empty `error` string for item *i*, positionally. The RPC itself succeeds unless the batch is empty or oversized.
@@ -279,7 +284,7 @@ Unary RPCs. All inputs validated server-side; violations return `invalid_argumen
 
 `GetTaskRequest { id }` → `TaskInfo`. Empty id → `invalid_argument`; unknown id → `not_found`.
 
-`TaskInfo` is the externally visible task view (id, queue, type, `TaskState`, priority, retried, max_retry, last_error, timestamps, payload, content_type, started_at). `TaskState` values are stable and MUST NOT be renumbered: `SCHEDULED, PENDING, ACTIVE, RETRY, COMPLETED, ARCHIVED, CANCELED, AGGREGATING`.
+`TaskInfo` is the externally visible task view (id, queue, type, `TaskState`, priority, retried, max_retry, last_error, timestamps, payload, content_type, started_at). `TaskState` values are stable and MUST NOT be renumbered: `SCHEDULED, PENDING, ACTIVE, RETRY, COMPLETED, ARCHIVED, CANCELED, AGGREGATING, BLOCKED`.
 
 ---
 
@@ -293,7 +298,7 @@ Batch actions report per-id outcomes positionally in `BatchTasksResponse.results
 
 ## 8. Versioning & compatibility
 
-- The protocol namespace is **`conveyor.v1`**. The project is pre-1.0 (current release `v0.1.0`), so the wire is **not yet frozen**: a breaking change remains possible before the 1.0.0 release. From **1.0.0** on, changes within `conveyor.v1` are **additive only**: new fields and messages, never renumbered or removed; enum values appended, never repurposed.
+- The protocol namespace is **`conveyor.v1`**. The project is pre-1.0, so the wire is **not yet frozen**: a breaking change remains possible before the 1.0.0 release. From **1.0.0** on, changes within `conveyor.v1` are **additive only**: new fields and messages, never renumbered or removed; enum values appended, never repurposed.
 - The session opens with a **two-way version handshake**:
   - A worker advertises its SDK build in `Hello.sdk_version`. The server enforces a **minimum SDK version**: a value that parses as semver and is older than the minimum is rejected with `invalid_argument`; any non-semver value (dev builds, `"unknown"`, custom clients) is admitted. The current minimum is vacuous (`v0.0.0-0`, admits everything) and will be raised only if a future wire change leaves older SDKs behind.
   - A worker MAY demand a **minimum server version** in `Hello.min_server_version`. The server rejects the session with `invalid_argument` when its own version is older. The check fires only when both the requirement and the server version are comparable semver, so dev builds never trip it.

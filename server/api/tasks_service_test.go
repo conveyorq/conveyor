@@ -28,6 +28,21 @@ func newTestTaskService(t *testing.T) *TaskService {
 	return NewTaskService(engine, taskLog, clock.System(), testDefaultMaxRetry)
 }
 
+// TestMaxRequestBytesAdmitsFullBatch locks the wire read limit that the server
+// applies via connect.WithReadMaxBytes: it must be large enough to admit the
+// largest legitimate request — a full EnqueueBatch of maxBatchTasks tasks each
+// at the payload cap — with room for per-task field overhead, so hardening the
+// server against unbounded input never rejects a valid maximum batch. The
+// ~1 GiB boundary itself is not exercised end to end, since sending that much
+// in a test would exhaust the runner.
+func TestMaxRequestBytesAdmitsFullBatch(t *testing.T) {
+	fullBatchPayload := maxBatchTasks * maxPayloadBytes
+
+	require.Greater(t, MaxRequestBytes, fullBatchPayload,
+		"the read limit must admit a full batch of payload-cap tasks plus field overhead")
+	require.Equal(t, maxBatchTasks*(maxPayloadBytes+perTaskOverheadBytes), MaxRequestBytes)
+}
+
 func TestEnqueueValidation(t *testing.T) {
 	service := newTestTaskService(t)
 	ctx := context.Background()

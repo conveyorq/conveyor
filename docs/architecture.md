@@ -79,7 +79,7 @@ It reacts to wakes (`TasksAvailable`), gateway registrations and credits, and co
 
 The bridge between the actor world and one worker's stream. Spawned per accepted session, **long-lived** (must not passivate while the stream is open) and **relocation-disabled** (it is bound to a node-local stream and dies with its node). It is the only component that performs durable execution transitions for its worker's tasks.
 
-- On start and every 30 s (`registerTick`) it announces its capacity to each queue it serves via `RegisterGateway`; this re-announcement is what heals a grain that relocated to another node.
+- On start and every 30 s (`registerTick`) it announces its capacity to each queue it serves via `RegisterGateway`; this re-announcement is what heals a grain that relocated to another node. The capacity announced to a queue is the worker's total `concurrency` **split across the queues it serves in proportion to their weights** (`splitCapacity`), so the worker holds at most `concurrency` tasks in flight across all its queues, not that many per queue. Each queue keeps a guaranteed weighted share (floored at one slot), which is what gives cross-queue fairness.
 - It pushes `Dispatch`/`BatchDispatch` frames to the worker and records each as in-flight under a lease id.
 - On a `Result` it maps the outcome to a broker call: `Ack` (success), `Fail` with backoff or `Archive` (retry / exhausted / `SkipRetry`), or `Release` (graceful drain), all scoped to the delivery's lease id; a lost lease is logged and dropped.
 - A `Heartbeat` extends every in-flight lease; a lost lease cancels that task on the worker.
@@ -182,7 +182,7 @@ stateDiagram-v2
 
 ### Enqueue → dispatch (credit-based push)
 
-Credits are the flow-control currency. The server **seeds** a session's credits equal to the worker's declared `concurrency` and refills exactly one per completion; the optional `Credit` frame exists for workers that open slots without finishing a task, but the happy path never needs it.
+Credits are the flow-control currency. The server **seeds** a session's credits from the worker's declared `concurrency` — split across the queues it serves by weight, so the total across queues equals `concurrency` — and refills exactly one per completion; the optional `Credit` frame exists for workers that open slots without finishing a task, but the happy path never needs it.
 
 ```mermaid
 sequenceDiagram

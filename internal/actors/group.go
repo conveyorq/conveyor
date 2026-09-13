@@ -15,6 +15,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/conveyorq/conveyor/internal/broker"
+	"github.com/conveyorq/conveyor/internal/metrics"
 	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 )
 
@@ -113,7 +114,8 @@ func (s *GroupSweeper) sweep(ctx *goakt.ReceiveContext) {
 	if err != nil {
 		// Runs under the default Stop directive like the reaper: skip this pass
 		// rather than escalate; the next tick retries.
-		s.runtime.Logger().Warn("group sweep: group stats failed", "error", err)
+		s.runtime.Logger().Warn("group sweep: group stats failed", "pass", metrics.PassGroupSweep, "error", err)
+		s.runtime.Metrics().MaintenanceFailure(goCtx, metrics.PassGroupSweep)
 
 		return
 	}
@@ -133,7 +135,8 @@ func (s *GroupSweeper) sweep(ctx *goakt.ReceiveContext) {
 	// so aggregation keeps firing even if the config table is briefly unreadable.
 	overrides, err := s.runtime.Broker().GroupConfigs(goCtx)
 	if err != nil {
-		s.runtime.Logger().Warn("group sweep: group configs failed; using global defaults", "error", err)
+		s.runtime.Logger().Warn("group sweep: group configs failed; using global defaults", "pass", metrics.PassGroupSweep, "error", err)
+		s.runtime.Metrics().MaintenanceFailure(goCtx, metrics.PassGroupSweep)
 	}
 
 	index := indexGroupConfigs(overrides)
@@ -201,14 +204,16 @@ func fireGroup(ctx context.Context, system goakt.ActorSystem, runtime *Runtime, 
 	identity, err := goakt.GrainOf[*QueueGrain](ctx, system, QueueGrainName(queue),
 		goakt.WithGrainDeactivateAfter(runtime.Settings().PassivateAfter))
 	if err != nil {
-		runtime.Logger().Warn("resolving queue grain failed", "queue", queue, "error", err)
+		runtime.Logger().Warn("resolving queue grain failed", "pass", metrics.PassGroupSweep, "queue", queue, "error", err)
+		runtime.Metrics().MaintenanceFailure(ctx, metrics.PassGroupSweep)
 
 		return
 	}
 
 	message := &conveyorv1.FireGroup{Queue: queue, Group: group, Type: taskType, Limit: int32(limit)}
 	if err := system.TellGrain(ctx, identity, message); err != nil {
-		runtime.Logger().Warn("firing group failed", "queue", queue, "group", group, "error", err)
+		runtime.Logger().Warn("firing group failed", "pass", metrics.PassGroupSweep, "queue", queue, "group", group, "error", err)
+		runtime.Metrics().MaintenanceFailure(ctx, metrics.PassGroupSweep)
 	}
 }
 
@@ -365,6 +370,7 @@ func (g *Gateway) dispatchBatch(message *conveyorv1.ExecuteBatch) {
 			taskType:     task.GetType(),
 			retried:      task.GetRetried(),
 			maxRetry:     task.GetOptions().GetMaxRetry(),
+			strategy:     g.strategyFor(task.GetOptions().GetRetryPolicy()),
 		}
 
 		ids = append(ids, task.GetId())
@@ -463,6 +469,12 @@ func (g *Gateway) batchResult(ctx *goakt.ReceiveContext, message *conveyorv1.Bat
 	total := 0
 	succeeded := 0
 
+	// Successful members complete together in one broker round trip; every
+	// other outcome runs through applyOutcome one member at a time.
+	var successes []broker.AckItem
+
+	entries := make(map[string]*inflightTask, len(members))
+
 	for _, taskID := range members {
 		entry, ok := g.inflight[taskID]
 		if !ok {
@@ -470,12 +482,19 @@ func (g *Gateway) batchResult(ctx *goakt.ReceiveContext, message *conveyorv1.Bat
 		}
 
 		delete(g.inflight, taskID)
+		entries[taskID] = entry
 		total++
 
 		result := resultByID[taskID]
 		if result == nil {
 			// Omitted from the batch result: released, no retry penalty.
 			result = &conveyorv1.Result{TaskId: taskID, Outcome: conveyorv1.TaskOutcome_TASK_OUTCOME_RELEASED}
+		}
+
+		if result.GetOutcome() == conveyorv1.TaskOutcome_TASK_OUTCOME_SUCCESS {
+			successes = append(successes, broker.AckItem{TaskID: taskID, LeaseID: entry.leaseID, Result: result.GetResult()})
+
+			continue
 		}
 
 		success, terminal := applyOutcome(goCtx, g.runtime, entry, result)
@@ -490,7 +509,48 @@ func (g *Gateway) batchResult(ctx *goakt.ReceiveContext, message *conveyorv1.Bat
 		}
 	}
 
+	for _, taskID := range g.ackBatch(goCtx, successes, entries) {
+		succeeded++
+		g.resolveDependents(ctx, taskID)
+	}
+
 	g.reportBatchCompletion(ctx, queue, total, succeeded)
+}
+
+// ackBatch completes a batch's successful members in one broker round trip,
+// mirroring what applyOutcome does per member on SUCCESS: it records each
+// member's outcome and process duration and returns the ids that completed. A
+// member whose lease was lost to another delivery is missing from the broker's
+// answer and earns no completion, exactly as the single-task path treats a
+// lost lease; a broker error completes none and is logged the same way.
+func (g *Gateway) ackBatch(goCtx context.Context, items []broker.AckItem, entries map[string]*inflightTask) []string {
+	if len(items) == 0 {
+		return nil
+	}
+
+	acked, err := g.runtime.Broker().AckBatch(goCtx, items)
+	if err != nil {
+		g.runtime.Logger().Warn("durable transition failed", "members", len(items), "error", err)
+	}
+
+	completed := make(map[string]struct{}, len(acked))
+	for _, taskID := range acked {
+		completed[taskID] = struct{}{}
+	}
+
+	now := g.runtime.Clock().Now()
+
+	for _, item := range items {
+		entry := entries[item.TaskID]
+		g.recordOutcome(entry.taskType, conveyorv1.TaskOutcome_TASK_OUTCOME_SUCCESS)
+		g.runtime.Metrics().RecordProcessDuration(context.Background(), now.Sub(entry.dispatchedAt).Seconds(), entry.queue)
+
+		if _, ok := completed[item.TaskID]; !ok && err == nil {
+			g.runtime.Logger().Debug("result discarded: lease lost to another delivery", "task_id", item.TaskID)
+		}
+	}
+
+	return acked
 }
 
 // reportBatchCompletion tells the queue grain a batch finished: its members

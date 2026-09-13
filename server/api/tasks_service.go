@@ -43,6 +43,17 @@ const maxDependencies = 1000
 // maxBatchTasks caps the number of items in one EnqueueBatch request.
 const maxBatchTasks = 1000
 
+// perTaskOverheadBytes bounds one task's non-payload fields (id, queue, type,
+// metadata, options) beyond the payload cap when sizing the request read limit.
+const perTaskOverheadBytes = 64 << 10
+
+// MaxRequestBytes bounds one decoded API request, and one frame of a stream, so
+// the server rejects an oversized message before decoding it rather than after.
+// It is the largest legitimate request: a full EnqueueBatch of maxBatchTasks
+// tasks, each at the payload cap plus field overhead. The per-task payload cap
+// (maxPayloadBytes) is still enforced per task after decode.
+const MaxRequestBytes = maxBatchTasks * (maxPayloadBytes + perTaskOverheadBytes)
+
 // TaskService serves the enqueue-side API.
 type TaskService struct {
 	// engine commits tasks and wakes their queue grains.

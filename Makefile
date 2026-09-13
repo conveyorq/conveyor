@@ -42,7 +42,7 @@ COPYRIGHT_HOLDER   := ConveyorQ
 GO_SOURCES         := $(shell find . -path ./vendor -prune -o -name '*.go' -print)
 ADDLICENSE         := GOFLAGS= $(GO) run github.com/google/addlicense@$(ADDLICENSE_VERSION) -l apache -s -c "$(COPYRIGHT_HOLDER)"
 
-.PHONY: help all image build test lint lint-go lint-ts lint-py license-check license-fix licenses proto proto-format proto-lint proto-breaking quickstart chaos e2e e2e-clean e2e-dashboard e2e-demo postmark-demo postmark-stats postmark-pause postmark-resume postmark-archived postmark-events postmark-kill-node postmark-down postmark-clean benchmark helm-lint release clean dashboard dashboard-gen dashboard-test sdk-gen sdk-ts-gen sdk-ts-test sdk-py-gen sdk-py-test
+.PHONY: help all image build test lint lint-go lint-ts lint-py license-check license-fix licenses proto proto-format proto-lint proto-breaking quickstart chaos e2e e2e-clean e2e-dashboard e2e-demo postmark-demo postmark-stats postmark-pause postmark-resume postmark-archived postmark-events postmark-kill-node postmark-down postmark-clean benchmark helm-lint release clean dashboard dashboard-gen dashboard-test sdk-gen sdk-ts-gen sdk-ts-test sdk-ts-test-integration sdk-py-gen sdk-py-test conformance
 
 help: ## Show available targets
 	@awk 'BEGIN{FS=":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -207,7 +207,10 @@ sdk-ts-gen: ## Regenerate the TypeScript SDK's protobuf from the protos
 	buf generate --template buf.gen.ts.yaml
 
 sdk-ts-test: ## Run the TypeScript SDK unit tests (needs Node)
-	cd $(SDK_TS_DIR) && pnpm install && pnpm test
+	cd $(SDK_TS_DIR) && pnpm install && pnpm exec vitest run --exclude '**/integration.test.ts'
+
+sdk-ts-test-integration: ## Run the TypeScript SDK integration tests (needs Node + Go)
+	cd $(SDK_TS_DIR) && pnpm install && pnpm exec vitest run integration.test.ts
 
 sdk-gen: sdk-ts-gen sdk-py-gen ## Regenerate both SDKs' protobuf stubs from the protos
 
@@ -232,6 +235,14 @@ sdk-py-gen: ## Regenerate the Python SDK's protobuf + gRPC stubs from the protos
 sdk-py-test: ## Run the Python SDK unit tests (needs Python + uv)
 	cd $(SDK_PY_DIR) && { test -d .venv || uv venv .venv; } && uv pip install --python .venv -e ".[dev]" && \
 		.venv/bin/python -m pytest tests -k "not integration"
+
+conformance: ## Run the cross-SDK protocol conformance suite (needs Go + Node + Python)
+	# The TypeScript SDK ships from dist/, so build it and refresh the example's
+	# copy; the Python SDK is installed editable, so its source is already live.
+	cd $(SDK_TS_DIR) && pnpm install --frozen-lockfile && pnpm run build
+	cd $(EXAMPLES_TS_DIR) && pnpm install
+	cd $(SDK_PY_DIR) && { test -d .venv || uv venv .venv; } && uv pip install --python .venv -e ".[dev]"
+	$(GO) test -tags=conformance -count=1 -timeout 10m -v ./conformance/
 
 # Lint the chart and prove it renders with both standalone and clustered
 # value sets. Runs on the host helm (not the tools image).

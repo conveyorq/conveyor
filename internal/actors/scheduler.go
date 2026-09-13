@@ -14,6 +14,7 @@ import (
 
 	"github.com/conveyorq/conveyor/internal/broker"
 	"github.com/conveyorq/conveyor/internal/cron"
+	"github.com/conveyorq/conveyor/internal/metrics"
 	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 )
 
@@ -109,7 +110,7 @@ func (s *Scheduler) promote(ctx *goakt.ReceiveContext) {
 
 	queues, err := s.runtime.Broker().PromoteScheduled(goCtx, s.runtime.Settings().LeaseBatchMax)
 	if err != nil {
-		s.runtime.Logger().Warn("promoting scheduled tasks failed", "error", err)
+		s.failed(goCtx, metrics.PassPromoteScheduled, "promoting scheduled tasks failed", err)
 	} else {
 		for _, queue := range queues {
 			wakeQueue(goCtx, ctx.ActorSystem(), s.runtime, queue, 0)
@@ -117,6 +118,15 @@ func (s *Scheduler) promote(ctx *goakt.ReceiveContext) {
 	}
 
 	s.materializeCron(ctx)
+}
+
+// failed records one failed maintenance pass: it logs the error and counts it
+// under the pass, so a broker fault that keeps a pass from running is visible
+// beyond the log. Cron sub-steps share the cron pass, with the entry id in the
+// log line.
+func (s *Scheduler) failed(ctx context.Context, pass, message string, err error, fields ...any) {
+	s.runtime.Logger().Warn(message, append([]any{"pass", pass, "error", err}, fields...)...)
+	s.runtime.Metrics().MaintenanceFailure(ctx, pass)
 }
 
 // materializeCron fires every cron entry that is due, enqueuing a task for the
@@ -132,7 +142,7 @@ func (s *Scheduler) materializeCron(ctx *goakt.ReceiveContext) {
 
 	entries, err := s.runtime.Broker().ListDueCronEntries(goCtx, now)
 	if err != nil {
-		s.runtime.Logger().Warn("listing due cron entries failed", "error", err)
+		s.failed(goCtx, metrics.PassCron, "listing due cron entries failed", err)
 
 		return
 	}
@@ -153,14 +163,14 @@ func (s *Scheduler) materializeCron(ctx *goakt.ReceiveContext) {
 func (s *Scheduler) armCron(ctx context.Context, entry *broker.CronEntry, now time.Time) {
 	next, err := cron.NextFire(entry.Spec, now)
 	if err != nil {
-		s.runtime.Logger().Warn("arming cron entry failed", "id", entry.ID, "error", err)
+		s.failed(ctx, metrics.PassCron, "arming cron entry failed", err, "id", entry.ID)
 
 		return
 	}
 
 	// Expected is the zero time: arm only while the entry is still unarmed.
 	if err := s.runtime.Broker().UpdateCronNextRun(ctx, entry.ID, time.Time{}, next); err != nil {
-		s.runtime.Logger().Warn("persisting cron next run failed", "id", entry.ID, "error", err)
+		s.failed(ctx, metrics.PassCron, "persisting cron next run failed", err, "id", entry.ID)
 	}
 }
 
@@ -179,14 +189,14 @@ func (s *Scheduler) fireCron(goCtx context.Context, ctx *goakt.ReceiveContext, e
 		// Slot already materialized (failover/double-tick); advancing is safe.
 
 	default:
-		s.runtime.Logger().Warn("materializing cron task failed", "id", entry.ID, "error", err)
+		s.failed(goCtx, metrics.PassCron, "materializing cron task failed", err, "id", entry.ID)
 
 		return
 	}
 
 	next, err := cron.NextFire(entry.Spec, now)
 	if err != nil {
-		s.runtime.Logger().Warn("advancing cron entry failed", "id", entry.ID, "error", err)
+		s.failed(goCtx, metrics.PassCron, "advancing cron entry failed", err, "id", entry.ID)
 
 		return
 	}
@@ -194,6 +204,6 @@ func (s *Scheduler) fireCron(goCtx context.Context, ctx *goakt.ReceiveContext, e
 	// Compare-and-set on the slot we just fired: if another scheduler already
 	// advanced, this is a no-op and the cursor never moves backward.
 	if err := s.runtime.Broker().UpdateCronNextRun(goCtx, entry.ID, entry.NextRunAt, next); err != nil {
-		s.runtime.Logger().Warn("persisting cron next run failed", "id", entry.ID, "error", err)
+		s.failed(goCtx, metrics.PassCron, "persisting cron next run failed", err, "id", entry.ID)
 	}
 }
