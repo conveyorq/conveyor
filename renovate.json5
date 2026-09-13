@@ -8,6 +8,8 @@
     ':semanticCommitTypeAll(chore)',
   ],
 
+  "dependencyDashboard": false,
+
   // Check once a week, early Wednesday, so updates land in one predictable batch.
   timezone: "UTC",
   schedule: ["before 5am on wednesday"],
