@@ -91,6 +91,14 @@ func startServer(t *testing.T, root, conveyord string) *conformanceServer {
 	require.NoError(t, cmd.Start())
 	t.Cleanup(func() { terminate(cmd) })
 
+	// A failed check is only diagnosable with the server's side of the story,
+	// so its log is printed then; a passing run stays quiet.
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("server log:\n%s", server.log.String())
+		}
+	})
+
 	return server
 }
 

@@ -298,8 +298,6 @@ type WebhookGateway struct {
 	// signer stamps the delivery signature headers, keyed by the
 	// registration's newest secret.
 	signer *webhook.HMACSigner
-	// identities caches the queue grain identity per served queue.
-	identities map[string]*goakt.GrainIdentity
 	// capacities is the registration's concurrency split across its queues by
 	// weight, the share each queue is announced while the endpoint is healthy.
 	capacities map[string]int32
@@ -362,7 +360,6 @@ func (w *WebhookGateway) PreStart(ctx *goakt.Context) error {
 
 	w.client = webhook.NewClient(runtime.Settings().AllowPrivateWebhookTargets)
 	w.signer = webhook.NewHMACSigner(w.registration.Secrets[0], runtime.Clock())
-	w.identities = make(map[string]*goakt.GrainIdentity, len(w.registration.Queues))
 	w.capacities = w.splitCapacities()
 	w.inflight = make(map[string]*inflightTask)
 	w.batchStates = make(map[string]*webhookBatch)
@@ -478,31 +475,25 @@ func armTick(ctx *goakt.ReceiveContext, message any, reference string) error {
 // register announces this gateway and its capacity to every served queue
 // grain, exactly like a stream gateway announces its session.
 func (w *WebhookGateway) register(ctx *goakt.ReceiveContext) {
-	goCtx := ctx.Context()
-	system := ctx.ActorSystem()
-
 	for queue, weight := range w.registration.Queues {
-		identity, err := goakt.GrainOf[*QueueGrain](goCtx, system, QueueGrainName(queue),
-			goakt.WithGrainDeactivateAfter(w.runtime.Settings().PassivateAfter))
-		if err != nil {
-			w.runtime.Logger().Warn("resolving queue grain failed; next tick retries", "queue", queue, "error", err)
-
-			continue
-		}
-
-		w.identities[queue] = identity
-
-		err = system.TellGrain(goCtx, identity, &conveyorv1.RegisterGateway{
+		registration := &conveyorv1.RegisterGateway{
 			Queue:       queue,
 			GatewayName: w.name,
 			Capacity:    w.capacity(queue),
 			BatchTypes:  w.registration.BatchTypes,
 			Weight:      weight,
-		})
-		if err != nil {
-			w.runtime.Logger().Warn("webhook gateway registration failed; next tick retries", "queue", queue, "error", err)
 		}
+
+		tellQueueGrain(ctx.Context(), ctx.ActorSystem(), w.runtime, queue, registration, "webhook gateway registration failed; next tick retries", nil)
 	}
+}
+
+// serves reports whether the current registration declares the queue; a
+// report for any other queue belongs to no grain this gateway registered with.
+func (w *WebhookGateway) serves(queue string) bool {
+	_, served := w.registration.Queues[queue]
+
+	return served
 }
 
 // capacity is the concurrency this gateway announces for one queue: the
@@ -671,20 +662,13 @@ func (w *WebhookGateway) deferCompletion(ctx *goakt.ReceiveContext, queue, taskI
 // announce zero capacity so their grains stop leasing here, then the new
 // snapshot registers.
 func (w *WebhookGateway) apply(ctx *goakt.ReceiveContext, worker *broker.WebhookWorker) {
-	goCtx := ctx.Context()
-	system := ctx.ActorSystem()
-
-	for queue, identity := range w.identities {
+	for queue := range w.registration.Queues {
 		if _, kept := worker.Queues[queue]; kept {
 			continue
 		}
 
 		withdraw := &conveyorv1.RegisterGateway{Queue: queue, GatewayName: w.name}
-		if err := system.TellGrain(goCtx, identity, withdraw); err != nil {
-			w.runtime.Logger().Warn("withdrawing webhook gateway failed", "queue", queue, "error", err)
-		}
-
-		delete(w.identities, queue)
+		tellQueueGrain(ctx.Context(), ctx.ActorSystem(), w.runtime, queue, withdraw, "withdrawing webhook gateway failed", nil)
 	}
 
 	w.registration = worker
@@ -1089,17 +1073,14 @@ func (w *WebhookGateway) dropDelivery(ctx *goakt.ReceiveContext, taskID string, 
 // the reaper redelivers it — so no completion is reported and no outcome
 // counted; only the credit returns, capped at capacity by the grain.
 func (w *WebhookGateway) refillCredit(ctx *goakt.ReceiveContext, queue string) {
-	identity, ok := w.identities[queue]
-	if !ok {
+	if !w.serves(queue) {
 		w.runtime.Logger().Warn("webhook credit refill dropped: queue not registered", "queue", queue)
 
 		return
 	}
 
 	credit := &conveyorv1.GatewayCredit{Queue: queue, GatewayName: w.name, Credits: 1}
-	if err := ctx.ActorSystem().TellGrain(ctx.Context(), identity, credit); err != nil {
-		w.runtime.Logger().Warn("webhook credit refill failed", "queue", queue, "error", err)
-	}
+	tellQueueGrain(ctx.Context(), ctx.ActorSystem(), w.runtime, queue, credit, "webhook credit refill failed", nil)
 }
 
 // extendLeases keeps every open synchronous delivery's lease alive; the
@@ -1228,8 +1209,7 @@ func (w *WebhookGateway) resolveDependents(ctx *goakt.ReceiveContext, taskID str
 // reportCompletion tells the task's queue grain that one execution slot is
 // free again.
 func (w *WebhookGateway) reportCompletion(ctx *goakt.ReceiveContext, queue, taskID string, success bool) {
-	identity, ok := w.identities[queue]
-	if !ok {
+	if !w.serves(queue) {
 		w.runtime.Logger().Warn("webhook completion report dropped: queue not registered", "queue", queue, "task_id", taskID)
 
 		return
@@ -1242,16 +1222,13 @@ func (w *WebhookGateway) reportCompletion(ctx *goakt.ReceiveContext, queue, task
 		GatewayName: w.name,
 	}
 
-	if err := ctx.ActorSystem().TellGrain(ctx.Context(), identity, completed); err != nil {
-		w.runtime.Logger().Warn("webhook completion report failed", "task_id", taskID, "error", err)
-	}
+	tellQueueGrain(ctx.Context(), ctx.ActorSystem(), w.runtime, queue, completed, "webhook completion report failed", nil, "task_id", taskID)
 }
 
 // reportBatchCompletion tells the queue grain a batch finished, refilling
 // the one credit the batch held.
 func (w *WebhookGateway) reportBatchCompletion(ctx *goakt.ReceiveContext, queue string, total, succeeded int) {
-	identity, ok := w.identities[queue]
-	if !ok {
+	if !w.serves(queue) {
 		w.runtime.Logger().Warn("webhook batch completion report dropped: queue not registered", "queue", queue)
 
 		return
@@ -1264,9 +1241,7 @@ func (w *WebhookGateway) reportBatchCompletion(ctx *goakt.ReceiveContext, queue 
 		Succeeded:   int32(succeeded),
 	}
 
-	if err := ctx.ActorSystem().TellGrain(ctx.Context(), identity, completed); err != nil {
-		w.runtime.Logger().Warn("webhook batch completion report failed", "queue", queue, "error", err)
-	}
+	tellQueueGrain(ctx.Context(), ctx.ActorSystem(), w.runtime, queue, completed, "webhook batch completion report failed", nil)
 }
 
 // deliveryResult translates one classified endpoint answer into the wire

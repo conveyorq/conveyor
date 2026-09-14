@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 	"time"
 
@@ -159,8 +160,6 @@ type Gateway struct {
 	strategy backoff.Strategy
 	// name is this gateway's actor name, resolved at start.
 	name string
-	// identities caches the queue grain identity per declared queue.
-	identities map[string]*goakt.GrainIdentity
 	// capacities is the dispatch capacity registered with each declared queue:
 	// the worker's total concurrency split across its queues by weight, so the
 	// worker holds at most `concurrency` tasks in flight across all its queues
@@ -200,7 +199,6 @@ func (g *Gateway) PreStart(ctx *goakt.Context) error {
 	if g.strategy.Base() <= 0 {
 		g.strategy = backoff.New(backoff.DefaultBase, backoff.DefaultCap)
 	}
-	g.identities = make(map[string]*goakt.GrainIdentity, len(g.session.Queues))
 	g.capacities = splitCapacity(g.session.Concurrency, g.session.Queues, g.session.Weights)
 	g.inflight = make(map[string]*inflightTask)
 	g.batches = make(map[string][]string)
@@ -375,31 +373,23 @@ func (g *Gateway) drain(ctx *goakt.ReceiveContext) {
 // grain. It runs at start and on every registerTick; re-registration only
 // refreshes capacity on the grain side, so credits are never double-granted.
 func (g *Gateway) register(ctx *goakt.ReceiveContext) {
-	goCtx := ctx.Context()
-	system := ctx.ActorSystem()
-
 	for _, queue := range g.session.Queues {
-		identity, err := goakt.GrainOf[*QueueGrain](goCtx, system, QueueGrainName(queue),
-			goakt.WithGrainDeactivateAfter(g.runtime.Settings().PassivateAfter))
-		if err != nil {
-			g.runtime.Logger().Warn("resolving queue grain failed; next tick retries", "queue", queue, "error", err)
-
-			continue
-		}
-
-		g.identities[queue] = identity
-
-		err = system.TellGrain(goCtx, identity, &conveyorv1.RegisterGateway{
+		registration := &conveyorv1.RegisterGateway{
 			Queue:       queue,
 			GatewayName: g.name,
 			Capacity:    g.capacities[queue],
 			BatchTypes:  g.session.BatchTypes,
 			Weight:      g.session.Weights[queue],
-		})
-		if err != nil {
-			g.runtime.Logger().Warn("gateway registration failed; next tick retries", "queue", queue, "error", err)
 		}
+
+		tellQueueGrain(ctx.Context(), ctx.ActorSystem(), g.runtime, queue, registration, "gateway registration failed; next tick retries", nil)
 	}
+}
+
+// serves reports whether the session declared the queue; a report for any
+// other queue belongs to no grain this gateway registered with.
+func (g *Gateway) serves(queue string) bool {
+	return slices.Contains(g.session.Queues, queue)
 }
 
 // dispatch forwards one leased task down the worker stream and tracks it
@@ -777,17 +767,14 @@ func (g *Gateway) refundLostLease(ctx *goakt.ReceiveContext, entry *inflightTask
 // refillCredit hands one dispatch credit back to a queue grain without a
 // completion report, for a delivery this session no longer owns.
 func (g *Gateway) refillCredit(ctx *goakt.ReceiveContext, queue string) {
-	identity, ok := g.identities[queue]
-	if !ok {
+	if !g.serves(queue) {
 		g.runtime.Logger().Warn("credit refill dropped: queue not registered", "queue", queue)
 
 		return
 	}
 
 	credit := &conveyorv1.GatewayCredit{Queue: queue, GatewayName: g.name, Credits: 1}
-	if err := ctx.ActorSystem().TellGrain(ctx.Context(), identity, credit); err != nil {
-		g.runtime.Logger().Warn("credit refill failed", "queue", queue, "error", err)
-	}
+	tellQueueGrain(ctx.Context(), ctx.ActorSystem(), g.runtime, queue, credit, "credit refill failed", nil)
 }
 
 // cancelActive forwards a best-effort Cancel frame for an admin-canceled
@@ -820,19 +807,14 @@ func (g *Gateway) cancelActive(message *conveyorv1.CancelActive) {
 // grain caps credits at the declared capacity, so this can never inflate
 // dispatch beyond what registration granted.
 func (g *Gateway) credit(ctx *goakt.ReceiveContext, message *conveyorv1.Credit) {
-	goCtx := ctx.Context()
-	system := ctx.ActorSystem()
-
-	for queue, identity := range g.identities {
+	for _, queue := range g.session.Queues {
 		grant := &conveyorv1.GatewayCredit{
 			Queue:       queue,
 			GatewayName: g.name,
 			Credits:     message.GetN(),
 		}
 
-		if err := system.TellGrain(goCtx, identity, grant); err != nil {
-			g.runtime.Logger().Warn("credit grant failed", "queue", queue, "error", err)
-		}
+		tellQueueGrain(ctx.Context(), ctx.ActorSystem(), g.runtime, queue, grant, "credit grant failed", nil)
 	}
 }
 
@@ -855,8 +837,7 @@ func (g *Gateway) resolveDependents(ctx *goakt.ReceiveContext, taskID string) {
 // reportCompletion tells the task's queue grain that one execution slot is
 // free again. The grain decrements its active count and refills one credit.
 func (g *Gateway) reportCompletion(ctx *goakt.ReceiveContext, queue, taskID string, success bool) {
-	identity, ok := g.identities[queue]
-	if !ok {
+	if !g.serves(queue) {
 		g.runtime.Logger().Warn("completion report dropped: queue not registered", "queue", queue, "task_id", taskID)
 
 		return
@@ -869,9 +850,7 @@ func (g *Gateway) reportCompletion(ctx *goakt.ReceiveContext, queue, taskID stri
 		GatewayName: g.name,
 	}
 
-	if err := ctx.ActorSystem().TellGrain(ctx.Context(), identity, completed); err != nil {
-		g.runtime.Logger().Warn("completion report failed", "task_id", taskID, "error", err)
-	}
+	tellQueueGrain(ctx.Context(), ctx.ActorSystem(), g.runtime, queue, completed, "completion report failed", nil, "task_id", taskID)
 }
 
 // GatewayHandle lets the session handler drive its gateway actor: worker

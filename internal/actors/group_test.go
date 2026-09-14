@@ -36,7 +36,7 @@ func TestFireGroupLogsResolveAndTellFailures(t *testing.T) {
 	require.NoError(t, err)
 
 	fireGroup(ctx, unstarted, resolveRuntime, "q", "g", "t", 0)
-	require.Contains(t, resolveLogs.String(), "resolving queue grain failed")
+	requireLogged(t, resolveLogs, "resolving queue grain failed")
 
 	// Tell-failure branch: resolution succeeds against a live system, but the
 	// fire tell fails.
@@ -44,7 +44,7 @@ func TestFireGroupLogsResolveAndTellFailures(t *testing.T) {
 	system := startWakeSystem(t, tellRuntime)
 
 	fireGroup(ctx, tellFailSystem{ActorSystem: system, err: errors.New("tell down")}, tellRuntime, "q", "g", "t", 0)
-	require.Contains(t, tellLogs.String(), "firing group failed")
+	requireLogged(t, tellLogs, "firing group failed")
 }
 
 func TestGroupSweeperPreStartRequiresRuntimeExtension(t *testing.T) {

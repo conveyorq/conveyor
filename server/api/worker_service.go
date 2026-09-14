@@ -298,22 +298,14 @@ func (s *WorkerService) Session(ctx context.Context, stream *connect.BidiStream[
 	// stream the handler has already returned from.
 	defer sender.close()
 
-	handle, err := s.engine.SpawnGateway(ctx, session, sender)
-	if err != nil {
-		s.logger.Error("gateway spawn failed", "session_id", sessionID, "error", err)
-
-		return connect.NewError(connect.CodeInternal, errSessionSetupFailed)
-	}
-
-	defer func() {
-		stopCtx, cancel := context.WithTimeout(context.Background(), gatewayStopTimeout)
-		defer cancel()
-
-		if err := handle.Stop(stopCtx); err != nil {
-			s.logger.Warn("gateway stop failed", "session_id", sessionID, "error", err)
-		}
-	}()
-
+	// Welcome goes out before the gateway exists. The gateway registers with
+	// its queues the moment it spawns and may dispatch a waiting task onto the
+	// stream at once, and the protocol requires Welcome to be the first frame
+	// a worker sees: an SDK that receives a Dispatch first drops the session
+	// as a protocol violation and reconnects with backoff, so a queue with
+	// work waiting could keep a worker out for as long as the backoff grows.
+	// A spawn failure after Welcome ends the session like any later failure,
+	// and the worker reconnects.
 	leaseTTL := s.engine.Settings().LeaseTTL
 
 	welcome := &conveyorv1.ServerMessage{
@@ -331,6 +323,22 @@ func (s *WorkerService) Session(ctx context.Context, stream *connect.BidiStream[
 	if err := sender.Send(welcome); err != nil {
 		return err
 	}
+
+	handle, err := s.engine.SpawnGateway(ctx, session, sender)
+	if err != nil {
+		s.logger.Error("gateway spawn failed", "session_id", sessionID, "error", err)
+
+		return connect.NewError(connect.CodeInternal, errSessionSetupFailed)
+	}
+
+	defer func() {
+		stopCtx, cancel := context.WithTimeout(context.Background(), gatewayStopTimeout)
+		defer cancel()
+
+		if err := handle.Stop(stopCtx); err != nil {
+			s.logger.Warn("gateway stop failed", "session_id", sessionID, "error", err)
+		}
+	}()
 
 	s.logger.Info("worker session opened", "session_id", sessionID, "queues", queues,
 		"concurrency", hello.GetConcurrency(), "sdk_version", hello.GetSdkVersion())

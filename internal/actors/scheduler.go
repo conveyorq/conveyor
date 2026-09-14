@@ -28,18 +28,8 @@ const promoteScheduleRef = "conveyor-scheduler-promote"
 // Wake-ups are best-effort hints (the reaper sweep backstops lost ones),
 // so failures are logged, never propagated.
 func wakeQueue(ctx context.Context, system goakt.ActorSystem, runtime *Runtime, queue string, hint int64) {
-	identity, err := goakt.GrainOf[*QueueGrain](ctx, system, QueueGrainName(queue),
-		goakt.WithGrainDeactivateAfter(runtime.Settings().PassivateAfter))
-	if err != nil {
-		runtime.Logger().Warn("resolving queue grain failed", "queue", queue, "error", err)
-
-		return
-	}
-
 	message := &conveyorv1.TasksAvailable{Queue: queue, Hint: hint}
-	if err := system.TellGrain(ctx, identity, message); err != nil {
-		runtime.Logger().Warn("waking queue grain failed", "queue", queue, "error", err)
-	}
+	tellQueueGrain(ctx, system, runtime, queue, message, "waking queue grain failed", nil)
 }
 
 // Scheduler is the promotion loop: on every PromoteTick it moves due
