@@ -110,7 +110,7 @@ spec:
     - type: prometheus
       metadata:
         serverAddress: http://prometheus.monitoring.svc:9090
-        query: sum(conveyor_pending)         # total backlog; scope by queue label if needed
+        query: sum(max by (queue) (conveyor_pending))   # total backlog, deduplicated across nodes
         threshold: "100"                      # ~tasks pending per worker replica
 ```
 

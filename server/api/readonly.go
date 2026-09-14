@@ -42,6 +42,10 @@ var mutatingProcedures = map[string]struct{}{
 	conveyorv1connect.AdminServicePauseCronProcedure:                   {},
 	conveyorv1connect.AdminServiceResumeCronProcedure:                  {},
 	conveyorv1connect.AdminServiceDeleteCronProcedure:                  {},
+	conveyorv1connect.AdminServiceUpsertWebhookWorkerProcedure:         {},
+	conveyorv1connect.AdminServicePauseWebhookWorkerProcedure:          {},
+	conveyorv1connect.AdminServiceResumeWebhookWorkerProcedure:         {},
+	conveyorv1connect.AdminServiceDeleteWebhookWorkerProcedure:         {},
 }
 
 // readOnlyInterceptor rejects mutating admin procedures, leaving reads and the

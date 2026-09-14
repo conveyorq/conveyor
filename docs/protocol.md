@@ -222,7 +222,7 @@ On a transient stream end (§4), the worker SHOULD reconnect with **exponential 
 
 On shutdown (e.g. SIGTERM), a worker SHOULD:
 
-1. Stop accepting new Dispatches.
+1. Stop accepting new Dispatches. The server does not know the worker is draining and may still dispatch until the request side closes, so a worker that keeps the stream open for its in-flight tasks MUST list any such late dispatch in its `Heartbeat` without starting it, so the lease survives until the close and the safety net below releases it with no penalty. Reporting `RELEASED` for it at once would only have the server redispatch it to the same draining worker.
 2. For each in-flight task, either finish it and report its real outcome, or, if it cannot finish in time, report `RELEASED`, which hands the task back with **no retry penalty and no backoff** (it becomes due immediately on another worker). A drain MUST NOT report `RETRY` for a task it is abandoning purely because the worker is stopping: that would consume the task's retry budget and delay it for a routine deploy.
 3. Close the request side of the stream.
 
@@ -272,7 +272,7 @@ Unary RPCs. All inputs validated server-side; violations return `invalid_argumen
 | `retention`                 | OPTIONAL how long to keep the completed row before purge.                                                                                |
 | `group`                     | OPTIONAL aggregation group key (§5.11). The task accumulates as `aggregating` and is batch-delivered when its group fires. **Mutually exclusive** with `process_at`/`process_in`. |
 | `expires_in` / `expires_at` | OPTIONAL pre-dispatch TTL: a task still waiting (scheduled/pending/retry) when it passes is **archived** instead of run. **Mutually exclusive** (both set → error); `expires_in` resolves to `now + expires_in`. Distinct from `deadline` (cancels a *running* task) and `retention` (purges a *completed* one). |
-| `depends_on`                | OPTIONAL list of `TaskDependency { task_id, failure_policy }`. The task stays **`BLOCKED`** and is not eligible to lease until every dependency reaches terminal success; each dependency's `failure_policy` (`BLOCK` (default), `CASCADE_CANCEL`, or `CONTINUE`) governs what happens if it fails terminally instead. |
+| `depends_on`                | OPTIONAL list of `TaskDependency { task_id, on_failure }`. The task stays **`BLOCKED`** and is not eligible to lease until every dependency reaches terminal success; each dependency's `on_failure` (`BLOCK` (default), `CASCADE_CANCEL`, or `CONTINUE`) governs what happens if it fails terminally instead. |
 | `concurrency_key`           | OPTIONAL key that caps how many tasks sharing it run at once, up to the queue's configured concurrency limit (§5 / `docs/concurrency.md`). **Mutually exclusive** with `group`. |
 | `retry_policy`              | OPTIONAL `RetryPolicy { strategy, base, max }` overriding the server's default retry backoff for this task; unset uses the server default. |
 

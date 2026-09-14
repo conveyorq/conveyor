@@ -7,25 +7,27 @@
 //
 // Usage:
 //
-//	conveyor [--addr URL] [--token TOKEN] <command> [arguments]
+//	conveyor [--addr URL] [--token TOKEN] [--output table|json] <command> [arguments]
 //
-// Commands:
+// Command groups:
 //
-//	enqueue <type> [--queue NAME] [--json PAYLOAD] [--id ID] [--in DUR]
-//	               [--at RFC3339] [--expires-in DUR] [--expires-at RFC3339]
-//	               [--max-retry N] [--priority N] [--retention DUR]
-//	               [--unique DUR] [--unique-key KEY] [--encryption-key ID:SECRET]
-//	enqueue-tx --file PATH [--encryption-key ID:SECRET]
-//	stats
-//	queues pause|resume <name>
-//	ratelimit set <queue> --rate N [--burst N] | rm <queue> | ls
-//	concurrency set <queue> --max N | rm <queue> | ls
-//	tasks get <id>
-//	tasks list [--queue NAME] [--state STATE] [--limit N] [--page TOKEN]
-//	tasks run|cancel|delete <id>
-//	cron list | pause <id> | resume <id>
-//	cluster info
-//	events [--queue NAME]... [--type TYPE]...
+//	enqueue      enqueue one task
+//	enqueue-tx   enqueue a file of tasks atomically
+//	stats        queue depths and states
+//	queues       pause and resume a queue
+//	ratelimit    per-queue dispatch rate limits
+//	concurrency  per-key concurrency limits
+//	tasks        inspect, list, run, cancel, archive, and delete tasks
+//	group        aggregation group configuration
+//	cron         cron schedules
+//	webhooks     webhook worker registrations
+//	cluster      cluster membership and worker sessions
+//	broker       broker engine information
+//	events       follow the task lifecycle event stream
+//
+// Run "conveyor <group> --help" for a group's commands and flags; the full
+// reference is in docs/cli.md. Every listing and inspection command honors
+// --output json, which renders the wire response.
 //
 // The server address and token come from --addr/--token or the
 // CONVEYOR_ADDR/CONVEYOR_TOKEN environment variables; flags win. The
@@ -44,9 +46,11 @@ import (
 	"strings"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
 
 	"github.com/conveyorq/conveyor/encryption"
+	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 	conveyor "github.com/conveyorq/conveyor/sdks/go"
 )
 
@@ -512,6 +516,20 @@ func newTasksGetCommand(conn *connection) *cobra.Command {
 		Short: "Print the current state of one task",
 		Args:  exactTaskID("tasks get"),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			stdout := cmd.OutOrStdout()
+
+			// JSON renders the wire response, as every other inspection command
+			// does, rather than the SDK's task struct.
+			if conn.jsonOutput() {
+				response, err := conn.tasks().GetTask(context.Background(),
+					connect.NewRequest(&conveyorv1.GetTaskRequest{Id: args[0]}))
+				if err != nil {
+					return err
+				}
+
+				return printJSON(stdout, response.Msg)
+			}
+
 			client, err := conn.client()
 			if err != nil {
 				return err
@@ -522,7 +540,6 @@ func newTasksGetCommand(conn *connection) *cobra.Command {
 				return err
 			}
 
-			stdout := cmd.OutOrStdout()
 			_, _ = fmt.Fprintf(stdout, "id:          %s\n", info.ID)
 			_, _ = fmt.Fprintf(stdout, "queue:       %s\n", info.Queue)
 			_, _ = fmt.Fprintf(stdout, "type:        %s\n", info.Type)

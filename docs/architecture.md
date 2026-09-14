@@ -97,7 +97,7 @@ The bridge between the actor world and one worker's stream. Spawned per accepted
 Three singletons run on one node (the leader) and relocate to a survivor on node loss. Each arms its own recurring tick in `PostStart`, so after relocation the new host re-arms the cadence; the stale entry on the departed node self-cancels. Each tolerates `ErrSingletonAlreadyExists` on non-leaders as the desired state.
 
 - **Scheduler (`scheduler.go`)**, on `PromoteTick`: promotes due `scheduled` tasks to `pending` (`PromoteScheduled`), materializes due cron entries into real tasks, and wakes affected queues.
-- **Reaper (`reaper.go`)**, on `ReapTick`: reclaims expired leases (`ReapExpiredLeases` → retry or archive), purges retention-lapsed completed rows (`PurgeCompleted`), archives tasks past their pre-dispatch TTL (`ArchiveExpired`), promotes blocked tasks whose dependencies have since reached a terminal state but that inline resolution missed (`PromoteReadyDependents`), and sweeps for queues with due work whose wake was lost (`PendingCount`), waking each. It runs under GoAkt's default (stop-on-failure) supervision, so it deliberately logs and skips a failed pass (leaving the next tick to retry) rather than escalating a transient broker error into a crash that would permanently stop all maintenance.
+- **Reaper (`reaper.go`)**, on `ReapTick`: reclaims expired leases (`ReapExpiredLeases` → retry or archive), purges retention-lapsed terminal rows (`PurgeTerminal`: completed rows by their per-task retention, archived and canceled rows by the server-wide `engine.archive_retention`, dropping the stale dependency edges of terminal dependents first), archives tasks past their pre-dispatch TTL (`ArchiveExpired`), promotes blocked tasks whose dependencies have since reached a terminal state but that inline resolution missed (`PromoteReadyDependents`), and sweeps for queues with due work whose wake was lost (`PendingCount`), waking each. It runs under GoAkt's default (stop-on-failure) supervision, so it deliberately logs and skips a failed pass (leaving the next tick to retry) rather than escalating a transient broker error into a crash that would permanently stop all maintenance.
 - **GroupSweeper (`group.go`)**, on `GroupSweepTick`: reads `GroupStats` and fires aggregation groups that are past a size, max-delay, or grace-period threshold by telling the owning queue grain `FireGroup`.
 
 ### DependencyResolver (`resolver.go`): per-node router pool
@@ -114,8 +114,8 @@ The interface methods group as:
 |--------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------|
 | **Enqueue**                          | `Enqueue`, `EnqueueBatch` (idempotent on id; `ErrDuplicateTask` on a live unique key; the batch commits all-or-nothing)                                |
 | **Lease / dispatch**                 | `Lease`, `LeaseGroup`, `ExtendLease`, `SetProgress`                                                                                                    |
-| **Outcomes (lease-scoped)**          | `Ack`, `Fail`, `Release`, `Archive`                                                                                                                    |
-| **Maintenance sweeps**               | `ReapExpiredLeases`, `PromoteScheduled`, `PurgeCompleted`, `ArchiveExpired`                                                                            |
+| **Outcomes (lease-scoped)**          | `Ack`, `AckBatch`, `Fail`, `Release`, `Archive`                                                                                                        |
+| **Maintenance sweeps**               | `ReapExpiredLeases`, `PromoteScheduled`, `PurgeTerminal`, `ArchiveExpired`                                                                             |
 | **Dependencies**                     | `ResolveDependents`, `PromoteReadyDependents`                                                                                                          |
 | **Inspection / admin**               | `PendingCount`, `QueueStats`, `GetTask`, `ListTasks`, `CancelTask`, `DeleteTask`, `RunTaskNow`, `RescheduleTask`, `ArchiveTask`, `SetQueuePaused`, `QueuePaused`, `Info` |
 | **Rate limits (config only)**        | `SetQueueRateLimit`, `DeleteQueueRateLimit`, `QueueRateLimit`, `QueueRateLimits`                                                                       |
@@ -130,8 +130,8 @@ The interface methods group as:
 A task row stores its identity and options plus mutable execution fields (`state`, `retried`, `last_error`, `lease_id`, `lease_expires_at`, timestamps). The serialized `TaskEnvelope` is marshaled into a `payload` column **before dispatch**, and that is what makes execution crash-safe. The mutable fields are authoritative in their own columns and are *overlaid onto the envelope on read*, never written back into the stored blob.
 
 - **Leases** are a `(lease_id, lease_expires_at)` pair. Lease-scoped operations match on `state = active AND lease_id = ?` and return `ErrLeaseLost` on mismatch. Postgres leasing uses `SELECT ... FOR UPDATE SKIP LOCKED` in a CTE, so concurrent leasers on different nodes never claim the same row.
-- **Uniqueness** is a partial unique index on `unique_key` over the *incomplete* states only; a duplicate maps to `ErrDuplicateTask`. Lapsed claims are freed before insert and by `PurgeCompleted`.
-- **Three distinct TTLs**, often confused: `expires_at` is a *pre-dispatch* TTL (a still-waiting task past it is archived, and the lease query skips it); `deadline` cancels an *already-running* task (cooperative, enforced above the broker); `retention` is how long a *completed* row is kept before purge.
+- **Uniqueness** is a partial unique index on `unique_key` over the *incomplete* states only; a duplicate maps to `ErrDuplicateTask`. Lapsed claims are freed before insert and by `PurgeTerminal`.
+- **Three distinct TTLs**, often confused: `expires_at` is a *pre-dispatch* TTL (a still-waiting task past it is archived, and the lease query skips it); `deadline` cancels an *already-running* task (cooperative, enforced above the broker); `retention` is how long a *completed* row is kept before purge; archived and canceled rows follow the server-wide `engine.archive_retention` instead.
 
 ### Encryption decorator
 
@@ -182,7 +182,7 @@ stateDiagram-v2
 
 ### Enqueue → dispatch (credit-based push)
 
-Credits are the flow-control currency. The server **seeds** a session's credits from the worker's declared `concurrency` — split across the queues it serves by weight, so the total across queues equals `concurrency` — and refills exactly one per completion; the optional `Credit` frame exists for workers that open slots without finishing a task, but the happy path never needs it.
+Credits are the flow-control currency. The server **seeds** a session's credits from the worker's declared `concurrency`, split across the queues it serves by weight so the total across queues equals `concurrency`, and refills exactly one per completion; the optional `Credit` frame exists for workers that open slots without finishing a task, but the happy path never needs it. A delivery whose lease is lost to another delivery (the worker missed its heartbeats and the reaper reclaimed the task) refunds its credit when the loss is detected, since the worker's eventual result for it is dropped.
 
 ```mermaid
 sequenceDiagram

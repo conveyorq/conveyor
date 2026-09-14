@@ -30,6 +30,13 @@ func migrate(ctx context.Context, pool pgxPool) (err error) {
 	}
 	defer func() { err = rollback(ctx, transaction, err) }()
 
+	// A pool-wide statement timeout is sized for task traffic, not for
+	// building an index over a large table or for waiting on the lock behind
+	// a slower migrator; lift it for this transaction alone.
+	if _, err = transaction.Exec(ctx, "SET LOCAL statement_timeout = 0"); err != nil {
+		return fmt.Errorf("postgres: lift migration statement timeout: %w", err)
+	}
+
 	if _, err = transaction.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", migrationLockID); err != nil {
 		return fmt.Errorf("postgres: acquire migration lock: %w", err)
 	}

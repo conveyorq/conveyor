@@ -21,10 +21,9 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/conveyorq/conveyor/internal/broker"
 	"github.com/conveyorq/conveyor/internal/clock"
 	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
-
-	"github.com/conveyorq/conveyor/internal/broker"
 )
 
 // Factory builds a fresh, empty broker reading time from the given clock.
@@ -107,6 +106,7 @@ func Run(t *testing.T, factory Factory) {
 		{"DependencyFailurePolicyContinue", testDependencyFailurePolicyContinue},
 		{"DependencyFailureCascadeCancels", testDependencyFailureCascadeCancels},
 		{"DeleteDependencyRefused", testDeleteDependencyRefused},
+		{"DeleteIgnoresTerminalDependents", testDeleteIgnoresTerminalDependents},
 		{"PromoteReadyDependentsSafetyNet", testPromoteReadyDependentsSafetyNet},
 		{"ConcurrentFanInResolves", testConcurrentFanInResolves},
 		{"DependencyCycleStaysBlocked", testDependencyCycleStaysBlocked},
@@ -1120,6 +1120,38 @@ func testDeleteTask(t *testing.T, b broker.Broker, _ *clock.Fake) {
 
 	if _, _, err := b.GetTask(context.Background(), "task-002"); !errors.Is(err, broker.ErrTaskNotFound) {
 		t.Fatalf("deleted task still present: %v", err)
+	}
+}
+
+// testDeleteIgnoresTerminalDependents verifies the refusal counts only
+// dependents that can still be stranded: a canceled dependent's stale edge does
+// not pin its dependency, and a forward reference to an id that was never
+// enqueued reports the missing task rather than a dependent.
+func testDeleteIgnoresTerminalDependents(t *testing.T, b broker.Broker, _ *clock.Fake) {
+	ctx := context.Background()
+
+	mustEnqueue(t, b, newTask("task-001"))
+	mustEnqueue(t, b, newTask("task-002", withDependsOn(dependsOn("task-001"))))
+	mustState(t, b, "task-002", conveyorv1.TaskState_TASK_STATE_BLOCKED)
+
+	// The dependent is canceled while blocked; its edge is now stale.
+	if err := b.CancelTask(ctx, "task-002"); err != nil {
+		t.Fatalf("cancel blocked dependent: %v", err)
+	}
+
+	mustState(t, b, "task-002", conveyorv1.TaskState_TASK_STATE_CANCELED)
+
+	if err := b.DeleteTask(ctx, "task-001"); err != nil {
+		t.Fatalf("delete with only a canceled dependent: err = %v, want nil", err)
+	}
+
+	// A dependent blocked on an id that does not exist is a forward reference,
+	// so deleting that id reports it missing.
+	mustEnqueue(t, b, newTask("task-003", withDependsOn(dependsOn("task-ghost"))))
+	mustState(t, b, "task-003", conveyorv1.TaskState_TASK_STATE_BLOCKED)
+
+	if err := b.DeleteTask(ctx, "task-ghost"); !errors.Is(err, broker.ErrTaskNotFound) {
+		t.Fatalf("delete forward-referenced missing task: err = %v, want ErrTaskNotFound", err)
 	}
 }
 

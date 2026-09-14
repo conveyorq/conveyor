@@ -1088,6 +1088,19 @@ func (b *Broker) hasDependents(taskID string) bool {
 	return len(b.dependents[taskID]) > 0
 }
 
+// hasWaitingDependents reports whether a dependent that has not reached a
+// terminal state still waits on the given task id; a canceled or archived
+// dependent's edge is stale and does not count. Callers must hold the mutex.
+func (b *Broker) hasWaitingDependents(taskID string) bool {
+	for dependentID := range b.dependents[taskID] {
+		if dependent, exists := b.tasks[dependentID]; exists && incomplete(dependent.state) {
+			return true
+		}
+	}
+
+	return false
+}
+
 // PurgeTerminal removes retention-expired terminal tasks, stale dependency
 // edges, and lapsed unique-key claims; see broker.Broker.
 func (b *Broker) PurgeTerminal(_ context.Context, archiveRetention time.Duration, limit int) (int, error) {
@@ -1102,24 +1115,41 @@ func (b *Broker) PurgeTerminal(_ context.Context, archiveRetention time.Duration
 
 	b.dropTerminalDependentEdges()
 
-	purged := 0
+	// Completed rows and archived/canceled rows each get their own budget, as
+	// the Postgres broker's two statements do: one category can never spend the
+	// whole limit and starve the other out of every pass.
+	completed := 0
+	archived := 0
 
 	for id, row := range b.tasks {
 		if row.uniqueKey != "" && !row.uniqueExpiresAt.IsZero() && !row.uniqueExpiresAt.After(now) {
 			row.uniqueKey = ""
 		}
 
-		if purged == limit || b.hasDependents(id) {
+		if b.hasDependents(id) || !purgeable(row, now, archiveRetention) {
 			continue
 		}
 
-		if purgeable(row, now, archiveRetention) {
+		if row.state == conveyorv1.TaskState_TASK_STATE_COMPLETED {
+			if completed == limit {
+				continue
+			}
+
 			delete(b.tasks, id)
-			purged++
+			completed++
+
+			continue
 		}
+
+		if archived == limit {
+			continue
+		}
+
+		delete(b.tasks, id)
+		archived++
 	}
 
-	return purged, nil
+	return completed + archived, nil
 }
 
 // purgeable reports whether a terminal row's retention has lapsed by now: a
@@ -1553,17 +1583,17 @@ func (b *Broker) DeleteTask(_ context.Context, id string) error {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 
+	row, exists := b.tasks[id]
+	if !exists {
+		return broker.ErrTaskNotFound
+	}
+
 	// Refuse to delete a task other tasks still depend on: dropping it would
 	// leave every dependent blocked on an edge whose dependency is gone, which
 	// neither inline resolution nor the promote sweep can clear. This mirrors
 	// the Postgres broker and purge, which never drop a depended-on row.
-	if len(b.dependents[id]) > 0 {
+	if b.hasWaitingDependents(id) {
 		return broker.ErrTaskHasDependents
-	}
-
-	row, exists := b.tasks[id]
-	if !exists {
-		return broker.ErrTaskNotFound
 	}
 
 	if row.state == conveyorv1.TaskState_TASK_STATE_ACTIVE {

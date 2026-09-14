@@ -102,6 +102,13 @@ engine:
   # terminationGracePeriodSeconds must exceed this.
   shutdown_timeout: {{ .Values.engine.shutdownTimeout }}
 
+webhooks:
+  # Permit webhook delivery to private, loopback, and link-local endpoints.
+  # Off by default so an admin token cannot aim the server at internal
+  # services; turn it on for endpoints that are private by design, such as a
+  # worker Service in this cluster.
+  allow_private_targets: {{ .Values.webhooks.allowPrivateTargets }}
+
 log:
   # One of debug, info, warn, error.
   level: {{ .Values.log.level }}

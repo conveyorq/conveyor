@@ -32,7 +32,8 @@ Environment keys mirror the file with `CONVEYOR_` and `__` between levels. `brok
 Key groups:
 
 - `broker.driver` (`postgres` | `memory`), `broker.dsn`, and `broker.pool.{max_conns,min_conns,connect_timeout,statement_timeout}`.
-- `api.listen` (default `:8080`), `api.auth_tokens`, `api.tls`.
+- `api.listen` (default `:8080`), `api.auth_tokens`, `api.scoped_tokens`, `api.tls`.
+- `webhooks.allow_private_targets` (default `false`; permits webhook delivery to private and loopback endpoints).
 - `cluster.discovery`, `cluster.bind_addr`, the remoting/discovery/peers ports, `cluster.tls`, and `cluster.kubernetes` (namespace + pod labels).
 - `engine.lease_ttl`, `reap_interval`, `lease_batch_max`, `promote_interval`, `passivate_after`, `default_max_retry`, `archive_retention`, `shutdown_timeout`.
 - `engine.rate_limit_enabled` (master switch, default `true`), `engine.rate_limit_rate_per_sec` and `engine.rate_limit_burst` (the global default per-queue dispatch limit; per-queue overrides are set at runtime, see [rate limiting](rate-limiting.md)).
@@ -62,6 +63,18 @@ Priorities and weights shape *what* runs first: per-task `Priority(1..9)` orders
 ## Security
 
 - **Authentication.** `api.auth_tokens` are accepted bearer tokens. Auth is on by default: with no tokens, conveyord **refuses to start** unless you set `api.allow_unauthenticated: true`, so a deployment never serves an open API by accident. The `--dev` preset sets that flag for you; in production set `api.auth_tokens` instead (the Helm chart's `auth.tokensSecret`), and only use `allow_unauthenticated` when a gateway, mTLS, or a private network fronts the API. Clients and workers pass a token with `conveyor.WithToken` (or `CONVEYOR_TOKEN` / the CLI `--token`).
+- **Token scopes.** A token in `api.auth_tokens` grants everything. To hand out a narrower credential, declare it under `api.scoped_tokens` instead, where each entry pairs a token with the services it may call: `produce` for enqueueing, `consume` for worker sessions, and `admin` for the administrative API. A recognized token used outside its scopes is refused with `PermissionDenied`. Scoped tokens are file-only, since each carries its own scope list. Give an application `produce`, a worker fleet `consume`, and keep `admin` for operators. Task inspection (`GetTask`, which `conveyor tasks get` uses) is the one call two scopes admit: it lives on the enqueue service, but `admin` reaches it too.
+
+  ```yaml
+  api:
+    scoped_tokens:
+      - token: "${PRODUCER_TOKEN}"
+        scopes: [produce]
+      - token: "${WORKER_TOKEN}"
+        scopes: [consume]
+  ```
+
+- **Webhook targets.** Webhook worker endpoints must resolve to public addresses; loopback, link-local, private, and multicast targets are refused so an admin token cannot aim the server at internal services. Set `webhooks.allow_private_targets: true` when your endpoints are private by design, such as a worker inside the same cluster. See [webhook workers](webhook-workers.md#endpoints-must-be-public-addresses).
 - **TLS.** `api.tls` serves the API over TLS; `cluster.tls` turns on mutual TLS between cluster peers (set `ca_file` for peer verification).
 - **Network.** The Helm chart ships an opt-in NetworkPolicy example and keeps the metrics port off the public API listener. Never expose the metrics port (`:9464`) publicly, since it carries internal topology.
 

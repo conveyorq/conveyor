@@ -6,6 +6,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"testing"
@@ -592,4 +593,25 @@ func TestListWorkerSessions(t *testing.T) {
 	require.EqualValues(t, 8, sessions[0].GetConcurrency())
 	require.Equal(t, "v1.2.3", sessions[0].GetSdkVersion())
 	require.True(t, sessions[0].GetConnectedAt().AsTime().Equal(connected))
+}
+
+// TestAdminTaskErrorMapsBrokerFailures pins every arm of the broker-to-API error
+// mapping, including the refusal to delete a task other tasks depend on, which a
+// caller must be able to tell apart from an internal fault.
+func TestAdminTaskErrorMapsBrokerFailures(t *testing.T) {
+	cases := map[string]struct {
+		err  error
+		want connect.Code
+	}{
+		"missing task":    {broker.ErrTaskNotFound, connect.CodeNotFound},
+		"wrong state":     {broker.ErrInvalidState, connect.CodeFailedPrecondition},
+		"has dependents":  {broker.ErrTaskHasDependents, connect.CodeFailedPrecondition},
+		"unknown failure": {errors.New("broker exploded"), connect.CodeInternal},
+	}
+
+	for name, testCase := range cases {
+		t.Run(name, func(t *testing.T) {
+			require.Equal(t, testCase.want, connect.CodeOf(adminTaskError(testCase.err)))
+		})
+	}
 }

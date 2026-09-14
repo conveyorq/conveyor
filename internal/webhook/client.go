@@ -23,6 +23,15 @@ const maxResponseBytes = 1 << 20
 // deadline of its own (a cancel notification).
 const defaultDialTimeout = 10 * time.Second
 
+// Transport bounds matching net/http's default transport, so a guarded client
+// pools and times out connections the way an unguarded one would.
+const (
+	defaultMaxIdleConns          = 100
+	defaultIdleConnTimeout       = 90 * time.Second
+	defaultTLSHandshakeTimeout   = 10 * time.Second
+	defaultExpectContinueTimeout = time.Second
+)
+
 // errRedirect rejects redirect responses: a registered URL is delivered to
 // exactly as configured, never followed elsewhere.
 var errRedirect = errors.New("webhook: endpoint redirected; redirects are not followed")
@@ -49,10 +58,27 @@ type Client struct {
 // true to permit private and loopback endpoints (a development or in-cluster
 // deployment).
 func NewClient(allowPrivate bool) *Client {
-	transport, _ := http.DefaultTransport.(*http.Transport)
+	// The transport is built rather than cloned from http.DefaultTransport:
+	// a clone would carry over any dialer another library installed on the
+	// global (a DialTLSContext, say), which would bypass the guard for TLS
+	// endpoints. The pooling and handshake bounds match the defaults.
+	guarded := &http.Transport{
+		DialContext:           guardedDialContext(allowPrivate),
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          defaultMaxIdleConns,
+		IdleConnTimeout:       defaultIdleConnTimeout,
+		TLSHandshakeTimeout:   defaultTLSHandshakeTimeout,
+		ExpectContinueTimeout: defaultExpectContinueTimeout,
+	}
 
-	guarded := transport.Clone()
-	guarded.DialContext = guardedDialContext(allowPrivate)
+	// A proxy would defeat the guard: the dialer would only ever see the
+	// proxy's address, and the proxy, not this process, would resolve and reach
+	// the real target. Deliver directly while the guard is on; an operator who
+	// needs an egress proxy is running private-by-design endpoints and sets
+	// webhooks.allow_private_targets, which restores the environment's proxy.
+	if allowPrivate {
+		guarded.Proxy = http.ProxyFromEnvironment
+	}
 
 	return &Client{
 		http: &http.Client{

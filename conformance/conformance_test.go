@@ -23,6 +23,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -47,14 +48,26 @@ const (
 	// heartbeat would leave retried at zero and escape the check.
 	maxRetry = 25
 
+	// allowSkipEnv lets a local run exercise only the SDKs whose toolchains are
+	// installed. It is deliberately unset in CI, where a missing toolchain means
+	// the suite silently stopped covering an SDK.
+	allowSkipEnv = "CONFORMANCE_ALLOW_SKIP"
+
+	// Exit codes every conformance worker shares for the bad-Hello scenario:
+	// one when the SDK refuses the invalid Hello (the expected outcome) and two
+	// when it accepts it. They differ so the check can tell the outcomes apart
+	// rather than treating any non-zero exit as a pass.
+	rejectedExitCode = 1
+	acceptedExitCode = 2
+
 	readyTimeout = 30 * time.Second
 	bootTimeout  = 20 * time.Second
 	checkTimeout = 45 * time.Second
 )
 
-// TestConformance runs the checklist against every SDK whose toolchain is
-// available on this machine (an SDK whose runtime is missing is skipped, not
-// failed, so a partial local run is still useful; CI provisions all three).
+// TestConformance runs the checklist against every SDK. A missing toolchain
+// fails the suite, so it cannot quietly shrink to whichever runtimes happen to
+// be installed; set CONFORMANCE_ALLOW_SKIP for a deliberately partial local run.
 func TestConformance(t *testing.T) {
 	root := repoRoot(t)
 	conveyord := buildBinary(t, root, "./cmd/conveyord", "conveyord")
@@ -92,19 +105,39 @@ func availableSDKs(t *testing.T, root string) []sdk {
 
 	sdks := []sdk{goSDK(t, root)}
 
+	// A missing toolchain must not quietly shrink the suite to Go: that would
+	// leave the job green having tested none of the SDKs this suite exists to
+	// hold to the protocol. Missing toolchains are an error unless the runner
+	// opts out, which local runs do and CI does not.
+	allowSkip := os.Getenv(allowSkipEnv) != ""
+
 	if bin := tsxBinary(root); bin != "" {
 		sdks = append(sdks, typescriptSDK(root, bin))
 	} else {
-		t.Log("typescript conformance worker skipped: examples/typescript/node_modules/.bin/tsx not found (run `pnpm install` there)")
+		reportMissingSDK(t, allowSkip, "typescript", "examples/typescript/node_modules/.bin/tsx not found (run `pnpm install` there)")
 	}
 
 	if python := venvPython(root); python != "" {
 		sdks = append(sdks, pythonSDK(root, python))
 	} else {
-		t.Log("python conformance worker skipped: sdks/python/.venv not found (run `make sdk-py-test` once)")
+		reportMissingSDK(t, allowSkip, "python", "sdks/python/.venv not found (run `make sdk-py-test` once)")
 	}
 
 	return sdks
+}
+
+// reportMissingSDK fails for an SDK whose toolchain is absent, or logs the
+// omission when the runner set allowSkipEnv to accept a partial run.
+func reportMissingSDK(t *testing.T, allowSkip bool, name, reason string) {
+	t.Helper()
+
+	if allowSkip {
+		t.Logf("%s conformance worker skipped: %s", name, reason)
+
+		return
+	}
+
+	t.Fatalf("%s conformance worker unavailable: %s; set %s=1 to run the suite without it", name, reason, allowSkipEnv)
 }
 
 // goSDK builds the Go conformance worker binary and returns its launcher.
@@ -182,6 +215,14 @@ func checkBadHello(t *testing.T, sdk sdk, server *conformanceServer) {
 
 	var exitErr *exec.ExitError
 	require.ErrorAs(t, err, &exitErr, "the worker must exit with a non-zero status")
+
+	// Every conformance worker exits rejectedExitCode when it refuses the bad
+	// Hello and acceptedExitCode when it builds the worker anyway. Both are
+	// non-zero, so the code must be compared: asserting only "non-zero" would
+	// pass on exactly the failure this check exists to catch.
+	require.NotEqual(t, acceptedExitCode, exitErr.ExitCode(),
+		"the SDK accepted an invalid Hello instead of rejecting it locally")
+	require.Equal(t, rejectedExitCode, exitErr.ExitCode(), "unexpected worker exit status")
 }
 
 // checkLongTask asserts a single task whose handler outlives the lease still
@@ -221,7 +262,12 @@ func checkBatch(t *testing.T, sdk sdk, server *conformanceServer, client *convey
 // lease never lapses), then the task completes or is released, retried at zero.
 func checkDrain(t *testing.T, sdk sdk, server *conformanceServer, client *conveyor.Client) {
 	queue := queueName(sdk, "drain")
-	stop := startWorker(t, sdk, server, queue)
+
+	// The drain is signaled mid-test rather than at the end, so the stop is
+	// wrapped to run once and also deferred: a failure before the signal still
+	// reaps the worker instead of leaving it running for the rest of the suite.
+	stop := sync.OnceFunc(startWorker(t, sdk, server, queue))
+	defer stop()
 
 	id := enqueue(t, client, queue, "conformance:task")
 	waitForState(t, client, id, conveyor.TaskStateActive, bootTimeout)

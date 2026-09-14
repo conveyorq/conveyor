@@ -24,9 +24,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/conveyorq/conveyor/internal/broker"
 	"github.com/conveyorq/conveyor/internal/broker/memory"
 	"github.com/conveyorq/conveyor/internal/clock"
+	"github.com/conveyorq/conveyor/server/api"
 )
 
 // startTestServer boots a dev-config server on an ephemeral port and
@@ -498,4 +501,29 @@ func TestSeedWebhookWorkersReportsBrokerFailure(t *testing.T) {
 	if err := node.seedWebhookWorkers(context.Background(), seedFailBroker{}); err == nil {
 		t.Fatal("a broker failure while seeding must be surfaced")
 	}
+}
+
+// TestScopedTokensGrantsFullAccessToAuthTokensAndDeclaredScopesToTheRest proves
+// how the two token lists reach the interceptor: an api.auth_tokens entry keeps
+// every scope, so a flat token list behaves exactly as it did before scopes
+// existed, while an api.scoped_tokens entry carries only what it declared.
+func TestScopedTokensGrantsFullAccessToAuthTokensAndDeclaredScopesToTheRest(t *testing.T) {
+	tokens := scopedTokens(APIConfig{
+		AuthTokens: []string{"full"},
+		ScopedTokens: []ScopedTokenConfig{
+			{Token: "producer", Scopes: []string{string(api.ScopeProduce)}},
+			{Token: "worker", Scopes: []string{string(api.ScopeConsume), string(api.ScopeAdmin)}},
+		},
+	})
+
+	require.Len(t, tokens, 3)
+
+	require.Equal(t, "full", tokens[0].Token)
+	require.ElementsMatch(t, api.AllScopes(), tokens[0].Scopes, "a flat auth token keeps full access")
+
+	require.Equal(t, "producer", tokens[1].Token)
+	require.Equal(t, []api.Scope{api.ScopeProduce}, tokens[1].Scopes)
+
+	require.Equal(t, "worker", tokens[2].Token)
+	require.ElementsMatch(t, []api.Scope{api.ScopeConsume, api.ScopeAdmin}, tokens[2].Scopes)
 }

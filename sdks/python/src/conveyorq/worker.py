@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import random
+import re
 import signal
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -28,9 +29,17 @@ from .task import Task
 #: The SDK version reported in Hello.
 SDK_VERSION = "conveyor-py/0.1.0"
 
+# Queue names the server accepts, per the wire protocol. Validating the same
+# shape locally turns a name the server would refuse into a construction error
+# instead of a session rejected on every reconnect.
+_QUEUE_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9\-_.]*$")
+
 # Reconnection backoff (full jitter), per the wire protocol section 5.9.
 _RECONNECT_BASE = 0.5
 _RECONNECT_MAX = 30.0
+# The exponent is capped so a long outage cannot grow the ceiling past what a
+# float holds; the delay saturates at _RECONNECT_MAX long before this.
+_RECONNECT_MAX_EXPONENT = 16
 
 # Default lease/heartbeat fallbacks when Welcome omits them (seconds).
 _DEFAULT_LEASE_TTL = 60.0
@@ -50,15 +59,15 @@ _CLOSE_GRACE = 5.0
 
 # gRPC status codes that must stop the worker rather than trigger a reconnect:
 # bad auth, or a server-side rejection of the session contract (an outdated SDK
-# version, a malformed Hello, an unmet minimum server version). This set matches
-# the Go and TypeScript SDKs. gRPC does not synthesize INVALID_ARGUMENT for a
-# severed connection (that surfaces as UNAVAILABLE), so an INVALID_ARGUMENT here
-# always came from the server.
+# version, a malformed Hello, an unmet minimum server version). This is the set
+# the wire protocol names, and it matches the Go and TypeScript SDKs. Every other
+# code, FAILED_PRECONDITION included, is transient and reconnects. gRPC does not
+# synthesize INVALID_ARGUMENT for a severed connection (that surfaces as
+# UNAVAILABLE), so an INVALID_ARGUMENT here always came from the server.
 _FATAL_CODES = frozenset(
     {
         grpc.StatusCode.UNAUTHENTICATED,
         grpc.StatusCode.PERMISSION_DENIED,
-        grpc.StatusCode.FAILED_PRECONDITION,
         grpc.StatusCode.INVALID_ARGUMENT,
     }
 )
@@ -95,6 +104,19 @@ class Worker:
     ) -> None:
         if not queues:
             raise ConveyorError("conveyor: a worker must declare at least one queue")
+
+        # Validate the session contract locally so a Hello the server would
+        # reject fails fast here rather than becoming an endless reconnect loop
+        # against a permanent INVALID_ARGUMENT.
+        for name, weight in queues.items():
+            if not _QUEUE_NAME_PATTERN.fullmatch(name):
+                raise ConveyorError(
+                    f"conveyor: queue name {name!r} must start with a letter or digit "
+                    "and contain only letters, digits, '-', '_' or '.'"
+                )
+
+            if weight <= 0:
+                raise ConveyorError(f"conveyor: queue {name} weight must be positive, got {weight}")
 
         if concurrency <= 0:
             raise ConveyorError("conveyor: worker concurrency must be positive")
@@ -220,6 +242,11 @@ class _Session:
 
         self._outbound: "asyncio.Queue[Optional[service_pb2.WorkerMessage]]" = asyncio.Queue()
         self._inflight: Dict[str, asyncio.Event] = {}
+        # Ids of tasks dispatched after the drain began. They are never started,
+        # but their leases are kept alive by the heartbeat until the stream
+        # closes, when the server releases them with no retry penalty; reporting
+        # RELEASED at once would only have the server redispatch them here.
+        self._parked: Set[str] = set()
         # Ids of tasks the drain aborted after the grace window: their outcome is
         # reported RELEASED (returned to the queue, no retry penalty) rather than
         # RETRY. A server cancel or a deadline is not recorded here and so retries.
@@ -255,6 +282,14 @@ class _Session:
                 raise
 
             return self._established
+        except asyncio.CancelledError:
+            # The drain tears the call down itself when the server lingers past
+            # the half-close; that cancellation ends the session, it does not
+            # propagate. Any other cancellation is the caller's and does.
+            if self._draining or stop.is_set():
+                return self._established
+
+            raise
         finally:
             drainer.cancel()
             self._stop_heartbeat()
@@ -284,11 +319,18 @@ class _Session:
         if which == "welcome":
             self._on_welcome(message.welcome)
         elif which == "dispatch":
-            if not self._draining and message.dispatch.HasField("task"):
+            if not message.dispatch.HasField("task"):
+                return
+
+            if self._draining:
+                self._parked.add(message.dispatch.task.id)
+            else:
                 self._spawn(self._run_one(message.dispatch.task, _deadline(message.dispatch)))
         elif which == "batch_dispatch":
-            if not self._draining:
-                batch = message.batch_dispatch
+            batch = message.batch_dispatch
+            if self._draining:
+                self._parked.update(task.id for task in batch.tasks)
+            else:
                 self._spawn(self._run_batch(list(batch.tasks), batch.group, _deadline(batch)))
         elif which == "cancel":
             event = self._inflight.get(message.cancel.task_id)
@@ -494,14 +536,16 @@ class _Session:
         while True:
             await asyncio.sleep(self._heartbeat_interval)
 
-            if not self._inflight:
+            active = self._active_task_ids()
+            if not active:
                 continue
 
-            self._send(
-                service_pb2.WorkerMessage(
-                    heartbeat=service_pb2.Heartbeat(active_task_ids=list(self._inflight.keys()))
-                )
-            )
+            self._send(service_pb2.WorkerMessage(heartbeat=service_pb2.Heartbeat(active_task_ids=active)))
+
+    def _active_task_ids(self) -> List[str]:
+        """Return every id whose lease this session must keep alive: the tasks
+        executing plus those parked by the drain."""
+        return [*self._inflight.keys(), *self._parked]
 
     async def _drain_on_stop(self, stop: asyncio.Event) -> None:
         """Wait for the stop signal, then drain in-flight work and close the stream.
@@ -621,7 +665,7 @@ def _arm_deadline(cancelled: asyncio.Event, deadline: Optional[float]) -> Option
 
 
 def _full_jitter(attempt: int) -> float:
-    ceiling = min(_RECONNECT_MAX, _RECONNECT_BASE * (2 ** attempt))
+    ceiling = min(_RECONNECT_MAX, _RECONNECT_BASE * (2 ** min(attempt, _RECONNECT_MAX_EXPONENT)))
 
     return random.random() * ceiling
 

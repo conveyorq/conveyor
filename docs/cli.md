@@ -33,11 +33,13 @@ Every command accepts these, and the same two settings cover the whole session:
 |---------|------|-------------|---------|
 | Server URL | `--addr` | `CONVEYOR_ADDR` | `http://localhost:8080` |
 | Bearer token | `--token` | `CONVEYOR_TOKEN` | empty (dev servers only) |
-| Output format | `--output` / `-o` | — | `table` |
+| Output format | `--output` / `-o` | none | `table` |
 
 A flag wins over its environment variable. Outside `--dev`, a server requires a token, so set `--token`/`CONVEYOR_TOKEN`. When the server runs with `api.read_only`, the mutating commands return `permission denied` while reads, enqueue, and the event stream still work.
 
-`--output json` renders the listing and inspection commands (`stats`, `tasks list`, `ratelimit ls`, `concurrency ls`, `group ls`, `cron list`, `cluster info`, `cluster sessions`, `broker info`, `webhooks list`, and batch task actions) as JSON for scripting; the default `table` is human-readable.
+`--output json` renders the listing and inspection commands (`stats`, `tasks get`, `tasks list`, `ratelimit ls`, `concurrency ls`, `group ls`, `cron list`, `cluster info`, `cluster sessions`, `broker info`, `webhooks list`, and the task actions) as JSON for scripting; the default `table` is human-readable.
+
+The JSON is the wire response, so it follows the protobuf JSON mapping: fields are present at their zero value rather than omitted, an empty listing is an empty array, and 64-bit integers are rendered as strings (`"pending": "12"`), which matters if you do arithmetic on them.
 
 ```sh
 export CONVEYOR_ADDR=https://conveyor.internal:8080
@@ -203,7 +205,7 @@ conveyor events --queue billing --type completed --type archived
 | `conveyor tasks archive <id>...` | Move one or more tasks to the archive (dead-letter) |
 | `conveyor tasks reschedule <id> --in DUR` (or `--at RFC3339`) | Move a scheduled, pending, or retry task's due time |
 
-`run`, `cancel`, `delete`, and `archive` take one or more ids: a single id runs the unary call, several run the batch call and report the per-id outcome (use `--output json` to script it).
+`run`, `cancel`, `delete`, and `archive` take one or more ids: a single id runs the unary call, several run the batch call and report the per-id outcome (use `--output json` to script it, where even a single id renders the batch shape so your parser does not depend on how many ids you passed). A batch that the server rejected for some or all of its ids prints those outcomes and then exits non-zero, so a scheduled job cannot read a clean exit as work done.
 
 ```sh
 conveyor tasks reschedule 01J... --in 30m

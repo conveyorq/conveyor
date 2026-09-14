@@ -30,9 +30,28 @@ func TestIsDisallowedIP(t *testing.T) {
 		"unspecified v4":       {"0.0.0.0", true},
 		"multicast":            {"224.0.0.1", true},
 		"mapped loopback":      {"::ffff:127.0.0.1", true},
+		"broadcast v4":         {"255.255.255.255", true},
+		"carrier-grade nat":    {"100.64.0.1", true},
+		"carrier-grade nat hi": {"100.127.255.254", true},
+		"reserved 240":         {"240.0.0.1", true},
+		"site-local v6":        {"fec0::1", true},
 		"public v4":            {"93.184.216.34", false},
 		"public v6":            {"2606:2800:220:1:248:1893:25c8:1946", false},
 		"public cloudflare v4": {"1.1.1.1", false},
+		// 100.63.x and 100.128.x sit just outside carrier-grade NAT and stay
+		// public, so the range check must not over-reach.
+		"just below cgnat": {"100.63.255.255", false},
+		"just above cgnat": {"100.128.0.0", false},
+		// IPv6 transition addresses are judged by the IPv4 address they embed:
+		// a NAT64 or 6to4 gateway forwards to it, so an embedded internal
+		// address reaches the inside while an embedded public one does not.
+		"nat64 metadata":  {"64:ff9b::a9fe:a9fe", true},
+		"nat64 loopback":  {"64:ff9b::7f00:1", true},
+		"nat64 private":   {"64:ff9b::a00:1", true},
+		"nat64 local-use": {"64:ff9b:1::a00:1", true},
+		"6to4 private":    {"2002:a00:1::", true},
+		"nat64 public":    {"64:ff9b::101:101", false},
+		"6to4 public":     {"2002:101:101::", false},
 	}
 
 	for name, testCase := range cases {
@@ -89,4 +108,27 @@ func TestGuardedDialerRefusesLoopback(t *testing.T) {
 
 	_, err = NewClient(true).Call(context.Background(), endpoint.URL, nil, execute)
 	require.NoError(t, err, "a private-allowing client reaches the same endpoint")
+}
+
+// TestGuardedDialerRefusesHostnameResolvingPrivate covers the resolve-then-vet
+// branch: a hostname passes registration because no name is resolved there, and
+// the dialer is what refuses it once the name turns out to point inside. The
+// error names the setting that permits it, so an operator running private
+// endpoints on purpose can act on the message.
+func TestGuardedDialerRefusesHostnameResolvingPrivate(t *testing.T) {
+	dial := guardedDialContext(false)
+
+	// localhost resolves to loopback on every supported platform, which makes it
+	// a hostname whose every address is non-public.
+	_, err := dial(context.Background(), "tcp", "localhost:9")
+	require.Error(t, err, "a hostname resolving only to loopback must be refused")
+	require.ErrorContains(t, err, allowPrivateHint)
+
+	// The same name is reached when the guard is off.
+	allowed := guardedDialContext(true)
+	conn, err := allowed(context.Background(), "tcp", net.JoinHostPort("127.0.0.1", "9"))
+
+	if err == nil {
+		require.NoError(t, conn.Close())
+	}
 }

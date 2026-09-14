@@ -126,6 +126,16 @@ engine:
   # shutdownTimeout bounds graceful drain of the whole node on SIGTERM.
   shutdownTimeout: 30s
 
+# webhooks configures behaviour shared by every webhook worker registration.
+webhooks:
+  # allowPrivateTargets permits webhook delivery to private, loopback, and
+  # link-local endpoints. It defaults off so an admin token cannot aim the
+  # server at internal services. Turn it on when the webhook endpoints are
+  # private by design, which is the usual case for workers running in this
+  # cluster: a Service address resolves to a private ClusterIP and is refused
+  # while this is false.
+  allowPrivateTargets: false
+
 log:
   # level is one of debug, info, warn, error.
   level: info
@@ -205,12 +215,15 @@ prometheusRule:
   labels: {}
   # pendingBacklog is the cluster-wide pending task count that pages.
   pendingBacklog: 1000
-  # leaseExpiredPerSecond is the rate of expired leases (worker crashes or
-  # missed heartbeats) that pages.
+  # leaseExpiredPerSecond is the rate that pages, counted in queues where the
+  # reaper reclaimed at least one expired lease on a tick, not in individual
+  # leases: one busy queue losing many leases scores the same as one losing a
+  # single lease. It is a signal that workers are crashing or missing
+  # heartbeats, and each reclaim spends one of the task's retries.
   leaseExpiredPerSecond: 0.1
 
 # workerAutoscaling creates an optional KEDA ScaledObject that scales your
-# worker Deployment on queue backlog — the conveyor_pending gauge conveyord
+# worker Deployment on queue backlog, the conveyor_pending gauge conveyord
 # already exports. Workers run outside this chart, so scaleTargetRef must name
 # your own worker Deployment. It needs KEDA installed and a Prometheus scraping
 # conveyord's metrics port, so it stays opt-in (enabling it without KEDA's CRD
@@ -229,8 +242,11 @@ workerAutoscaling:
   # prometheusAddress is the in-cluster Prometheus query endpoint.
   prometheusAddress: http://prometheus.monitoring.svc:9090
   # query is the PromQL backlog signal; scope it by queue label if a subset of
-  # queues should drive scaling.
-  query: sum(conveyor_pending)
+  # queues should drive scaling. Every conveyord node reports the same
+  # broker-wide depth, so the inner max deduplicates the replicas before the
+  # queues are summed; a plain sum would scale on replicaCount times the real
+  # backlog.
+  query: sum(max by (queue) (conveyor_pending))
   # threshold is the approximate pending tasks per worker replica.
   threshold: "100"
 

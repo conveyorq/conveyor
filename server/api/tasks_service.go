@@ -54,6 +54,15 @@ const perTaskOverheadBytes = 64 << 10
 // (maxPayloadBytes) is still enforced per task after decode.
 const MaxRequestBytes = maxBatchTasks * (maxPayloadBytes + perTaskOverheadBytes)
 
+// MaxMessageBytes bounds one decoded message that carries a single task rather
+// than a batch of them. Only EnqueueBatch legitimately arrives at
+// MaxRequestBytes, so a service that never receives a batch is held to one
+// task's worth of bytes. It is what the webhook callback service is mounted
+// with: that service authenticates per delivery with a lease token instead of a
+// bearer token, so anyone who can reach the port can post to it, and it must not
+// be handed a batch-sized decode budget.
+const MaxMessageBytes = maxPayloadBytes + perTaskOverheadBytes
+
 // TaskService serves the enqueue-side API.
 type TaskService struct {
 	// engine commits tasks and wakes their queue grains.

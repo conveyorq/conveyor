@@ -338,6 +338,27 @@ func TestValidateRejections(t *testing.T) {
 		{"scoped token unknown scope", func(c *Config) {
 			c.API.ScopedTokens = []ScopedTokenConfig{{Token: "t", Scopes: []string{"delete"}}}
 		}, "api.scoped_tokens[0].scopes"},
+		// A token left in auth_tokens while also given a narrow scope list keeps
+		// full access, because the full-access entry is matched first. The
+		// ambiguity has to be refused or the demotion silently does nothing.
+		{"token declared in both lists", func(c *Config) {
+			c.API.AuthTokens = []string{"shared"}
+			c.API.ScopedTokens = []ScopedTokenConfig{{Token: "shared", Scopes: []string{"produce"}}}
+		}, "api.scoped_tokens[0].token"},
+		{"token declared twice in scoped tokens", func(c *Config) {
+			c.API.ScopedTokens = []ScopedTokenConfig{
+				{Token: "dup", Scopes: []string{"produce"}},
+				{Token: "dup", Scopes: []string{"admin"}},
+			}
+		}, "api.scoped_tokens[1].token"},
+		{"empty full-access token", func(c *Config) {
+			c.API.AuthTokens = []string{""}
+		}, "api.auth_tokens[0]"},
+		// Postgres reads statement_timeout in whole milliseconds and treats zero
+		// as unlimited, so a sub-millisecond value would disable the timeout.
+		{"sub-millisecond statement timeout", func(c *Config) {
+			c.Broker.Pool.StatementTimeout = 500 * time.Microsecond
+		}, "broker.pool.statement_timeout"},
 	}
 
 	for _, tc := range cases {

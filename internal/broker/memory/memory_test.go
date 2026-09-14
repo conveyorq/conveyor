@@ -355,6 +355,37 @@ func TestPurgeTerminalArchivedRowsFollowArchiveRetention(t *testing.T) {
 	require.NotContains(t, store.tasks, "gone")
 }
 
+// TestPurgeTerminalBudgetsCategoriesSeparately proves the limit is spent per
+// category, matching the Postgres broker's two limited statements: a backlog of
+// completed rows cannot consume the whole budget and starve dead-lettered rows
+// out of every pass.
+func TestPurgeTerminalBudgetsCategoriesSeparately(t *testing.T) {
+	store, fake := newCoverageBroker(t)
+	lapsed := fake.Now().Add(-time.Hour)
+
+	for _, id := range []string{"done-a", "done-b"} {
+		store.tasks[id] = &taskRow{envelope: envelope(id, "q"), state: conveyorv1.TaskState_TASK_STATE_COMPLETED, completedAt: lapsed}
+	}
+
+	for _, id := range []string{"dead-a", "dead-b"} {
+		store.tasks[id] = &taskRow{envelope: envelope(id, "q"), state: conveyorv1.TaskState_TASK_STATE_ARCHIVED, completedAt: lapsed}
+	}
+
+	// One slot per category, so exactly one completed row and one archived row
+	// go in this pass rather than two rows of whichever category is walked first.
+	purged, err := store.PurgeTerminal(context.Background(), time.Minute, 1)
+	require.NoError(t, err)
+	require.Equal(t, 2, purged)
+
+	remaining := map[conveyorv1.TaskState]int{}
+	for _, row := range store.tasks {
+		remaining[row.state]++
+	}
+
+	require.Equal(t, 1, remaining[conveyorv1.TaskState_TASK_STATE_COMPLETED], "one completed row is left for the next pass")
+	require.Equal(t, 1, remaining[conveyorv1.TaskState_TASK_STATE_ARCHIVED], "one archived row is left for the next pass")
+}
+
 func TestArchiveExpiredSkipsAndStopsAtLimit(t *testing.T) {
 	store, fake := newCoverageBroker(t)
 	now := fake.Now()

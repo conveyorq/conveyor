@@ -26,8 +26,9 @@ const authorizationHeader = "Authorization"
 const bearerPrefix = "Bearer "
 
 // Scope identifies a class of operations a bearer token is authorized for. The
-// three scopes map one-to-one onto the three authenticated services, so a
-// token's scopes decide which services it may call.
+// three scopes map onto the three authenticated services, so a token's scopes
+// decide which services it may call; task inspection is the one procedure two
+// scopes admit (see admittedScopes).
 type Scope string
 
 const (
@@ -173,32 +174,35 @@ func (i *authInterceptor) authorize(header http.Header, procedure string) error 
 // procedure. An unmapped procedure fails closed: the interceptor guards only
 // the three scoped services, so any other procedure is denied.
 func authorizeScope(scopes map[Scope]struct{}, procedure string) error {
-	required, ok := requiredScope(procedure)
-	if !ok {
-		return connect.NewError(connect.CodePermissionDenied, errForbidden)
+	for _, admitted := range admittedScopes(procedure) {
+		if _, granted := scopes[admitted]; granted {
+			return nil
+		}
 	}
 
-	if _, granted := scopes[required]; !granted {
-		return connect.NewError(connect.CodePermissionDenied, errForbidden)
-	}
-
-	return nil
+	return connect.NewError(connect.CodePermissionDenied, errForbidden)
 }
 
-// requiredScope resolves the scope a procedure requires from its service
-// prefix, reporting false for a procedure outside the three scoped services.
-func requiredScope(procedure string) (Scope, bool) {
+// admittedScopes resolves the scopes that admit a procedure from its service
+// prefix, returning none for a procedure outside the three scoped services.
+// Task inspection is the one procedure two scopes admit: it lives on the
+// enqueue service, but it is a read that operators run from the CLI, so the
+// admin scope admits it alongside produce.
+func admittedScopes(procedure string) []Scope {
 	switch {
+	case procedure == conveyorv1connect.TaskServiceGetTaskProcedure:
+		return []Scope{ScopeProduce, ScopeAdmin}
+
 	case strings.HasPrefix(procedure, taskServicePrefix):
-		return ScopeProduce, true
+		return []Scope{ScopeProduce}
 
 	case strings.HasPrefix(procedure, workerServicePrefix):
-		return ScopeConsume, true
+		return []Scope{ScopeConsume}
 
 	case strings.HasPrefix(procedure, adminServicePrefix):
-		return ScopeAdmin, true
+		return []Scope{ScopeAdmin}
 
 	default:
-		return "", false
+		return nil
 	}
 }

@@ -218,11 +218,10 @@ func TestQueueGrainDispatchThroughput(t *testing.T) {
 	// roughly 500 msgs/s; with it this gate sustains ~10k tasks/s (validated
 	// 2026-06-13, M1, uninstrumented).
 	//
-	// It stays skipped in the suite because the only CI test pass runs under
-	// -race, where instrumentation slows the sync paths ~10x: the rate cannot
-	// reach the 5k gate no matter the deadline. The repo deliberately carries
-	// no build-tag race flag to special-case it. To re-measure, comment out
-	// the t.Skip below and run on an uninstrumented build:
+	// It skips under -race, where instrumentation slows the sync paths ~10x: the
+	// rate cannot reach the 5k gate no matter the deadline. The nightly job runs
+	// the suite uninstrumented, which is where this gate actually measures. To
+	// re-measure by hand:
 	//
 	//	go test ./internal/actors -run TestQueueGrainDispatchThroughput -v
 	if raceEnabled {

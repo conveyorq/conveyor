@@ -8,6 +8,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"time"
 
 	goakt "github.com/tochemey/goakt/v4/actor"
@@ -298,6 +300,9 @@ type WebhookGateway struct {
 	signer *webhook.HMACSigner
 	// identities caches the queue grain identity per served queue.
 	identities map[string]*goakt.GrainIdentity
+	// capacities is the registration's concurrency split across its queues by
+	// weight, the share each queue is announced while the endpoint is healthy.
+	capacities map[string]int32
 	// inflight tracks dispatched tasks by id until their delivery resolves.
 	inflight map[string]*inflightTask
 	// batchStates tracks each fired group by lease id until every member
@@ -358,6 +363,7 @@ func (w *WebhookGateway) PreStart(ctx *goakt.Context) error {
 	w.client = webhook.NewClient(runtime.Settings().AllowPrivateWebhookTargets)
 	w.signer = webhook.NewHMACSigner(w.registration.Secrets[0], runtime.Clock())
 	w.identities = make(map[string]*goakt.GrainIdentity, len(w.registration.Queues))
+	w.capacities = w.splitCapacities()
 	w.inflight = make(map[string]*inflightTask)
 	w.batchStates = make(map[string]*webhookBatch)
 	w.aborts = make(map[string]context.CancelFunc)
@@ -489,7 +495,7 @@ func (w *WebhookGateway) register(ctx *goakt.ReceiveContext) {
 		err = system.TellGrain(goCtx, identity, &conveyorv1.RegisterGateway{
 			Queue:       queue,
 			GatewayName: w.name,
-			Capacity:    w.capacity(),
+			Capacity:    w.capacity(queue),
 			BatchTypes:  w.registration.BatchTypes,
 			Weight:      weight,
 		})
@@ -499,11 +505,12 @@ func (w *WebhookGateway) register(ctx *goakt.ReceiveContext) {
 	}
 }
 
-// capacity is the concurrency this gateway announces: the registration's
-// while the endpoint is healthy, zero while the breaker withholds, and one
-// while probing a recovering endpoint. Don't lease what you can't deliver,
-// and probe a recovering endpoint with a single delivery, not a flood.
-func (w *WebhookGateway) capacity() int32 {
+// capacity is the concurrency this gateway announces for one queue: the
+// queue's weighted share of the registration's concurrency while the endpoint
+// is healthy, zero while the breaker withholds, and one while probing a
+// recovering endpoint. Don't lease what you can't deliver, and probe a
+// recovering endpoint with a single delivery, not a flood.
+func (w *WebhookGateway) capacity(queue string) int32 {
 	switch {
 	case w.withholding:
 		return 0
@@ -512,8 +519,18 @@ func (w *WebhookGateway) capacity() int32 {
 		return 1
 
 	default:
-		return w.registration.Concurrency
+		return w.capacities[queue]
 	}
+}
+
+// splitCapacities divides the registration's concurrency across its queues by
+// their weights, exactly as a stream gateway splits a worker's declared
+// concurrency, so an endpoint on several queues never has more deliveries open
+// than it registered for.
+func (w *WebhookGateway) splitCapacities() map[string]int32 {
+	queues := slices.Sorted(maps.Keys(w.registration.Queues))
+
+	return splitCapacity(w.registration.Concurrency, queues, w.registration.Queues)
 }
 
 // recordTransport feeds one delivery's transport health into the endpoint
@@ -671,6 +688,7 @@ func (w *WebhookGateway) apply(ctx *goakt.ReceiveContext, worker *broker.Webhook
 	}
 
 	w.registration = worker
+	w.capacities = w.splitCapacities()
 	w.signer = webhook.NewHMACSigner(worker.Secrets[0], w.runtime.Clock())
 	w.register(ctx)
 }
@@ -975,7 +993,7 @@ func (w *WebhookGateway) heartbeatAsync(ctx *goakt.ReceiveContext, message *conv
 	}
 
 	if errors.Is(err, broker.ErrLeaseLost) {
-		w.dropAsync(ctx, message.GetTaskId(), entry, true)
+		w.dropDelivery(ctx, message.GetTaskId(), entry, true)
 
 		return
 	}
@@ -1035,19 +1053,19 @@ func (w *WebhookGateway) reapStaleAsync(ctx *goakt.ReceiveContext) {
 		}
 
 		w.runtime.Logger().Debug("async delivery stopped heartbeating; slot reclaimed", "task_id", taskID, "gateway", w.name)
-		w.dropAsync(ctx, taskID, entry, false)
+		w.dropDelivery(ctx, taskID, entry, false)
 	}
 }
 
-// dropAsync forgets one asynchronous delivery whose lease is gone. The
-// durable side needs nothing: the reaper already owns recovery. A batched
-// member defers its active-count and credit accounting to the batch's own
-// completion, recording itself as resolved-without-success; a single delivery
-// frees its active slot and returns the one credit it held, so a stale
-// delivery does not permanently shrink this gateway's capacity. When
+// dropDelivery forgets one delivery whose lease is gone, synchronous or
+// asynchronous. The durable side needs nothing: the reaper already owns
+// recovery. A batched member defers its active-count and credit accounting to
+// the batch's own completion, recording itself as resolved-without-success; a
+// single delivery frees its active slot and returns the one credit it held, so
+// a stale delivery does not permanently shrink this gateway's capacity. When
 // notifyCancel is set the endpoint is still live (it just heartbeated), so it
 // is told to stop the work its lost lease no longer authorizes.
-func (w *WebhookGateway) dropAsync(ctx *goakt.ReceiveContext, taskID string, entry *inflightTask, notifyCancel bool) {
+func (w *WebhookGateway) dropDelivery(ctx *goakt.ReceiveContext, taskID string, entry *inflightTask, notifyCancel bool) {
 	delete(w.inflight, taskID)
 	delete(w.async, taskID)
 	delete(w.aborts, taskID)
@@ -1110,9 +1128,8 @@ func (w *WebhookGateway) extendLeases(ctx *goakt.ReceiveContext) {
 			continue
 		}
 
-		delete(w.inflight, taskID)
 		w.abortRequest(taskID)
-		w.runtime.Counters().Active.Add(-1)
+		w.dropDelivery(ctx, taskID, entry, false)
 		w.runtime.Logger().Debug("lease lost; webhook delivery aborted", "task_id", taskID, "gateway", w.name)
 	}
 }

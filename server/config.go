@@ -616,14 +616,52 @@ func validateRetryBackoff(engine EngineConfig) error {
 }
 
 // validateAuth checks the API authentication configuration: a token is present
-// unless unauthenticated access is explicitly permitted, and every scoped
-// token is well-formed.
+// unless unauthenticated access is explicitly permitted, every full-access
+// token is non-empty, every scoped token is well-formed, and no token value is
+// declared twice.
 func (c *Config) validateAuth() error {
 	if c.AuthDisabled() && !c.API.AllowUnauthenticated {
 		return fmt.Errorf("api.auth_tokens: set at least one token, or set api.allow_unauthenticated to run the API without authentication (the --dev preset does this)")
 	}
 
-	return validateScopedTokens(c.API.ScopedTokens)
+	for index, token := range c.API.AuthTokens {
+		if token == "" {
+			return fmt.Errorf("api.auth_tokens[%d]: must not be empty", index)
+		}
+	}
+
+	if err := validateScopedTokens(c.API.ScopedTokens); err != nil {
+		return err
+	}
+
+	return validateTokensAreDistinct(c.API)
+}
+
+// validateTokensAreDistinct rejects a token value declared more than once across
+// api.auth_tokens and api.scoped_tokens. The interceptor takes the first entry
+// that matches, and full-access tokens are registered first, so a token left in
+// auth_tokens while also being given a narrow scope list would silently keep
+// full access: an operator who believes they have demoted a credential would
+// still be handing out every admin RPC. Refusing the ambiguity at startup is the
+// only way that mistake surfaces.
+func validateTokensAreDistinct(config APIConfig) error {
+	seen := make(map[string]string, len(config.AuthTokens)+len(config.ScopedTokens))
+
+	for index, token := range config.AuthTokens {
+		seen[token] = fmt.Sprintf("api.auth_tokens[%d]", index)
+	}
+
+	for index, entry := range config.ScopedTokens {
+		key := fmt.Sprintf("api.scoped_tokens[%d]", index)
+
+		if first, duplicate := seen[entry.Token]; duplicate {
+			return fmt.Errorf("%s.token: the same token is already declared at %s; a token must appear once, or only its first declaration applies", key, first)
+		}
+
+		seen[entry.Token] = key
+	}
+
+	return nil
 }
 
 // validateScopedTokens checks every scoped bearer token: a non-empty token
@@ -912,6 +950,13 @@ func (p *PoolConfig) validate() error {
 
 	if p.StatementTimeout < 0 {
 		return fmt.Errorf("broker.pool.statement_timeout: must not be negative, got %s", p.StatementTimeout)
+	}
+
+	// Postgres takes statement_timeout in whole milliseconds and reads zero as
+	// "no limit". A sub-millisecond value would truncate to zero and silently
+	// turn the timeout off, the opposite of what was asked for.
+	if p.StatementTimeout > 0 && p.StatementTimeout < time.Millisecond {
+		return fmt.Errorf("broker.pool.statement_timeout: must be at least 1ms, got %s", p.StatementTimeout)
 	}
 
 	return nil

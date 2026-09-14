@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"slices"
 	"time"
 
 	"connectrpc.com/connect"
@@ -454,7 +455,7 @@ func (s *Server) buildMux() *http.ServeMux {
 	s.workerService = api.NewWorkerService(s.engine, s.logger, clock.System())
 	mux.Handle(conveyorv1connect.NewWorkerServiceHandler(s.workerService, options...))
 
-	adminOptions := options
+	adminOptions := slices.Clone(options)
 	if s.config.API.ReadOnly {
 		adminOptions = append(adminOptions, connect.WithInterceptors(api.NewReadOnlyInterceptor()))
 	}
@@ -464,9 +465,12 @@ func (s *Server) buildMux() *http.ServeMux {
 
 	// The webhook callback service authenticates with per-delivery lease
 	// tokens, never bearer tokens, so it mounts without the auth
-	// interceptor: endpoints hold no API credentials by design.
+	// interceptor: endpoints hold no API credentials by design. Because that
+	// leaves it reachable by anyone who can reach the port, it is also held to
+	// the single-message bound rather than the batch-sized one: its calls carry
+	// one task's result, never a batch.
 	webhookService := api.NewWebhookService(s.engine, s.taskLog)
-	mux.Handle(conveyorv1connect.NewWebhookServiceHandler(webhookService, connect.WithReadMaxBytes(api.MaxRequestBytes)))
+	mux.Handle(conveyorv1connect.NewWebhookServiceHandler(webhookService, connect.WithReadMaxBytes(api.MaxMessageBytes)))
 
 	s.mountDashboard(mux)
 

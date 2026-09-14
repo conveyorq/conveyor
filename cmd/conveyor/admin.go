@@ -25,11 +25,14 @@ import (
 	"github.com/conveyorq/conveyor/internal/wire"
 )
 
-// printJSON writes a protobuf message as indented JSON — the --output json
+// printJSON writes a protobuf message as indented JSON, the --output json
 // rendering. It marshals the wire response directly, so the JSON shape follows
-// the protos.
+// the protos. Default values are emitted rather than omitted, so a field a
+// script reads is present with its zero value instead of missing, and an empty
+// listing is an empty array rather than an absent key. Note that protobuf's JSON
+// mapping renders 64-bit integers as strings.
 func printJSON(w io.Writer, message proto.Message) error {
-	marshaled, err := protojson.MarshalOptions{Multiline: true, Indent: "  "}.Marshal(message)
+	marshaled, err := protojson.MarshalOptions{Multiline: true, Indent: "  ", EmitDefaultValues: true}.Marshal(message)
 	if err != nil {
 		return err
 	}
@@ -57,6 +60,17 @@ func (c *connection) admin() conveyorv1connect.AdminServiceClient {
 	}
 
 	return conveyorv1connect.NewAdminServiceClient(wire.NewH2CClient(), c.baseURL(), options...)
+}
+
+// tasks builds the CLI's direct line to the TaskService, used where a command
+// must render the wire response itself rather than the SDK's task struct.
+func (c *connection) tasks() conveyorv1connect.TaskServiceClient {
+	var options []connect.ClientOption
+	if token := c.bearerToken(); token != "" {
+		options = append(options, connect.WithInterceptors(wire.NewBearerInterceptor(token)))
+	}
+
+	return conveyorv1connect.NewTaskServiceClient(wire.NewH2CClient(), c.baseURL(), options...)
 }
 
 // newStatsCommand builds the stats command.
@@ -524,7 +538,7 @@ func newTasksListCommand(conn *connection) *cobra.Command {
 			}
 
 			if token := response.Msg.GetNextPageToken(); token != "" {
-				fmt.Fprintf(stdout, "\nnext page: conveyor tasks list --page %s\n", token)
+				fmt.Fprintf(stdout, "\nnext page: conveyor %s %s --%s %s\n", cmdTasks, cmdList, flagPage, token)
 			}
 
 			return nil
@@ -566,7 +580,11 @@ func newTaskOperationCommand(conn *connection, name, short string, single taskOp
 			admin := conn.admin()
 			stdout := cmd.OutOrStdout()
 
-			if len(args) == 1 {
+			// One id takes the unary RPC, several take the batch RPC. Under
+			// --output json even a single id goes through the batch call, so the
+			// rendered shape does not change with the number of ids and a script
+			// can parse one response format.
+			if len(args) == 1 && !conn.jsonOutput() {
 				if err := single(context.Background(), admin, args[0]); err != nil {
 					return err
 				}
@@ -581,14 +599,47 @@ func newTaskOperationCommand(conn *connection, name, short string, single taskOp
 				return err
 			}
 
-			return renderBatchResults(conn, stdout, name, response)
+			return renderBatchResults(conn, stdout, name, args, response)
 		},
 	}
 }
 
 // renderBatchResults prints the per-id outcome of a batch task operation as a
-// table, or as the raw wire response under --output json.
-func renderBatchResults(conn *connection, stdout io.Writer, name string, response *conveyorv1.BatchTasksResponse) error {
+// table, or as the raw wire response under --output json. A batch RPC succeeds
+// even when it rejects every id, reporting each failure in the response rather
+// than as a transport error, so this reports the rejections as an error of its
+// own: a script that batches ids must not read a clean exit as work done.
+func renderBatchResults(conn *connection, stdout io.Writer, name string, ids []string, response *conveyorv1.BatchTasksResponse) error {
+	if err := writeBatchResults(conn, stdout, name, response); err != nil {
+		return err
+	}
+
+	results := response.GetResults()
+
+	// The server answers once per id; a shorter answer would hide the ids it
+	// dropped behind a clean exit.
+	if len(results) != len(ids) {
+		return fmt.Errorf("tasks %s: server answered for %d of %d ids", name, len(results), len(ids))
+	}
+
+	failed := 0
+
+	for _, result := range results {
+		if result.GetError() != "" {
+			failed++
+		}
+	}
+
+	if failed > 0 {
+		return fmt.Errorf("tasks %s: %d of %d ids failed", name, failed, len(results))
+	}
+
+	return nil
+}
+
+// writeBatchResults renders the outcome of every id, as a table or, under
+// --output json, as the wire response.
+func writeBatchResults(conn *connection, stdout io.Writer, name string, response *conveyorv1.BatchTasksResponse) error {
 	if conn.jsonOutput() {
 		return printJSON(stdout, response)
 	}
@@ -910,7 +961,7 @@ func newClusterCommand(conn *connection) *cobra.Command {
 				return fmt.Errorf("cluster: unknown subcommand %q", args[0])
 			}
 
-			return errors.New("cluster: usage: conveyor cluster info")
+			return fmt.Errorf("cluster: usage: conveyor cluster %s|%s", cmdInfo, cmdSessions)
 		},
 	}
 

@@ -28,6 +28,13 @@ import { createTransport } from "./transport.js";
 /** The SDK version reported in Hello. */
 const SDK_VERSION = "conveyor-ts/0.1.0";
 
+/**
+ * Queue names the server accepts, per the wire protocol. Validating the same
+ * shape locally turns a name the server would refuse into a construction error
+ * instead of a session that is rejected on every reconnect.
+ */
+const QUEUE_NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9\-_.]*$/;
+
 /** Reconnection backoff (full jitter), per the wire protocol §5.9. */
 const RECONNECT_BASE_MS = 500;
 const RECONNECT_MAX_MS = 30_000;
@@ -81,8 +88,10 @@ export class Worker {
     // fails fast at construction rather than becoming an endless reconnect loop
     // (the server rejects it with a fatal invalid_argument on every attempt).
     for (const [name, weight] of Object.entries(options.queues)) {
-      if (name === "") {
-        throw new ConveyorError("conveyor: queue names must not be empty");
+      if (!QUEUE_NAME_PATTERN.test(name)) {
+        throw new ConveyorError(
+          `conveyor: queue name ${JSON.stringify(name)} must start with a letter or digit and contain only letters, digits, '-', '_' or '.'`,
+        );
       }
 
       if (weight <= 0) {
@@ -132,10 +141,21 @@ export class Worker {
   }
 }
 
-/** Session owns the state of one connected worker stream. */
-class Session {
+/**
+ * Session owns the state of one connected worker stream.
+ *
+ * Exported for tests only; it is not part of the package's public API.
+ */
+export class Session {
   private readonly outbound = new Pushable<WorkerMessage>();
   private readonly inflight = new Map<string, AbortController>();
+  /**
+   * parked holds the ids of tasks dispatched after the drain began. They are
+   * never started, but their leases are kept alive by the heartbeat until the
+   * stream closes, when the server releases them with no retry penalty;
+   * reporting RELEASED at once would only have the server redispatch them here.
+   */
+  private readonly parked = new Set<string>();
   private readonly slots: Semaphore;
   private established = false;
   private draining = false;
@@ -171,7 +191,7 @@ class Session {
 
       return this.established;
     } catch (error) {
-      if (isFatal(error)) {
+      if (isFatal(error, this.established)) {
         throw error;
       }
 
@@ -180,6 +200,7 @@ class Session {
       this.signal.removeEventListener("abort", onAbort);
       this.stopHeartbeat();
       this.outbound.end();
+      this.abortInflight();
     }
   }
 
@@ -211,14 +232,24 @@ class Session {
 
       case "dispatch": {
         const task = message.frame.value.task;
-        if (task !== undefined && !this.draining) {
+        if (task === undefined) {
+          break;
+        }
+
+        if (this.draining) {
+          this.parked.add(task.id);
+        } else {
           void this.runOne(task, deadlineMs(message.frame.value.deadline));
         }
         break;
       }
 
       case "batchDispatch": {
-        if (!this.draining) {
+        if (this.draining) {
+          for (const task of message.frame.value.tasks) {
+            this.parked.add(task.id);
+          }
+        } else {
           void this.runBatch(message.frame.value.tasks, deadlineMs(message.frame.value.deadline));
         }
         break;
@@ -432,6 +463,23 @@ class Session {
     controller.abort();
   }
 
+  /**
+   * abortInflight aborts every execution still running when the session ends and
+   * forgets them. Nothing this session's handlers produce can reach the server
+   * once the stream is gone, and the server releases their leases and redelivers
+   * them, so letting them run would execute the same task twice at once after
+   * the worker reconnects. The Go and Python SDKs cancel in-flight work at the
+   * same point.
+   */
+  private abortInflight(): void {
+    for (const controller of new Set(this.inflight.values())) {
+      controller.abort();
+    }
+
+    this.inflight.clear();
+    this.parked.clear();
+  }
+
   private report(taskId: string, outcome: TaskOutcome, errorMsg: string): void {
     this.outbound.push(
       create(WorkerMessageSchema, { frame: { case: "result", value: create(ResultSchema, { taskId, outcome, errorMsg }) } }),
@@ -476,16 +524,25 @@ class Session {
   private startHeartbeat(): void {
     this.stopHeartbeat();
     this.heartbeatTimer = setInterval(() => {
-      if (this.inflight.size === 0) {
+      const activeTaskIds = this.activeTaskIds();
+      if (activeTaskIds.length === 0) {
         return;
       }
 
       this.outbound.push(
         create(WorkerMessageSchema, {
-          frame: { case: "heartbeat", value: create(HeartbeatSchema, { activeTaskIds: [...this.inflight.keys()] }) },
+          frame: { case: "heartbeat", value: create(HeartbeatSchema, { activeTaskIds }) },
         }),
       );
     }, this.heartbeatMs);
+  }
+
+  /**
+   * activeTaskIds lists every id whose lease this session must keep alive: the
+   * tasks executing plus those parked by the drain.
+   */
+  private activeTaskIds(): string[] {
+    return [...this.inflight.keys(), ...this.parked];
   }
 
   private stopHeartbeat(): void {
@@ -566,22 +623,27 @@ function deadlineMs(deadline: { seconds: bigint; nanos: number } | undefined): n
 
 /**
  * isFatal reports whether a stream error must stop the worker (no reconnect).
- * A rejected session contract — bad auth, an unmet server version, or a Hello
- * the server refuses (invalid_argument, per the wire protocol) — can never
- * succeed by retrying, so retrying it is an endless loop. This mirrors the fatal
- * set of the Go and Python SDKs.
+ * A rejected session contract, meaning bad auth, an unmet server version, or a
+ * Hello the server refuses (invalid_argument, per the wire protocol), can never
+ * succeed by retrying, so retrying it is an endless loop.
+ *
+ * `established` says whether the session reached Welcome, and it is what keeps
+ * invalid_argument from being over-applied: the client library raises that same
+ * code locally when a connection is severed mid-envelope, which is transient and
+ * must reconnect. A Hello rejection always arrives before Welcome, so
+ * invalid_argument is fatal only while the session is not yet established. The
+ * Go SDK draws the same line by asking whether the code came off the wire.
  */
-function isFatal(error: unknown): boolean {
+function isFatal(error: unknown, established: boolean): boolean {
   if (!(error instanceof ConnectError)) {
     return false;
   }
 
-  return (
-    error.code === Code.Unauthenticated ||
-    error.code === Code.PermissionDenied ||
-    error.code === Code.FailedPrecondition ||
-    error.code === Code.InvalidArgument
-  );
+  if (error.code === Code.InvalidArgument) {
+    return !established;
+  }
+
+  return error.code === Code.Unauthenticated || error.code === Code.PermissionDenied;
 }
 
 function errorMessage(error: unknown): string {
@@ -609,18 +671,27 @@ function fullJitter(attempt: number): number {
   return Math.random() * ceiling;
 }
 
-/** sleep waits for `ms`, resolving early if the optional signal aborts. */
-function sleep(ms: number, signal: AbortSignal | undefined): Promise<void> {
+/**
+ * sleep waits for `ms`, resolving early if the optional signal aborts. The
+ * abort listener is removed when the timer fires, so a long-lived signal (the
+ * worker's own, listened to on every reconnect) does not accumulate one
+ * closure per call.
+ *
+ * Exported for tests only; it is not part of the package's public API.
+ */
+export function sleep(ms: number, signal: AbortSignal | undefined): Promise<void> {
   return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    signal?.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(timer);
-        resolve();
-      },
-      { once: true },
-    );
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      resolve();
+    };
+
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+
+    signal?.addEventListener("abort", onAbort, { once: true });
   });
 }
 

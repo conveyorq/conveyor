@@ -96,6 +96,20 @@ const dropDependentEdgesQuery = "DELETE FROM conveyor_task_deps WHERE dependent_
 // hasDependentsQuery reports whether any edge waits on the given task.
 const hasDependentsQuery = "SELECT EXISTS (SELECT 1 FROM conveyor_task_deps WHERE dependency_id = $1)"
 
+// hasWaitingDependentsQuery reports whether the given task exists and a
+// dependent that has not reached a terminal state still waits on it: the one
+// case in which deleting it would strand a dependent. A canceled or archived
+// dependent's edge is stale (the purge pass drops it) and must not pin its
+// dependency, and a missing task has no dependents to strand, only forward
+// references.
+var hasWaitingDependentsQuery = fmt.Sprintf(`SELECT EXISTS (
+  SELECT 1
+  FROM conveyor_task_deps d
+  JOIN conveyor_tasks dependency ON dependency.id = d.dependency_id
+  JOIN conveyor_tasks dependent ON dependent.id = d.dependent_id
+  WHERE d.dependency_id = $1 AND dependent.state NOT IN (%d, %d, %d)
+)`, stateCompleted, stateArchived, stateCanceled)
+
 // queueStatsQuery aggregates task counts per (queue, state) and joins the
 // persisted pause flags, so queues that only hold a pause flag still
 // appear with zero counts.
@@ -1764,9 +1778,13 @@ func (b *Broker) GroupConfigs(ctx context.Context) ([]broker.GroupConfig, error)
 // taskCountEstimateQuery reads the planner's row estimate for the task log. The
 // task table is the one that grows without bound, so an exact count(*) would
 // scan it on every Info call (the dashboard polls Info); the estimate that
-// autovacuum/ANALYZE maintains is read in constant time. Postgres reports -1
-// for a table never yet analyzed, which the caller clamps to zero.
-const taskCountEstimateQuery = "SELECT reltuples::bigint FROM pg_class WHERE relname = 'conveyor_tasks'"
+// autovacuum/ANALYZE maintains is read in constant time. to_regclass resolves
+// the name through the same search_path the broker's own statements use, so a
+// like-named table in another schema is never counted instead; it yields NULL
+// before the migrations create the table. Postgres reports -1 for a table never
+// yet analyzed, which the caller clamps to zero.
+const taskCountEstimateQuery = `SELECT COALESCE(
+  (SELECT reltuples::bigint FROM pg_class WHERE oid = to_regclass('conveyor_tasks')), 0)`
 
 // Info reports the Postgres engine's driver, connection-pool counters, and
 // table row counts; see broker.Broker. The task count is the planner's
@@ -1940,9 +1958,9 @@ func (b *Broker) DeleteTask(ctx context.Context, id string) error {
 	// Refuse to delete a task other tasks still depend on: dropping it would
 	// leave every dependent blocked on an edge whose dependency row is gone,
 	// which neither the inline resolve nor the reaper's orphan sweep can clear.
-	// This mirrors purgeCompletedQuery, which already skips depended-on rows.
+	// This mirrors the purge pass, which never drops a depended-on row.
 	var hasDependents bool
-	if err := b.pool.QueryRow(ctx, hasDependentsQuery, id).Scan(&hasDependents); err != nil {
+	if err := b.pool.QueryRow(ctx, hasWaitingDependentsQuery, id).Scan(&hasDependents); err != nil {
 		return fmt.Errorf("postgres: check dependents: %w", err)
 	}
 

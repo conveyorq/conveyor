@@ -198,10 +198,10 @@ jobs:
         run: make lint-ts
       - name: Lint Python (ruff + mypy)
         run: make lint-py
-      # Unit tests for the non-Go code. These are Node/Python only (the SDK
-      # integration suites that need a running conveyord are excluded and run
-      # via the cross-SDK conformance harness in the Go build job instead), so
-      # they belong in this lightweight job rather than the race matrix.
+      # Unit tests for the non-Go code. These are Node/Python only, so they
+      # belong in this lightweight job rather than the race matrix. The SDK
+      # integration suites need a running conveyord and are excluded here; the
+      # conformance job runs them alongside the cross-SDK checklist.
       - name: Test dashboard (vitest)
         run: make dashboard-test
       - name: Test TypeScript SDK (vitest)
@@ -249,6 +249,12 @@ jobs:
           python-version: "3.12"
       - name: Conformance suite
         run: make conformance
+      # The TypeScript SDK's integration suite needs a running conveyord, so it
+      # is excluded from the lightweight unit-test job and runs here, where Go
+      # and Node are both present. It covers what the conformance checklist does
+      # not, notably the local concurrency gate.
+      - name: TypeScript SDK integration suite
+        run: make sdk-ts-test-integration
 
   # Packaging gate: build the image, install the Helm chart on a throwaway kind
   # cluster, and assert the StatefulSet rolls out, the nodes form a cluster

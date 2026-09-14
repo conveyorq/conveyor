@@ -11,19 +11,91 @@ import (
 	"net/url"
 )
 
+// allowPrivateHint names the setting that permits a non-public target, so an
+// operator delivering to an in-cluster or on-premises endpoint learns the remedy
+// from the failure itself rather than from the source.
+const allowPrivateHint = "set webhooks.allow_private_targets to permit it"
+
+// reservedRanges are non-public ranges that the standard library's own
+// predicates do not classify: carrier-grade NAT, which addresses tailnets and
+// some cluster pod networks; the reserved IPv4 space; and the deprecated IPv6
+// site-local block. An endpoint in one of these is as internal as a private
+// address, so it is refused alongside them.
+var reservedRanges = []*net.IPNet{
+	mustParseCIDR("100.64.0.0/10"),
+	mustParseCIDR("240.0.0.0/4"),
+	mustParseCIDR("fec0::/10"),
+}
+
+// embeddedIPv4Ranges are IPv6 blocks that carry an IPv4 address inside them
+// and route to it: the NAT64 well-known prefix and its local-use variant, in
+// which the last four bytes are the IPv4 address, and 6to4, in which bytes two
+// through five are. An address in one of these is as reachable as the IPv4
+// address it embeds, so it is judged by that address.
+var embeddedIPv4Ranges = []struct {
+	// network is the transition block.
+	network *net.IPNet
+	// offset is where the embedded IPv4 address starts in the 16-byte form.
+	offset int
+}{
+	{network: mustParseCIDR("64:ff9b::/96"), offset: 12},
+	{network: mustParseCIDR("64:ff9b:1::/48"), offset: 12},
+	{network: mustParseCIDR("2002::/16"), offset: 2},
+}
+
+// mustParseCIDR parses a CIDR block fixed at compile time, panicking on a
+// malformed one the way regexp.MustCompile does.
+func mustParseCIDR(cidr string) *net.IPNet {
+	_, network, err := net.ParseCIDR(cidr)
+	if err != nil {
+		panic("webhook: malformed reserved range " + cidr)
+	}
+
+	return network
+}
+
 // isDisallowedIP reports whether an address falls in a range a webhook must
-// never target: loopback, link-local (which includes the cloud metadata
-// address 169.254.169.254), private, unspecified, and multicast. A genuine
-// public delivery endpoint never resolves to one of these, so refusing them
-// closes the server-side request forgery path an admin token would otherwise
-// open onto internal services.
+// never target. Anything that is not a global unicast address is refused, which
+// covers loopback, link-local (and with it the cloud metadata address
+// 169.254.169.254), multicast, the unspecified address, and the IPv4 broadcast
+// address; private ranges and the reserved ranges above are refused on top of
+// that. A genuine public delivery endpoint never resolves to one of these, so
+// refusing them closes the server-side request forgery path an admin token would
+// otherwise open onto internal services.
 func isDisallowedIP(ip net.IP) bool {
-	return ip.IsLoopback() ||
-		ip.IsLinkLocalUnicast() ||
-		ip.IsLinkLocalMulticast() ||
-		ip.IsPrivate() ||
-		ip.IsUnspecified() ||
-		ip.IsMulticast()
+	if embedded := embeddedIPv4(ip); embedded != nil {
+		return isDisallowedIP(embedded)
+	}
+
+	if !ip.IsGlobalUnicast() || ip.IsPrivate() {
+		return true
+	}
+
+	for _, reserved := range reservedRanges {
+		if reserved.Contains(ip) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// embeddedIPv4 returns the IPv4 address an IPv6 transition address routes to,
+// or nil for an address that embeds none. IPv4-mapped addresses are not
+// unwrapped here: the standard predicates already see through them.
+func embeddedIPv4(ip net.IP) net.IP {
+	full := ip.To16()
+	if full == nil || ip.To4() != nil {
+		return nil
+	}
+
+	for _, transition := range embeddedIPv4Ranges {
+		if transition.network.Contains(full) {
+			return net.IPv4(full[transition.offset], full[transition.offset+1], full[transition.offset+2], full[transition.offset+3])
+		}
+	}
+
+	return nil
 }
 
 // CheckURLTarget rejects a webhook URL whose host is an IP literal in a
@@ -52,7 +124,7 @@ func CheckURLTarget(rawURL string, allowPrivate bool) error {
 	}
 
 	if isDisallowedIP(ip) {
-		return fmt.Errorf("webhook target %s is a non-public address; set webhooks.allow_private_targets to permit it", parsed.Hostname())
+		return fmt.Errorf("webhook target %s is a non-public address; %s", parsed.Hostname(), allowPrivateHint)
 	}
 
 	return nil
@@ -78,7 +150,7 @@ func guardedDialContext(allowPrivate bool) func(ctx context.Context, network, ad
 
 		if ip := net.ParseIP(host); ip != nil {
 			if isDisallowedIP(ip) {
-				return nil, fmt.Errorf("webhook: refusing to dial non-public address %s", ip)
+				return nil, fmt.Errorf("webhook: refusing to dial non-public address %s; %s", ip, allowPrivateHint)
 			}
 
 			return dialer.DialContext(ctx, network, addr)
@@ -89,12 +161,28 @@ func guardedDialContext(allowPrivate bool) func(ctx context.Context, network, ad
 			return nil, fmt.Errorf("webhook: resolving %s: %w", host, err)
 		}
 
+		// Try every vetted address before giving up, as the standard dialer does
+		// across a host's records: one draining endpoint must not fail delivery
+		// while a healthy sibling record answers.
+		var lastErr error
+
 		for _, candidate := range addresses {
-			if !isDisallowedIP(candidate.IP) {
-				return dialer.DialContext(ctx, network, net.JoinHostPort(candidate.IP.String(), port))
+			if isDisallowedIP(candidate.IP) {
+				continue
 			}
+
+			conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(candidate.IP.String(), port))
+			if err == nil {
+				return conn, nil
+			}
+
+			lastErr = err
 		}
 
-		return nil, fmt.Errorf("webhook: %s resolves only to non-public addresses", host)
+		if lastErr != nil {
+			return nil, lastErr
+		}
+
+		return nil, fmt.Errorf("webhook: %s resolves only to non-public addresses; %s", host, allowPrivateHint)
 	}
 }

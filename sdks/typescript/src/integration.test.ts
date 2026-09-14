@@ -137,7 +137,14 @@ describe("integration against a live conveyord", () => {
 
   it("never runs more handlers at once than the declared concurrency", async () => {
     const client = new Client(baseUrl);
-    const concurrency = 2;
+    // One slot across two queues is the case the gate has to catch. The server
+    // splits a worker's concurrency across its queues by weight but floors every
+    // served queue at one slot, so two queues are granted one credit each: the
+    // server can have two dispatches outstanding while the worker declared one,
+    // and only the local gate keeps the second handler from starting. A
+    // concurrency that divides evenly across the queues would leave the server
+    // unable to over-grant, and the assertion would hold with no gate at all.
+    const concurrency = 1;
     const perQueue = 4;
 
     let active = 0;
@@ -152,9 +159,6 @@ describe("integration against a live conveyord", () => {
       done += 1;
     };
 
-    // Two queues: with one credit granted per queue, the server can offer more
-    // dispatches than the declared concurrency, so only the local gate keeps the
-    // worker from running more handlers than it advertised.
     const mux = new Mux().handle("gate:a", handler).handle("gate:b", handler);
     const worker = new Worker(baseUrl, { queues: { gatea: 1, gateb: 1 }, concurrency });
     const stop = new AbortController();

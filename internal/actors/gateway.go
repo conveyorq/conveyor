@@ -209,22 +209,34 @@ func (g *Gateway) PreStart(ctx *goakt.Context) error {
 	return nil
 }
 
-// splitCapacity divides a worker's total concurrency across the queues it
-// serves in proportion to their weights, so the worker holds at most
-// `concurrency` tasks in flight across all its queues instead of that many per
-// queue. This is what gives cross-queue fairness: each queue receives a
-// guaranteed capacity share, so a busy low-weight queue cannot consume the
-// slots a high-weight queue relies on. A missing or non-positive weight is
-// treated as one, matching the grain's neutral-weight rule.
+// splitCapacity divides a worker's declared concurrency across the queues it
+// serves, in proportion to the weights it declared in Hello, and returns the
+// per-queue share to register as that queue's capacity. The shares sum to
+// concurrency, so the total in flight across a worker's queues never exceeds
+// what it declared, however many queues it serves. This is what gives
+// cross-queue fairness: each queue receives a guaranteed capacity share, so a
+// busy low-weight queue cannot consume the slots a high-weight queue relies
+// on. A missing or non-positive weight is treated as one, matching the grain's
+// neutral-weight rule.
 //
-// Largest-remainder rounding keeps the shares summing to concurrency; every
-// served queue is then floored at one slot so none is starved. The floor can
-// lift the total above concurrency only when a worker serves more queues than
-// it has slots — a degenerate setup whose over-grant is bounded by the queue
+// One slot is reserved per queue before the rest is split, so no queue is
+// starved by a heavy sibling and the reservation never lifts the total above
+// concurrency. Largest-remainder rounding keeps the split of the rest exact.
+// Only when a worker serves more queues than it has slots does every queue
+// keep one anyway: a degenerate setup whose over-grant is bounded by the queue
 // count and still capped by the worker's own concurrency gate.
 func splitCapacity(concurrency int32, queues []string, weights map[string]int32) map[string]int32 {
 	capacities := make(map[string]int32, len(queues))
 	if len(queues) == 0 {
+		return capacities
+	}
+
+	reserved := int32(len(queues))
+	if concurrency <= reserved {
+		for _, queue := range queues {
+			capacities[queue] = 1
+		}
+
 		return capacities
 	}
 
@@ -233,19 +245,21 @@ func splitCapacity(concurrency int32, queues []string, weights map[string]int32)
 		totalWeight += int64(max(weights[queue], 1))
 	}
 
-	// share carries one queue's floored allocation and the remainder that ranks
-	// it for a leftover slot.
+	// share carries one queue's floored allocation of the unreserved slots and
+	// the remainder that ranks it for a leftover slot.
 	type share struct {
 		queue     string
 		base      int32
 		remainder int64
 	}
 
+	spare := concurrency - reserved
+
 	var assigned int32
 
 	shares := make([]share, 0, len(queues))
 	for _, queue := range queues {
-		product := int64(concurrency) * int64(max(weights[queue], 1))
+		product := int64(spare) * int64(max(weights[queue], 1))
 		base := int32(product / totalWeight)
 		assigned += base
 
@@ -262,7 +276,7 @@ func splitCapacity(concurrency int32, queues []string, weights map[string]int32)
 		return shares[i].queue < shares[j].queue
 	})
 
-	leftover := concurrency - assigned
+	leftover := spare - assigned
 	for index := range shares {
 		if leftover <= 0 {
 			break
@@ -273,7 +287,7 @@ func splitCapacity(concurrency int32, queues []string, weights map[string]int32)
 	}
 
 	for _, entry := range shares {
-		capacities[entry.queue] = max(entry.base, 1)
+		capacities[entry.queue] = entry.base + 1
 	}
 
 	return capacities
@@ -699,7 +713,9 @@ func (g *Gateway) deferCompletion(ctx *goakt.ReceiveContext, queue, taskID strin
 
 // heartbeat extends the lease of every task the worker reports as still
 // executing. A lost lease means another delivery owns the task now: the
-// worker is told to cancel and the slot is reported back to the grain.
+// worker is told to cancel and the credit the delivery held returns to the
+// grain, since the worker's eventual result for it is dropped as unknown and
+// would otherwise never refill it.
 func (g *Gateway) heartbeat(ctx *goakt.ReceiveContext, message *conveyorv1.Heartbeat) {
 	goCtx := ctx.Context()
 	taskLog := g.runtime.Broker()
@@ -724,6 +740,7 @@ func (g *Gateway) heartbeat(ctx *goakt.ReceiveContext, message *conveyorv1.Heart
 
 		delete(g.inflight, taskID)
 		g.runtime.Counters().Active.Add(-1)
+		g.refundLostLease(ctx, entry)
 
 		cancel := &conveyorv1.ServerMessage{
 			Frame: &conveyorv1.ServerMessage_Cancel{Cancel: &conveyorv1.Cancel{TaskId: taskID}},
@@ -734,6 +751,42 @@ func (g *Gateway) heartbeat(ctx *goakt.ReceiveContext, message *conveyorv1.Heart
 		}
 
 		g.runtime.Logger().Debug("lease lost; worker canceled", "task_id", taskID, "gateway", g.name)
+	}
+}
+
+// refundLostLease returns the dispatch credit a delivery held when its lease
+// was lost to another delivery. The task did not complete here (the reclaiming
+// delivery owns it now), so no completion is reported and no outcome counted;
+// only the credit returns, capped at capacity by the grain. A batch holds one
+// credit for all its members: it returns once the last tracked member is gone,
+// and the batch bookkeeping entry goes with it.
+func (g *Gateway) refundLostLease(ctx *goakt.ReceiveContext, entry *inflightTask) {
+	if members, batched := g.batches[entry.leaseID]; batched {
+		for _, member := range members {
+			if _, tracked := g.inflight[member]; tracked {
+				return
+			}
+		}
+
+		delete(g.batches, entry.leaseID)
+	}
+
+	g.refillCredit(ctx, entry.queue)
+}
+
+// refillCredit hands one dispatch credit back to a queue grain without a
+// completion report, for a delivery this session no longer owns.
+func (g *Gateway) refillCredit(ctx *goakt.ReceiveContext, queue string) {
+	identity, ok := g.identities[queue]
+	if !ok {
+		g.runtime.Logger().Warn("credit refill dropped: queue not registered", "queue", queue)
+
+		return
+	}
+
+	credit := &conveyorv1.GatewayCredit{Queue: queue, GatewayName: g.name, Credits: 1}
+	if err := ctx.ActorSystem().TellGrain(ctx.Context(), identity, credit); err != nil {
+		g.runtime.Logger().Warn("credit refill failed", "queue", queue, "error", err)
 	}
 }
 

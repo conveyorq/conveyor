@@ -73,6 +73,23 @@ func TestSplitCapacity(t *testing.T) {
 		got := splitCapacity(1, []string{"a", "b", "c"}, map[string]int32{"a": 1, "b": 1, "c": 1})
 		require.Equal(t, map[string]int32{"a": 1, "b": 1, "c": 1}, got)
 	})
+
+	t.Run("the floor never lifts the total above concurrency", func(t *testing.T) {
+		// A skewed weight would round the light queue to zero; the reserved
+		// slot keeps it served without granting the heavy queue more than the
+		// remaining slots, so the worker is never over-granted.
+		got := splitCapacity(2, []string{"high", "low"}, map[string]int32{"high": 3, "low": 1})
+		require.Equal(t, map[string]int32{"high": 1, "low": 1}, got)
+		require.EqualValues(t, 2, sum(got))
+
+		got = splitCapacity(4, []string{"a", "b"}, map[string]int32{"a": 100, "b": 1})
+		require.Equal(t, map[string]int32{"a": 3, "b": 1}, got)
+		require.EqualValues(t, 4, sum(got))
+
+		got = splitCapacity(10, []string{"a", "b", "c", "d"}, map[string]int32{"a": 50, "b": 50, "c": 1, "d": 1})
+		require.Equal(t, map[string]int32{"a": 4, "b": 4, "c": 1, "d": 1}, got)
+		require.EqualValues(t, 10, sum(got))
+	})
 }
 
 // faultGateway builds a bare gateway (the fields PreStart would set) over a
@@ -557,6 +574,52 @@ func TestGatewayHeartbeatLeaseLostSendsCancel(t *testing.T) {
 
 		return len(ids) == 1 && ids[0] == "task-stale"
 	}, 10*time.Second, 10*time.Millisecond, "lease loss should cancel exactly the stale task")
+}
+
+// TestGatewayHeartbeatLeaseLostRefundsCredit verifies that a delivery whose
+// lease was lost returns the credit it held: the worker's eventual result for
+// it is dropped as unknown, so without the refund a single-slot session would
+// never dispatch again.
+func TestGatewayHeartbeatLeaseLostRefundsCredit(t *testing.T) {
+	const queue = "lease-lost-refund"
+
+	ctx := context.Background()
+	faultLog := newFaultBroker(memory.New(clock.System()))
+	engine := startEngine(t, faultLog)
+	recorder := newFrameRecorder()
+
+	// One slot: the first dispatch consumes the session's only credit, so the
+	// second task can dispatch only if the lost delivery's credit comes back.
+	handle, err := engine.SpawnGateway(ctx, GatewaySession{
+		SessionID:   "session-lease-lost-refund",
+		Queues:      []string{queue},
+		Concurrency: 1,
+	}, recorder)
+	require.NoError(t, err)
+
+	t.Cleanup(func() { _ = handle.Stop(ctx) })
+
+	require.NoError(t, faultLog.Enqueue(ctx, newTask("refund-1", queue, "test:manual", 4)))
+
+	select {
+	case dispatch := <-recorder.dispatched:
+		require.Equal(t, "refund-1", dispatch.GetTask().GetId())
+	case <-time.After(10 * time.Second):
+		t.Fatal("the first task was never dispatched")
+	}
+
+	require.NoError(t, faultLog.Enqueue(ctx, newTask("refund-2", queue, "test:manual", 4)))
+
+	// The broker reports the lease gone, as after a reaper reclaim.
+	faultLog.fault(methodExtendLease, broker.ErrLeaseLost)
+	require.NoError(t, handle.Tell(ctx, &conveyorv1.Heartbeat{ActiveTaskIds: []string{"refund-1"}}))
+
+	select {
+	case dispatch := <-recorder.dispatched:
+		require.Equal(t, "refund-2", dispatch.GetTask().GetId(), "the refunded credit dispatches the waiting task")
+	case <-time.After(10 * time.Second):
+		t.Fatal("the lost delivery's credit was never returned")
+	}
 }
 
 // TestGatewayAdminCancelForwardsFrame verifies the admin cancel path: a

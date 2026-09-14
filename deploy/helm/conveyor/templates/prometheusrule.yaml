@@ -1,7 +1,11 @@
 {{- if .Values.prometheusRule.enabled -}}
 # Requires the Prometheus Operator CRDs. Alert rules over the metrics conveyord
-# exposes on its metrics port; every expression sums across nodes so a rule
-# fires for the cluster, not per replica.
+# exposes on its metrics port, each written so it fires for the cluster rather
+# than per replica. Counters are per-node and are summed. conveyor_pending is
+# not: every node reads the same queue depth from the shared broker and reports
+# the identical value, so it is deduplicated with max by (queue) before the
+# queues are summed, or the backlog would read as replicaCount times its real
+# size.
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
@@ -30,9 +34,9 @@ spec:
             severity: warning
           annotations:
             summary: "Workers are losing task leases"
-            description: "The reaper is reclaiming {{ "{{ $value | humanize }}" }} expired leases/s: workers are crashing or missing heartbeats, and each reclaim spends a retry."
+            description: "The reaper is reclaiming expired leases in {{ "{{ $value | humanize }}" }} queues/s: workers are crashing or missing heartbeats, and each reclaim spends a retry."
         - alert: ConveyorPendingBacklogHigh
-          expr: sum(conveyor_pending) > {{ .Values.prometheusRule.pendingBacklog }}
+          expr: sum(max by (queue) (conveyor_pending)) > {{ .Values.prometheusRule.pendingBacklog }}
           for: 15m
           labels:
             severity: warning

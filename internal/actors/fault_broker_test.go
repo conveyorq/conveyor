@@ -36,6 +36,8 @@ const (
 	methodFail               = "Fail"
 	methodArchive            = "Archive"
 	methodLeaseGroup         = "LeaseGroup"
+	methodExtendLease        = "ExtendLease"
+	methodAckBatch           = "AckBatch"
 )
 
 // faultBroker wraps a real broker and returns a configured error from selected
@@ -222,6 +224,24 @@ func (f *faultBroker) LeaseGroup(ctx context.Context, queue, group string, limit
 	}
 
 	return f.Broker.LeaseGroup(ctx, queue, group, limit, ttl, leaseID)
+}
+
+// ExtendLease fails when armed, otherwise delegates.
+func (f *faultBroker) ExtendLease(ctx context.Context, taskID, leaseID string, ttl time.Duration) error {
+	if err := f.armed(methodExtendLease); err != nil {
+		return err
+	}
+
+	return f.Broker.ExtendLease(ctx, taskID, leaseID, ttl)
+}
+
+// AckBatch fails when armed, otherwise delegates.
+func (f *faultBroker) AckBatch(ctx context.Context, items []broker.AckItem) ([]string, error) {
+	if err := f.armed(methodAckBatch); err != nil {
+		return nil, err
+	}
+
+	return f.Broker.AckBatch(ctx, items)
 }
 
 // Ack fails when armed, otherwise delegates.

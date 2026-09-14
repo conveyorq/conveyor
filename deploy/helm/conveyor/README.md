@@ -149,6 +149,7 @@ With no tokens and `allowUnauthenticated=false`, `conveyord` refuses to start.
 | `api.grafanaUrl` | Surfaces a "Metrics" link in the dashboard | `""` |
 | `api.tls.enabled` | Serve the API over TLS | `false` |
 | `api.tls.certSecret` | Secret holding `tls.crt` and `tls.key` | `""` |
+| `webhooks.allowPrivateTargets` | Permit webhook delivery to private, loopback, and link-local endpoints (in-cluster workers need it) | `false` |
 
 ### Cluster parameters
 
@@ -181,6 +182,10 @@ Mirror `conveyord`'s own defaults; the ConfigMap is the single source of truth.
 | `serviceMonitor.enabled` | Create a Prometheus-Operator `ServiceMonitor` (needs the CRD) | `false` |
 | `serviceMonitor.interval` | Scrape interval | `30s` |
 | `serviceMonitor.path` | Scrape path | `/metrics` |
+| `prometheusRule.enabled` | Create a Prometheus-Operator `PrometheusRule` with the shipped alerts (needs the CRD) | `false` |
+| `prometheusRule.labels` | Labels the Operator's rule selector matches | `{}` |
+| `prometheusRule.pendingBacklog` | Cluster-wide pending task count that pages | `1000` |
+| `prometheusRule.leaseExpiredPerSecond` | Rate of queues with reclaimed leases that pages | `0.1` |
 | `otel.endpoint` | OTLP collector endpoint for metrics + traces; empty disables export | `""` |
 | `otel.serviceName` | OTLP resource service name | `conveyord` |
 | `log.level` | `debug` \| `info` \| `warn` \| `error` | `info` |
@@ -199,6 +204,13 @@ Mirror `conveyord`'s own defaults; the ConfigMap is the single source of truth.
 | `nodeSelector` / `tolerations` / `affinity` | Standard pod scheduling controls | `{}` / `[]` / `{}` |
 | `serviceAccount.create` | Create a dedicated ServiceAccount | `true` |
 | `rbac.create` | Grant the ServiceAccount pod-list permission for discovery | `true` |
+| `workerAutoscaling.enabled` | Create a KEDA `ScaledObject` that scales your worker Deployment on backlog (needs KEDA) | `false` |
+| `workerAutoscaling.scaleTargetRef` | Name of the worker Deployment to scale; required when enabled | `""` |
+| `workerAutoscaling.minReplicaCount` / `maxReplicaCount` | Worker replica bounds | `2` / `20` |
+| `workerAutoscaling.cooldownPeriod` | Seconds after the last trigger before scaling down | `120` |
+| `workerAutoscaling.prometheusAddress` | In-cluster Prometheus query endpoint | `http://prometheus.monitoring.svc:9090` |
+| `workerAutoscaling.query` | PromQL backlog signal | `sum(max by (queue) (conveyor_pending))` |
+| `workerAutoscaling.threshold` | Approximate pending tasks per worker replica | `"100"` |
 
 ### Networking parameters
 
