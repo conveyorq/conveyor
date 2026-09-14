@@ -16,7 +16,7 @@ Everything below assumes you've accepted that difference.
 |-------------|--------------------------------------------------------|----------------------------------------------------------------------------------------------------------|
 | Topology    | A library embedded in your app                         | A **server** clients/workers connect to (or an in-process [embedded](../README.md#embedded-mode) engine) |
 | Job args    | Generic Go type implementing `JobArgs`                 | Opaque payload + content type (`conveyor.JSON`/`Bytes`/`Proto`), decoded with `task.Bind`                |
-| Enqueue     | `Insert` / `InsertTx` (transactional)                  | `Enqueue` over the API (non-transactional)                                                               |
+| Enqueue     | `Insert` / `InsertTx` (transactional)                  | `Enqueue` / `EnqueueTx` over the API. `EnqueueTx` is atomic across the tasks in the call, but not with your DB transaction |
 | Dispatch    | Poll + `LISTEN`/`NOTIFY`                               | Server pushes over a stream                                                                              |
 | HA          | Postgres advisory-lock leader election                 | Built-in application-tier clustering with grain relocation on node loss                                  |
 | Dead-letter | OSS: exhausted jobs go to a terminal `discarded` state | OSS: exhausted jobs are archived (inspectable), at parity                                                |

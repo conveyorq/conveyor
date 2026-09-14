@@ -85,6 +85,15 @@ type Settings struct {
 	// withholds capacity before probing the endpoint again; zero selects the
 	// default.
 	WebhookBreakerOpenTimeout time.Duration
+	// AllowPrivateWebhookTargets lets webhook gateways deliver to private,
+	// loopback, and link-local addresses. It defaults off so a webhook cannot be
+	// pointed at internal services; enable it for a development or in-cluster
+	// deployment whose endpoints are private by design.
+	AllowPrivateWebhookTargets bool
+	// ArchiveRetention is how long archived (dead-lettered) and canceled tasks
+	// are kept before the reaper purges them; zero keeps them forever. Completed
+	// tasks follow their own per-task retention instead.
+	ArchiveRetention time.Duration
 }
 
 // Counters are the core engine counters, safe for concurrent use. OTel

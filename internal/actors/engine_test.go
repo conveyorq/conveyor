@@ -30,7 +30,9 @@ import (
 // queues on the memory broker, with a slice of flaky tasks that fail twice
 // before succeeding.
 func TestEngineProcessesWeightedQueues(t *testing.T) {
-	t.Skip("10k drain exceeds the test deadline under -race on a 4-vCPU CI runner; passes on 8 vCPUs — re-enable when CI runs on the larger runner")
+	if raceEnabled {
+		t.Skip("10k drain exceeds the test deadline under -race on a 4-vCPU CI runner; the nightly non-race job runs it")
+	}
 
 	const (
 		totalTasks   = 10_000
@@ -216,14 +218,15 @@ func TestQueueGrainDispatchThroughput(t *testing.T) {
 	// roughly 500 msgs/s; with it this gate sustains ~10k tasks/s (validated
 	// 2026-06-13, M1, uninstrumented).
 	//
-	// It stays skipped in the suite because the only CI test pass runs under
-	// -race, where instrumentation slows the sync paths ~10x: the rate cannot
-	// reach the 5k gate no matter the deadline. The repo deliberately carries
-	// no build-tag race flag to special-case it. To re-measure, comment out
-	// the t.Skip below and run on an uninstrumented build:
+	// It skips under -race, where instrumentation slows the sync paths ~10x: the
+	// rate cannot reach the 5k gate no matter the deadline. The nightly job runs
+	// the suite uninstrumented, which is where this gate actually measures. To
+	// re-measure by hand:
 	//
 	//	go test ./internal/actors -run TestQueueGrainDispatchThroughput -v
-	t.Skip("throughput gate: comment out to run uninstrumented (no -race); the CI -race pass cannot meet the 5k rate")
+	if raceEnabled {
+		t.Skip("throughput gate: the -race pass cannot meet the 5k rate; the nightly non-race job runs it")
+	}
 
 	const (
 		totalTasks        = 20_000
@@ -498,7 +501,7 @@ func TestMaintenanceLoopsSurviveBrokerFaults(t *testing.T) {
 	engine := startEngine(t, taskLog)
 
 	maintenanceMethods := []string{
-		methodReapExpiredLeases, methodPurgeCompleted, methodArchiveExpired,
+		methodReapExpiredLeases, methodPurgeTerminal, methodArchiveExpired,
 		methodPendingCount, methodPromoteScheduled, methodListDueCronEntries,
 		methodGroupStats,
 	}

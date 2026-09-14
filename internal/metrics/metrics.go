@@ -31,20 +31,48 @@ const (
 	resultAttr       = "result"
 )
 
+// passAttr labels a maintenance failure with the pass that failed.
+const passAttr = "pass"
+
+// Maintenance pass names, the bounded vocabulary of the MaintenanceFailure
+// counter's pass label. Each names one broker call a maintenance loop can fail
+// on and skip until its next tick.
+const (
+	// PassReap is the reaper reclaiming expired leases.
+	PassReap = "reap"
+	// PassPurge is the reaper purging retention-expired terminal tasks.
+	PassPurge = "purge"
+	// PassArchiveExpired is the reaper archiving tasks past their expiry.
+	PassArchiveExpired = "archive_expired"
+	// PassPromoteDependents is the reaper's dependency safety-net promotion.
+	PassPromoteDependents = "promote_dependents"
+	// PassPendingSweep is the reaper's pending-count sweep for lost wake-ups.
+	PassPendingSweep = "pending_sweep"
+	// PassPromoteScheduled is the scheduler promoting due scheduled tasks.
+	PassPromoteScheduled = "promote_scheduled"
+	// PassCron is the scheduler listing, arming, firing, or advancing cron
+	// entries.
+	PassCron = "cron"
+	// PassGroupSweep is the group sweeper reading aggregation state or firing
+	// a due group.
+	PassGroupSweep = "group_sweep"
+)
+
 // Engine holds the synchronous instruments recorded at the engine's event
 // sites. They record into the process-global meter provider — the server
 // installs a Prometheus-backed one; without it the records are no-ops.
 type Engine struct {
-	processDuration    metric.Float64Histogram
-	queueLatency       metric.Float64Histogram
-	leaseExpired       metric.Int64Counter
-	wakeupsSwept       metric.Int64Counter
-	breakerOpen        metric.Int64Counter
-	rateLimited        metric.Int64Counter
-	concurrencyLimited metric.Int64Counter
-	eventsDropped      metric.Int64Counter
-	webhookDeliveries  metric.Int64Counter
-	webhookWithheld    metric.Int64Counter
+	processDuration     metric.Float64Histogram
+	queueLatency        metric.Float64Histogram
+	leaseExpired        metric.Int64Counter
+	wakeupsSwept        metric.Int64Counter
+	breakerOpen         metric.Int64Counter
+	rateLimited         metric.Int64Counter
+	concurrencyLimited  metric.Int64Counter
+	eventsDropped       metric.Int64Counter
+	webhookDeliveries   metric.Int64Counter
+	webhookWithheld     metric.Int64Counter
+	maintenanceFailures metric.Int64Counter
 }
 
 // NewEngine creates the engine instruments from the global meter. The returned
@@ -73,19 +101,29 @@ func NewEngine() (*Engine, error) {
 		metric.WithDescription("Webhook delivery attempts by registration and classified result."))
 	webhookWithheld, e10 := meter.Int64Counter("conveyor.webhook.withheld",
 		metric.WithDescription("Times a webhook endpoint's capacity was withheld by its circuit breaker."))
+	maintenanceFailures, e11 := meter.Int64Counter("conveyor.maintenance.failures",
+		metric.WithDescription("Maintenance passes (reap, purge, promote, sweep, cron) that failed and were skipped until their next tick, by pass."))
 
 	return &Engine{
-		processDuration:    processDuration,
-		queueLatency:       queueLatency,
-		leaseExpired:       leaseExpired,
-		wakeupsSwept:       wakeupsSwept,
-		breakerOpen:        breakerOpen,
-		rateLimited:        rateLimited,
-		concurrencyLimited: concurrencyLimited,
-		eventsDropped:      eventsDropped,
-		webhookDeliveries:  webhookDeliveries,
-		webhookWithheld:    webhookWithheld,
-	}, errors.Join(e1, e2, e3, e4, e5, e6, e7, e8, e9, e10)
+		processDuration:     processDuration,
+		queueLatency:        queueLatency,
+		leaseExpired:        leaseExpired,
+		wakeupsSwept:        wakeupsSwept,
+		breakerOpen:         breakerOpen,
+		rateLimited:         rateLimited,
+		concurrencyLimited:  concurrencyLimited,
+		eventsDropped:       eventsDropped,
+		webhookDeliveries:   webhookDeliveries,
+		webhookWithheld:     webhookWithheld,
+		maintenanceFailures: maintenanceFailures,
+	}, errors.Join(e1, e2, e3, e4, e5, e6, e7, e8, e9, e10, e11)
+}
+
+// MaintenanceFailure counts one failed maintenance pass, labeled by pass. The
+// loops log and skip such a failure until their next tick, so this counter is
+// the only signal that a broker fault is starving maintenance.
+func (e *Engine) MaintenanceFailure(ctx context.Context, pass string) {
+	e.maintenanceFailures.Add(ctx, 1, metric.WithAttributes(attribute.String(passAttr, pass)))
 }
 
 // RecordProcessDuration records one execution's dispatch→completion time.

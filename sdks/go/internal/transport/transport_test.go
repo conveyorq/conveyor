@@ -17,6 +17,7 @@ import (
 
 	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 	"github.com/conveyorq/conveyor/internal/proto/conveyor/v1/conveyorv1connect"
+	"github.com/conveyorq/conveyor/server/api"
 )
 
 // headerRecorder captures the Authorization header of every request.
@@ -201,4 +202,13 @@ func TestClientEnqueueTxPassesThroughErrors(t *testing.T) {
 		{TaskId: "tx-1", Type: "boom"},
 	})
 	require.Equal(t, connect.CodeAlreadyExists, connect.CodeOf(err))
+}
+
+// TestMaxReadBytesMatchesTheServerCeiling pins the client's read bound to the
+// server's request ceiling. The constant is restated here rather than imported
+// so that SDK consumers never pull in the server package, which means nothing
+// but this test stops the two from drifting apart.
+func TestMaxReadBytesMatchesTheServerCeiling(t *testing.T) {
+	require.Equal(t, api.MaxRequestBytes, maxReadBytes,
+		"the SDK read bound must track server/api.MaxRequestBytes")
 }

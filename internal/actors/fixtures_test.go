@@ -41,32 +41,36 @@ const testBindAddr = "127.0.0.1"
 // relocated queue grain with credits.
 const gatewayHeartbeat = 500 * time.Millisecond
 
-// testSettings are fast engine settings for single-node tests.
+// testSettings are fast engine settings for single-node tests. Private webhook
+// targets are permitted because webhook tests deliver to loopback httptest
+// endpoints.
 var testSettings = Settings{
-	LeaseTTL:           30 * time.Second,
-	LeaseBatchMax:      100,
-	ResolverPoolSize:   4,
-	ReapInterval:       200 * time.Millisecond,
-	PromoteInterval:    100 * time.Millisecond,
-	PassivateAfter:     5 * time.Minute,
-	GroupMaxSize:       100,
-	GroupMaxDelay:      time.Minute,
-	GroupGracePeriod:   10 * time.Second,
-	GroupSweepInterval: 100 * time.Millisecond,
+	LeaseTTL:                   30 * time.Second,
+	LeaseBatchMax:              100,
+	ResolverPoolSize:           4,
+	ReapInterval:               200 * time.Millisecond,
+	PromoteInterval:            100 * time.Millisecond,
+	PassivateAfter:             5 * time.Minute,
+	GroupMaxSize:               100,
+	GroupMaxDelay:              time.Minute,
+	GroupGracePeriod:           10 * time.Second,
+	GroupSweepInterval:         100 * time.Millisecond,
+	AllowPrivateWebhookTargets: true,
 }
 
 // recoverySettings shorten the lease TTL and maintenance cadence so
 // re-delivery after a node death happens within test time.
 var recoverySettings = Settings{
-	LeaseTTL:           2 * time.Second,
-	LeaseBatchMax:      100,
-	ReapInterval:       300 * time.Millisecond,
-	PromoteInterval:    100 * time.Millisecond,
-	PassivateAfter:     5 * time.Minute,
-	GroupMaxSize:       100,
-	GroupMaxDelay:      time.Minute,
-	GroupGracePeriod:   10 * time.Second,
-	GroupSweepInterval: 100 * time.Millisecond,
+	LeaseTTL:                   2 * time.Second,
+	LeaseBatchMax:              100,
+	ReapInterval:               300 * time.Millisecond,
+	PromoteInterval:            100 * time.Millisecond,
+	PassivateAfter:             5 * time.Minute,
+	GroupMaxSize:               100,
+	GroupMaxDelay:              time.Minute,
+	GroupGracePeriod:           10 * time.Second,
+	GroupSweepInterval:         100 * time.Millisecond,
+	AllowPrivateWebhookTargets: true,
 }
 
 // freePorts reserves n distinct free loopback ports.

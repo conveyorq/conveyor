@@ -16,6 +16,7 @@ import (
 
 	"github.com/conveyorq/conveyor/internal/broker"
 	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
+	"github.com/conveyorq/conveyor/internal/webhook"
 )
 
 // webhookSecretLimit is the most signing secrets one registration holds:
@@ -117,7 +118,7 @@ func (s *AdminService) setWebhookWorkerPaused(ctx context.Context, name string, 
 func (s *AdminService) reconcileWebhookWorkers(ctx context.Context) {
 	if err := s.engine.ReconcileWebhookWorkers(ctx); err != nil {
 		// The tick is the backstop; nothing to surface to the caller.
-		_ = err
+		s.engine.Logger().Debug("webhook reconcile nudge failed; the manager's tick converges", "error", err)
 	}
 }
 
@@ -180,7 +181,10 @@ func (s *AdminService) webhookWorkerFromRequest(worker *conveyorv1.WebhookWorker
 
 // validateWebhookURL checks a delivery URL: an absolute http(s) URL, with
 // plaintext http admitted only on an unauthenticated development server,
-// because signed deliveries over cleartext hand the payload to the network.
+// because signed deliveries over cleartext hand the payload to the network. A
+// URL whose host is a non-public IP literal is refused unless the server
+// permits private targets, closing the obvious server-side request forgery
+// path; a hostname is verified against its resolved address at dial time.
 func (s *AdminService) validateWebhookURL(raw string) error {
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
@@ -189,6 +193,10 @@ func (s *AdminService) validateWebhookURL(raw string) error {
 
 	if parsed.Scheme == "http" && !s.allowInsecureWebhooks {
 		return fmt.Errorf("plaintext http requires an unauthenticated development server; use https, got %q", raw)
+	}
+
+	if err := webhook.CheckURLTarget(raw, s.allowPrivateWebhookTargets); err != nil {
+		return err
 	}
 
 	return nil

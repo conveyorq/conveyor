@@ -31,10 +31,11 @@ Environment keys mirror the file with `CONVEYOR_` and `__` between levels. `brok
 
 Key groups:
 
-- `broker.driver` (`postgres` | `memory`) and `broker.dsn`.
-- `api.listen` (default `:8080`), `api.auth_tokens`, `api.tls`.
+- `broker.driver` (`postgres` | `memory`), `broker.dsn`, and `broker.pool.{max_conns,min_conns,connect_timeout,statement_timeout}`.
+- `api.listen` (default `:8080`), `api.auth_tokens`, `api.scoped_tokens`, `api.tls`.
+- `webhooks.allow_private_targets` (default `false`; permits webhook delivery to private and loopback endpoints).
 - `cluster.discovery`, `cluster.bind_addr`, the remoting/discovery/peers ports, `cluster.tls`, and `cluster.kubernetes` (namespace + pod labels).
-- `engine.lease_ttl`, `reap_interval`, `lease_batch_max`, `promote_interval`, `passivate_after`, `default_max_retry`, `shutdown_timeout`.
+- `engine.lease_ttl`, `reap_interval`, `lease_batch_max`, `promote_interval`, `passivate_after`, `default_max_retry`, `archive_retention`, `shutdown_timeout`.
 - `engine.rate_limit_enabled` (master switch, default `true`), `engine.rate_limit_rate_per_sec` and `engine.rate_limit_burst` (the global default per-queue dispatch limit; per-queue overrides are set at runtime, see [rate limiting](rate-limiting.md)).
 - `metrics.listen` (default `:9464`; empty disables the endpoint).
 - `otel.endpoint` (OTLP push for metrics + traces), `otel.service_name`.
@@ -54,14 +55,26 @@ Priorities and weights shape *what* runs first: per-task `Priority(1..9)` orders
 
 ## Broker sizing (Postgres)
 
-- Give `conveyord` a connection pool sized for its concurrency; every replica opens its own pool against the same database.
-- Tasks accumulate rows in the task log. Use `Retention` so completed tasks are purged, and inspect archived (dead-lettered) tasks via the Admin API/CLI.
+- Size the connection pool with `broker.pool.max_conns` (and `min_conns`, `connect_timeout`, `statement_timeout`); every replica opens its own pool against the same database, so the database must admit `replicas × max_conns`. A zero value keeps the driver default. `statement_timeout` makes a runaway query fail instead of holding a pool slot and stalling dispatch.
+- Tasks accumulate rows in the task log. Completed tasks are purged once their per-task `Retention` lapses (the default is immediate). Archived (dead-lettered) and canceled tasks are kept for `engine.archive_retention` (default 7 days; `0` keeps them forever) so they can be inspected via the Admin API/CLI before the reaper purges them.
 - `engine.lease_ttl` bounds how long a crashed worker's task waits before redelivery; `engine.reap_interval` is how often the reaper reclaims expired leases (recovery time after a failure is roughly `2 × reap_interval`).
 - `engine.lease_batch_max` caps how many tasks one dispatch cycle claims. Raise it for high-throughput queues, lower it to smooth load.
 
 ## Security
 
 - **Authentication.** `api.auth_tokens` are accepted bearer tokens. Auth is on by default: with no tokens, conveyord **refuses to start** unless you set `api.allow_unauthenticated: true`, so a deployment never serves an open API by accident. The `--dev` preset sets that flag for you; in production set `api.auth_tokens` instead (the Helm chart's `auth.tokensSecret`), and only use `allow_unauthenticated` when a gateway, mTLS, or a private network fronts the API. Clients and workers pass a token with `conveyor.WithToken` (or `CONVEYOR_TOKEN` / the CLI `--token`).
+- **Token scopes.** A token in `api.auth_tokens` grants everything. To hand out a narrower credential, declare it under `api.scoped_tokens` instead, where each entry pairs a token with the services it may call: `produce` for enqueueing, `consume` for worker sessions, and `admin` for the administrative API. A recognized token used outside its scopes is refused with `PermissionDenied`. Scoped tokens are file-only, since each carries its own scope list. Give an application `produce`, a worker fleet `consume`, and keep `admin` for operators. Task inspection (`GetTask`, which `conveyor tasks get` uses) is the one call two scopes admit: it lives on the enqueue service, but `admin` reaches it too.
+
+  ```yaml
+  api:
+    scoped_tokens:
+      - token: "${PRODUCER_TOKEN}"
+        scopes: [produce]
+      - token: "${WORKER_TOKEN}"
+        scopes: [consume]
+  ```
+
+- **Webhook targets.** Webhook worker endpoints must resolve to public addresses; loopback, link-local, private, and multicast targets are refused so an admin token cannot aim the server at internal services. Set `webhooks.allow_private_targets: true` when your endpoints are private by design, such as a worker inside the same cluster. See [webhook workers](webhook-workers.md#endpoints-must-be-public-addresses).
 - **TLS.** `api.tls` serves the API over TLS; `cluster.tls` turns on mutual TLS between cluster peers (set `ca_file` for peer verification).
 - **Network.** The Helm chart ships an opt-in NetworkPolicy example and keeps the metrics port off the public API listener. Never expose the metrics port (`:9464`) publicly, since it carries internal topology.
 
@@ -76,7 +89,7 @@ Priorities and weights shape *what* runs first: per-task `Priority(1..9)` orders
 ## Observability
 
 - **Health.** `/healthz` (liveness) and `/readyz` (readiness: broker reachable and engine running) on the API port. Wired into the chart's probes.
-- **Metrics.** Prometheus exposition at `/metrics` on `metrics.listen` (`:9464`): `conveyor_enqueued_total`, `…_completed_total`, `…_failed_total`, `…_retried_total`, `…_archived_total`, `…_released_total`, `conveyor_active`, `conveyor_sessions_active`, `conveyor_pending`, plus runtime metrics. The chart stamps `prometheus.io/scrape` annotations and ships an opt-in ServiceMonitor; `deploy/grafana/` has a dashboard and scrape config.
+- **Metrics.** Prometheus exposition at `/metrics` on `metrics.listen` (`:9464`): `conveyor_enqueued_total`, `…_completed_total`, `…_failed_total`, `…_retried_total`, `…_archived_total`, `…_released_total`, `conveyor_active`, `conveyor_sessions_active`, `conveyor_pending`, plus the health canaries `conveyor_lease_expired_total` (workers losing leases), `conveyor_breaker_open_total` (a failing task type), `conveyor_events_dropped_total` (a slow watcher), and `conveyor_maintenance_failures_total{pass}` (a reaper, scheduler, or sweeper pass that failed and was skipped until its next tick), and runtime metrics. The chart stamps `prometheus.io/scrape` annotations and ships an opt-in ServiceMonitor and an opt-in `PrometheusRule` (`prometheusRule.enabled`) that alerts on those canaries, pending backlog, and no node exposing metrics; `deploy/grafana/` has a dashboard and scrape config.
 - **Tracing.** Set `otel.endpoint` to push OTLP traces to a collector. Each enqueue opens a span and stamps a W3C `traceparent` into the task; if your worker process has OpenTelemetry configured, its execution span links back to the enqueue.
 - **Lifecycle events.** A push stream of per-task state transitions for live dashboards, alerting, audit logs, and event-driven chaining; see [lifecycle events](events.md).
 - `conveyor cluster info` reports cluster membership.

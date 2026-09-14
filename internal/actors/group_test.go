@@ -7,6 +7,7 @@ package actors
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -35,7 +36,7 @@ func TestFireGroupLogsResolveAndTellFailures(t *testing.T) {
 	require.NoError(t, err)
 
 	fireGroup(ctx, unstarted, resolveRuntime, "q", "g", "t", 0)
-	require.Contains(t, resolveLogs.String(), "resolving queue grain failed")
+	requireLogged(t, resolveLogs, "resolving queue grain failed")
 
 	// Tell-failure branch: resolution succeeds against a live system, but the
 	// fire tell fails.
@@ -43,7 +44,7 @@ func TestFireGroupLogsResolveAndTellFailures(t *testing.T) {
 	system := startWakeSystem(t, tellRuntime)
 
 	fireGroup(ctx, tellFailSystem{ActorSystem: system, err: errors.New("tell down")}, tellRuntime, "q", "g", "t", 0)
-	require.Contains(t, tellLogs.String(), "firing group failed")
+	requireLogged(t, tellLogs, "firing group failed")
 }
 
 func TestGroupSweeperPreStartRequiresRuntimeExtension(t *testing.T) {
@@ -335,6 +336,178 @@ func TestGatewayBatchDispatchAndResult(t *testing.T) {
 	requireTaskState(t, engine, "b-003", conveyorv1.TaskState_TASK_STATE_PENDING)
 }
 
+// TestGatewayBatchHeartbeatLeaseLossRefundsCredit verifies that a batch whose
+// every member's lease is lost returns the one credit the batch held and drops
+// its bookkeeping: the members are gone from tracking, so the worker's batch
+// result is dropped as unknown and could never refund it.
+func TestGatewayBatchHeartbeatLeaseLossRefundsCredit(t *testing.T) {
+	const (
+		queue    = "batch-lease-lost-refund"
+		taskType = "test:batch"
+	)
+
+	ctx := context.Background()
+	faultLog := newFaultBroker(memory.New(clock.System()))
+	engine := startEngine(t, faultLog)
+	recorder := newFrameRecorder()
+
+	// One slot: the batch consumes the session's only credit, so the plain
+	// task enqueued behind it can dispatch only once that credit returns.
+	handle, err := engine.SpawnGateway(ctx, GatewaySession{
+		SessionID:   "session-batch-lease-lost-refund",
+		Queues:      []string{queue},
+		Concurrency: 1,
+		BatchTypes:  []string{taskType},
+	}, recorder)
+	require.NoError(t, err)
+
+	t.Cleanup(func() { _ = handle.Stop(ctx) })
+
+	for _, id := range []string{"bl-001", "bl-002"} {
+		require.NoError(t, faultLog.Enqueue(ctx, groupedTask(id, queue, taskType, "G")))
+	}
+
+	require.Eventually(t, func() bool {
+		fireGroup(ctx, engine.system, engine.runtime, queue, "G", taskType, 0)
+
+		return batchDispatchFor(recorder, "G") != nil
+	}, 5*time.Second, 50*time.Millisecond)
+
+	require.NoError(t, faultLog.Enqueue(ctx, newTask("after-batch", queue, "test:manual", 4)))
+
+	// Every member's lease is gone, as after a reaper reclaim of the batch.
+	faultLog.fault(methodExtendLease, broker.ErrLeaseLost)
+	require.NoError(t, handle.Tell(ctx, &conveyorv1.Heartbeat{ActiveTaskIds: []string{"bl-001", "bl-002"}}))
+
+	select {
+	case dispatch := <-recorder.dispatched:
+		require.Equal(t, "after-batch", dispatch.GetTask().GetId(), "the refunded batch credit dispatches the waiting task")
+	case <-time.After(10 * time.Second):
+		t.Fatal("the lost batch's credit was never returned")
+	}
+}
+
+// TestGatewayBatchResultAcksOnlyOwnedLeases verifies the partial-ack path: a
+// member whose lease was lost to another delivery is missing from the broker's
+// answer and stays where that delivery left it, while its siblings complete.
+func TestGatewayBatchResultAcksOnlyOwnedLeases(t *testing.T) {
+	const (
+		queue    = "batch-partial-ack"
+		taskType = "test:batch"
+		leaseID  = "batch-lease-partial"
+	)
+
+	ctx := context.Background()
+	taskLog := memory.New(clock.System())
+	pauseQueue(t, taskLog, queue)
+	engine := startEngine(t, taskLog)
+	recorder := newFrameRecorder()
+
+	handle, err := engine.SpawnGateway(ctx, GatewaySession{
+		SessionID:   "session-batch-partial-ack",
+		Queues:      []string{queue},
+		Concurrency: 4,
+		BatchTypes:  []string{taskType},
+	}, recorder)
+	require.NoError(t, err)
+
+	t.Cleanup(func() { _ = handle.Stop(ctx) })
+
+	for _, id := range []string{"pa-001", "pa-002", "pa-003"} {
+		require.NoError(t, taskLog.Enqueue(ctx, groupedTask(id, queue, taskType, "G")))
+	}
+
+	batch, err := taskLog.LeaseGroup(ctx, queue, "G", 10, 30*time.Second, leaseID)
+	require.NoError(t, err)
+	require.Len(t, batch, 3)
+
+	// pa-002's lease is taken away underneath the gateway.
+	require.NoError(t, taskLog.Release(ctx, "pa-002", leaseID))
+
+	expiresAt := timestamppb.New(engine.runtime.Clock().Now().Add(30 * time.Second))
+	require.NoError(t, handle.Tell(ctx, &conveyorv1.ExecuteBatch{
+		Tasks: batch, LeaseId: leaseID, LeaseExpiresAt: expiresAt, Group: "G",
+	}))
+
+	require.Eventually(t, func() bool {
+		return batchDispatchFor(recorder, "G") != nil
+	}, 2*time.Second, 20*time.Millisecond)
+
+	results := make([]*conveyorv1.Result, 0, 3)
+	for _, id := range []string{"pa-001", "pa-002", "pa-003"} {
+		results = append(results, &conveyorv1.Result{TaskId: id, Outcome: conveyorv1.TaskOutcome_TASK_OUTCOME_SUCCESS})
+	}
+
+	require.NoError(t, handle.Tell(ctx, &conveyorv1.BatchResult{Results: results}))
+
+	requireTaskState(t, engine, "pa-001", conveyorv1.TaskState_TASK_STATE_COMPLETED)
+	requireTaskState(t, engine, "pa-003", conveyorv1.TaskState_TASK_STATE_COMPLETED)
+
+	_, state, err := taskLog.GetTask(ctx, "pa-002")
+	require.NoError(t, err)
+	require.Equal(t, conveyorv1.TaskState_TASK_STATE_PENDING, state, "a member whose lease was lost must not complete")
+}
+
+// TestGatewayBatchResultSurvivesAckBatchFailure verifies the broker-error path
+// of a batch ack: no member completes, and the gateway keeps serving.
+func TestGatewayBatchResultSurvivesAckBatchFailure(t *testing.T) {
+	const (
+		queue    = "batch-ack-failure"
+		taskType = "test:batch"
+		leaseID  = "batch-lease-ack-failure"
+	)
+
+	ctx := context.Background()
+	faultLog := newFaultBroker(memory.New(clock.System()))
+	pauseQueue(t, faultLog, queue)
+	engine := startEngine(t, faultLog)
+	recorder := newFrameRecorder()
+
+	handle, err := engine.SpawnGateway(ctx, GatewaySession{
+		SessionID:   "session-batch-ack-failure",
+		Queues:      []string{queue},
+		Concurrency: 4,
+		BatchTypes:  []string{taskType},
+	}, recorder)
+	require.NoError(t, err)
+
+	t.Cleanup(func() { _ = handle.Stop(ctx) })
+
+	for _, id := range []string{"af-001", "af-002"} {
+		require.NoError(t, faultLog.Enqueue(ctx, groupedTask(id, queue, taskType, "G")))
+	}
+
+	batch, err := faultLog.LeaseGroup(ctx, queue, "G", 10, 30*time.Second, leaseID)
+	require.NoError(t, err)
+	require.Len(t, batch, 2)
+
+	expiresAt := timestamppb.New(engine.runtime.Clock().Now().Add(30 * time.Second))
+	require.NoError(t, handle.Tell(ctx, &conveyorv1.ExecuteBatch{
+		Tasks: batch, LeaseId: leaseID, LeaseExpiresAt: expiresAt, Group: "G",
+	}))
+
+	require.Eventually(t, func() bool {
+		return batchDispatchFor(recorder, "G") != nil
+	}, 2*time.Second, 20*time.Millisecond)
+
+	faultLog.fault(methodAckBatch, errors.New("ack batch boom"))
+
+	require.NoError(t, handle.Tell(ctx, &conveyorv1.BatchResult{Results: []*conveyorv1.Result{
+		{TaskId: "af-001", Outcome: conveyorv1.TaskOutcome_TASK_OUTCOME_SUCCESS},
+		{TaskId: "af-002", Outcome: conveyorv1.TaskOutcome_TASK_OUTCOME_SUCCESS},
+	}}))
+
+	// A later frame proves the gateway survived the failed ack.
+	require.NoError(t, handle.Tell(ctx, &conveyorv1.Heartbeat{}))
+	time.Sleep(200 * time.Millisecond)
+
+	for _, id := range []string{"af-001", "af-002"} {
+		_, state, err := faultLog.GetTask(ctx, id)
+		require.NoError(t, err)
+		require.Equal(t, conveyorv1.TaskState_TASK_STATE_ACTIVE, state, "a failed batch ack completes nothing")
+	}
+}
+
 // TestGatewayBatchDispatchSendFailureReleases mirrors the single-task broken
 // stream path for batches: when the worker stream is down, the whole leased
 // group is released back to pending immediately rather than stranding its
@@ -380,6 +553,108 @@ func TestGatewayBatchDispatchSendFailureReleases(t *testing.T) {
 	for _, id := range []string{"bb-001", "bb-002"} {
 		requireTaskState(t, engine, id, conveyorv1.TaskState_TASK_STATE_PENDING)
 	}
+}
+
+// failRecorder wraps a broker and captures the process_at each Fail schedules,
+// so a test can assert a retried task's next attempt is delayed by its backoff
+// rather than scheduled immediately.
+type failRecorder struct {
+	broker.Broker
+
+	// mutex guards processAt.
+	mutex sync.Mutex
+	// processAt maps a task id to the process_at of its most recent Fail.
+	processAt map[string]time.Time
+}
+
+// newFailRecorder wraps inner, recording every Fail's process_at.
+func newFailRecorder(inner broker.Broker) *failRecorder {
+	return &failRecorder{Broker: inner, processAt: make(map[string]time.Time)}
+}
+
+// Fail records the scheduled process_at, then delegates.
+func (r *failRecorder) Fail(ctx context.Context, taskID, leaseID, errMsg string, processAt time.Time) error {
+	r.mutex.Lock()
+	r.processAt[taskID] = processAt
+	r.mutex.Unlock()
+
+	return r.Broker.Fail(ctx, taskID, leaseID, errMsg, processAt)
+}
+
+// failedAt returns the process_at of a task's most recent Fail, if any.
+func (r *failRecorder) failedAt(taskID string) (time.Time, bool) {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+
+	at, ok := r.processAt[taskID]
+
+	return at, ok
+}
+
+// TestGatewayBatchRetryHonorsBackoff proves a failing batch member is
+// rescheduled with its retry backoff, not immediately: dispatchBatch must carry
+// the per-task strategy the same way dispatch does. A member with a fixed one
+// hour backoff that fails is scheduled at least one hour out; without the
+// strategy the delay would be zero and the member would retry instantly.
+func TestGatewayBatchRetryHonorsBackoff(t *testing.T) {
+	const (
+		queue    = "manual-batch-backoff"
+		taskType = "test:batch"
+		leaseID  = "batch-lease-backoff"
+		base     = time.Hour
+	)
+
+	ctx := context.Background()
+	taskLog := newFailRecorder(memory.New(clock.System()))
+	pauseQueue(t, taskLog, queue)
+	engine := startEngine(t, taskLog)
+	recorder := newFrameRecorder()
+
+	handle, err := engine.SpawnGateway(ctx, GatewaySession{
+		SessionID:   "session-batch-backoff",
+		Queues:      []string{queue},
+		Concurrency: 4,
+		BatchTypes:  []string{taskType},
+	}, recorder)
+	require.NoError(t, err)
+
+	t.Cleanup(func() { _ = handle.Stop(ctx) })
+
+	// A fixed backoff removes jitter, so the retry delay is exactly base.
+	member := groupedTask("bo-001", queue, taskType, "G")
+	member.Options.RetryPolicy = &conveyorv1.RetryPolicy{
+		Strategy: conveyorv1.RetryStrategy_RETRY_STRATEGY_FIXED,
+		Base:     durationpb.New(base),
+		Max:      durationpb.New(base),
+	}
+	require.NoError(t, taskLog.Enqueue(ctx, member))
+
+	batch, err := taskLog.LeaseGroup(ctx, queue, "G", 10, 30*time.Second, leaseID)
+	require.NoError(t, err)
+	require.Len(t, batch, 1)
+
+	expiresAt := timestamppb.New(engine.runtime.Clock().Now().Add(30 * time.Second))
+	require.NoError(t, handle.Tell(ctx, &conveyorv1.ExecuteBatch{
+		Tasks: batch, LeaseId: leaseID, LeaseExpiresAt: expiresAt, Group: "G",
+	}))
+
+	require.Eventually(t, func() bool {
+		frame := batchDispatchFor(recorder, "G")
+
+		return frame != nil && len(frame.GetTasks()) == 1
+	}, 2*time.Second, 20*time.Millisecond, "the batch is delivered as one BatchDispatch")
+
+	before := engine.runtime.Clock().Now()
+	require.NoError(t, handle.Tell(ctx, &conveyorv1.BatchResult{Results: []*conveyorv1.Result{
+		{TaskId: "bo-001", Outcome: conveyorv1.TaskOutcome_TASK_OUTCOME_RETRY, ErrorMsg: "boom"},
+	}}))
+
+	requireTaskState(t, engine, "bo-001", conveyorv1.TaskState_TASK_STATE_RETRY)
+
+	processAt, ok := taskLog.failedAt("bo-001")
+	require.True(t, ok, "the failing batch member is scheduled through Fail")
+	require.GreaterOrEqual(t, processAt.Sub(before), base,
+		"a batch member's retry honors its backoff instead of retrying immediately")
 }
 
 // TestGatewayBatchReleaseBrokerError covers the release-failure branch of

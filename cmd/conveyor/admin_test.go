@@ -7,6 +7,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -144,13 +145,13 @@ func TestCronUsageErrors(t *testing.T) {
 
 func TestClusterUsageErrors(t *testing.T) {
 	err := run([]string{"cluster"}, &bytes.Buffer{})
-	require.ErrorContains(t, err, "usage: conveyor cluster info")
+	require.ErrorContains(t, err, "usage: conveyor cluster info|sessions")
 }
 
 func TestTaskOperationUsageErrors(t *testing.T) {
-	for _, subcommand := range []string{"run", "cancel", "delete"} {
+	for _, subcommand := range []string{"run", "cancel", "delete", "archive"} {
 		err := run([]string{"tasks", subcommand}, &bytes.Buffer{})
-		require.ErrorContains(t, err, "exactly one task id is required", "subcommand %s", subcommand)
+		require.ErrorContains(t, err, "at least one task id is required", "subcommand %s", subcommand)
 	}
 }
 
@@ -268,10 +269,148 @@ func TestCronAndClusterAgainstEmbeddedServer(t *testing.T) {
 	err = run([]string{"--addr", addr, "cron", "pause", "missing"}, &bytes.Buffer{})
 	require.ErrorContains(t, err, "does not exist")
 
+	// Delete the entry and confirm it no longer lists.
+	var cronDeleteOut bytes.Buffer
+
+	require.NoError(t, run([]string{"--addr", addr, "cron", "delete", "nightly"}, &cronDeleteOut))
+	require.Contains(t, cronDeleteOut.String(), "nightly deleted")
+
+	var cronListAfter bytes.Buffer
+
+	require.NoError(t, run([]string{"--addr", addr, "cron", "list"}, &cronListAfter))
+	require.NotContains(t, cronListAfter.String(), "nightly")
+
 	var clusterOut bytes.Buffer
 
 	require.NoError(t, run([]string{"--addr", addr, "cluster", "info"}, &clusterOut))
 	require.Contains(t, clusterOut.String(), "ADDRESS")
+
+	var sessionsOut bytes.Buffer
+
+	require.NoError(t, run([]string{"--addr", addr, "cluster", "sessions"}, &sessionsOut))
+	require.Contains(t, sessionsOut.String(), "CONNECTED_AT")
+
+	var brokerOut bytes.Buffer
+
+	require.NoError(t, run([]string{"--addr", addr, "broker", "info"}, &brokerOut))
+	require.Contains(t, brokerOut.String(), "driver")
+}
+
+func TestBatchTaskOperationsAgainstEmbeddedServer(t *testing.T) {
+	addr := startEmbeddedNode(t)
+
+	first := enqueueOne(t, addr, "report:daily", "--in", "1h")
+	second := enqueueOne(t, addr, "report:weekly", "--in", "1h")
+
+	// Several ids run the batch call and report a per-id outcome for each.
+	var batchOut bytes.Buffer
+
+	require.NoError(t, run([]string{"--addr", addr, "tasks", "cancel", first, second}, &batchOut))
+	require.Contains(t, batchOut.String(), first)
+	require.Contains(t, batchOut.String(), second)
+	require.Contains(t, batchOut.String(), "cancel requested")
+
+	// Archive is reachable as a single call.
+	third := enqueueOne(t, addr, "report:monthly", "--in", "1h")
+
+	var archiveOut bytes.Buffer
+
+	require.NoError(t, run([]string{"--addr", addr, "tasks", "archive", third}, &archiveOut))
+	require.Contains(t, archiveOut.String(), "archive requested")
+}
+
+// TestBatchTaskOperationFailuresExitNonZero proves a batch operation whose ids
+// were all rejected reports an error. The batch RPC itself succeeds and carries
+// each rejection in its response, so without this a scheduled job that batches
+// ids would read a clean exit as work done while nothing happened.
+func TestBatchTaskOperationFailuresExitNonZero(t *testing.T) {
+	addr := startEmbeddedNode(t)
+
+	var allFailed bytes.Buffer
+
+	err := run([]string{"--addr", addr, "tasks", "cancel", "missing-1", "missing-2"}, &allFailed)
+	require.Error(t, err, "a batch where every id failed must not exit zero")
+	require.ErrorContains(t, err, "2 of 2 ids failed")
+
+	// The per-id outcomes are still rendered, so the operator sees which failed.
+	require.Contains(t, allFailed.String(), "missing-1")
+	require.Contains(t, allFailed.String(), "missing-2")
+
+	// A partial failure is reported too, and the id that succeeded still ran.
+	live := enqueueOne(t, addr, "report:daily", "--in", "1h")
+
+	var partial bytes.Buffer
+
+	err = run([]string{"--addr", addr, "tasks", "cancel", live, "missing-3"}, &partial)
+	require.ErrorContains(t, err, "1 of 2 ids failed")
+	require.Contains(t, partial.String(), "cancel requested")
+}
+
+// TestRenderBatchResultsRejectsShortAnswer proves a batch answer that covers
+// fewer ids than were sent is an error, since a dropped id would otherwise
+// read as done.
+func TestRenderBatchResultsRejectsShortAnswer(t *testing.T) {
+	var stdout bytes.Buffer
+
+	response := &conveyorv1.BatchTasksResponse{Results: []*conveyorv1.TaskActionResult{{Id: "a"}}}
+
+	err := renderBatchResults(&connection{}, &stdout, "cancel", []string{"a", "b"}, response)
+	require.ErrorContains(t, err, "answered for 1 of 2 ids")
+	require.Contains(t, stdout.String(), "a", "the answered ids are still rendered")
+
+	require.NoError(t, renderBatchResults(&connection{}, &stdout, "cancel", []string{"a"}, response))
+}
+
+func TestOutputFormat(t *testing.T) {
+	// An unknown --output value is rejected before any command runs.
+	require.ErrorContains(t, run([]string{"--output", "yaml", "stats"}, &bytes.Buffer{}), "invalid --output")
+
+	addr := startEmbeddedNode(t)
+
+	// --output json renders a listing command as JSON rather than a table.
+	var statsJSON bytes.Buffer
+
+	require.NoError(t, run([]string{"--addr", addr, "--output", "json", "stats"}, &statsJSON))
+	require.True(t, json.Valid(statsJSON.Bytes()), "stats --output json must emit valid JSON, got %q", statsJSON.String())
+
+	// An empty listing is an empty array under its key, not an absent key, so a
+	// script can read the field unconditionally.
+	var emptyStats map[string]any
+
+	require.NoError(t, json.Unmarshal(statsJSON.Bytes(), &emptyStats))
+	require.Contains(t, emptyStats, "queues", "an empty listing still carries its key")
+	require.Empty(t, emptyStats["queues"])
+
+	id := enqueueOne(t, addr, "report:daily", "--in", "1h")
+
+	// Zero-valued counters are emitted rather than omitted, so a script reading
+	// one finds it present at zero instead of missing.
+	var populatedStats bytes.Buffer
+
+	require.NoError(t, run([]string{"--addr", addr, "--output", "json", "stats"}, &populatedStats))
+	require.Contains(t, populatedStats.String(), "\"pending\"")
+
+	// tasks get honors JSON too, rendering the wire response.
+
+	var getJSON bytes.Buffer
+
+	require.NoError(t, run([]string{"--addr", addr, "--output", "json", "tasks", "get", id}, &getJSON))
+	require.True(t, json.Valid(getJSON.Bytes()), "tasks get --output json must emit valid JSON, got %q", getJSON.String())
+	require.Contains(t, getJSON.String(), id)
+
+	// A single-id batch action renders the same shape as a multi-id one, so a
+	// script parsing the output does not break when the id list has one entry.
+	var oneID, twoIDs bytes.Buffer
+
+	require.NoError(t, run([]string{"--addr", addr, "--output", "json", "tasks", "cancel", id}, &oneID))
+	require.True(t, json.Valid(oneID.Bytes()), "single-id cancel --output json must emit valid JSON, got %q", oneID.String())
+	require.Contains(t, oneID.String(), "\"results\"")
+
+	first := enqueueOne(t, addr, "report:weekly", "--in", "1h")
+	second := enqueueOne(t, addr, "report:monthly", "--in", "1h")
+
+	require.NoError(t, run([]string{"--addr", addr, "--output", "json", "tasks", "cancel", first, second}, &twoIDs))
+	require.Contains(t, twoIDs.String(), "\"results\"")
 }
 
 func TestParseTaskState(t *testing.T) {

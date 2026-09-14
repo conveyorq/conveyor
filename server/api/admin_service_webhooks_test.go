@@ -38,7 +38,7 @@ func validWebhookWorkerMessage(mutate func(*conveyorv1.WebhookWorker)) *conveyor
 func TestWebhookWorkerAdminLifecycle(t *testing.T) {
 	ctx := context.Background()
 	engine, taskLog := startTestEngine(t)
-	admin := NewAdminService(engine, taskLog, clock.System(), stubSessions(nil), true)
+	admin := NewAdminService(engine, taskLog, clock.System(), stubSessions(nil), true, false)
 
 	worker := validWebhookWorkerMessage(func(w *conveyorv1.WebhookWorker) {
 		w.BatchTypes = []string{"report:batch"}
@@ -100,7 +100,7 @@ func TestWebhookWorkerAdminLifecycle(t *testing.T) {
 func TestWebhookWorkerAdminRejectsEmptyName(t *testing.T) {
 	ctx := context.Background()
 	engine, taskLog := startTestEngine(t)
-	admin := NewAdminService(engine, taskLog, clock.System(), stubSessions(nil), true)
+	admin := NewAdminService(engine, taskLog, clock.System(), stubSessions(nil), true, false)
 
 	_, err := admin.PauseWebhookWorker(ctx, connect.NewRequest(&conveyorv1.PauseWebhookWorkerRequest{}))
 	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
@@ -115,7 +115,7 @@ func TestWebhookWorkerAdminRejectsEmptyName(t *testing.T) {
 func TestUpsertWebhookWorkerValidation(t *testing.T) {
 	ctx := context.Background()
 	engine, taskLog := startTestEngine(t)
-	admin := NewAdminService(engine, taskLog, clock.System(), stubSessions(nil), true)
+	admin := NewAdminService(engine, taskLog, clock.System(), stubSessions(nil), true, false)
 
 	cases := []struct {
 		name   string
@@ -152,7 +152,7 @@ func TestUpsertWebhookWorkerRejectsHTTPOutsideDev(t *testing.T) {
 
 	// A production-posture admin service (bearer auth on) refuses plaintext
 	// delivery URLs; a development one admits them.
-	strict := NewAdminService(engine, taskLog, clock.System(), stubSessions(nil), false)
+	strict := NewAdminService(engine, taskLog, clock.System(), stubSessions(nil), false, false)
 	request := connect.NewRequest(&conveyorv1.UpsertWebhookWorkerRequest{
 		Worker: validWebhookWorkerMessage(func(w *conveyorv1.WebhookWorker) { w.Url = "http://example.com/tasks" }),
 	})
@@ -160,7 +160,26 @@ func TestUpsertWebhookWorkerRejectsHTTPOutsideDev(t *testing.T) {
 	_, err := strict.UpsertWebhookWorker(ctx, request)
 	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
 
-	relaxed := NewAdminService(engine, taskLog, clock.System(), stubSessions(nil), true)
+	relaxed := NewAdminService(engine, taskLog, clock.System(), stubSessions(nil), true, false)
+	_, err = relaxed.UpsertWebhookWorker(ctx, request)
+	require.NoError(t, err)
+}
+
+func TestUpsertWebhookWorkerRejectsPrivateTarget(t *testing.T) {
+	ctx := context.Background()
+	engine, taskLog := startTestEngine(t)
+
+	// A default admin service refuses a delivery URL whose host is a private-IP
+	// literal (an SSRF target); one that permits private targets accepts it.
+	strict := NewAdminService(engine, taskLog, clock.System(), stubSessions(nil), true, false)
+	request := connect.NewRequest(&conveyorv1.UpsertWebhookWorkerRequest{
+		Worker: validWebhookWorkerMessage(func(w *conveyorv1.WebhookWorker) { w.Url = "https://10.0.0.5/tasks" }),
+	})
+
+	_, err := strict.UpsertWebhookWorker(ctx, request)
+	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+
+	relaxed := NewAdminService(engine, taskLog, clock.System(), stubSessions(nil), true, true)
 	_, err = relaxed.UpsertWebhookWorker(ctx, request)
 	require.NoError(t, err)
 }

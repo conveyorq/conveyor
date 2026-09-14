@@ -40,6 +40,7 @@ func TestEngineRecordsAllInstruments(t *testing.T) {
 	engine.EventDropped(ctx)
 	engine.WebhookDelivery(ctx, "hooks", "completed")
 	engine.WebhookCapacityWithheld(ctx, "hooks")
+	engine.MaintenanceFailure(ctx, metrics.PassReap)
 
 	var collected metricdata.ResourceMetrics
 	require.NoError(t, reader.Collect(ctx, &collected))
@@ -63,6 +64,7 @@ func TestEngineRecordsAllInstruments(t *testing.T) {
 		"conveyor.events.dropped",
 		"conveyor.webhook.deliveries",
 		"conveyor.webhook.withheld",
+		"conveyor.maintenance.failures",
 	} {
 		require.True(t, recorded[name], "%s must be recorded", name)
 	}

@@ -28,6 +28,13 @@ import { createTransport } from "./transport.js";
 /** The SDK version reported in Hello. */
 const SDK_VERSION = "conveyor-ts/0.1.0";
 
+/**
+ * Queue names the server accepts, per the wire protocol. Validating the same
+ * shape locally turns a name the server would refuse into a construction error
+ * instead of a session that is rejected on every reconnect.
+ */
+const QUEUE_NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9\-_.]*$/;
+
 /** Reconnection backoff (full jitter), per the wire protocol §5.9. */
 const RECONNECT_BASE_MS = 500;
 const RECONNECT_MAX_MS = 30_000;
@@ -38,6 +45,21 @@ const DEFAULT_HEARTBEAT_MS = 20_000;
 
 /** How long graceful drain waits for in-flight tasks before closing the stream. */
 const DRAIN_GRACE_MS = 25_000;
+
+/**
+ * How long drain waits, after aborting the handlers still running when the grace
+ * window expires, for them to report RELEASED before the stream closes. Anything
+ * still unreported is released by the server on stream close.
+ */
+const DRAIN_SETTLE_MS = 2_000;
+
+/**
+ * DRAINING marks a controller aborted because the worker is shutting down, so
+ * the task reports RELEASED — returned to the queue with no retry penalty —
+ * rather than RETRY. A server Cancel or a deadline aborts with no reason and so
+ * reports RETRY, leaving the server to apply its policy.
+ */
+const DRAINING = Symbol("conveyor:draining");
 
 /**
  * Worker is the consumer side of Conveyor: it opens a session, receives
@@ -60,6 +82,21 @@ export class Worker {
   constructor(baseUrl: string, options: WorkerOptions) {
     if (Object.keys(options.queues).length === 0) {
       throw new ConveyorError("conveyor: a worker must declare at least one queue");
+    }
+
+    // Validate the session contract locally so a Hello the server would reject
+    // fails fast at construction rather than becoming an endless reconnect loop
+    // (the server rejects it with a fatal invalid_argument on every attempt).
+    for (const [name, weight] of Object.entries(options.queues)) {
+      if (!QUEUE_NAME_PATTERN.test(name)) {
+        throw new ConveyorError(
+          `conveyor: queue name ${JSON.stringify(name)} must start with a letter or digit and contain only letters, digits, '-', '_' or '.'`,
+        );
+      }
+
+      if (weight <= 0) {
+        throw new ConveyorError(`conveyor: queue ${name} weight must be positive, got ${weight}`);
+      }
     }
 
     if (options.concurrency <= 0) {
@@ -104,10 +141,22 @@ export class Worker {
   }
 }
 
-/** Session owns the state of one connected worker stream. */
-class Session {
+/**
+ * Session owns the state of one connected worker stream.
+ *
+ * Exported for tests only; it is not part of the package's public API.
+ */
+export class Session {
   private readonly outbound = new Pushable<WorkerMessage>();
   private readonly inflight = new Map<string, AbortController>();
+  /**
+   * parked holds the ids of tasks dispatched after the drain began. They are
+   * never started, but their leases are kept alive by the heartbeat until the
+   * stream closes, when the server releases them with no retry penalty;
+   * reporting RELEASED at once would only have the server redispatch them here.
+   */
+  private readonly parked = new Set<string>();
+  private readonly slots: Semaphore;
   private established = false;
   private draining = false;
   private heartbeatTimer: ReturnType<typeof setInterval> | undefined;
@@ -120,7 +169,12 @@ class Session {
     private readonly encryptor: Encryptor | undefined,
     private readonly mux: Mux,
     private readonly signal: AbortSignal,
-  ) {}
+  ) {
+    // Gate concurrent executions to the declared concurrency, so a worker never
+    // runs more handlers than it advertised even if the server over-grants
+    // credit (one credit per queue). A batch counts as a single slot.
+    this.slots = new Semaphore(options.concurrency);
+  }
 
   /** run executes one session to completion and returns whether it established. */
   async run(): Promise<boolean> {
@@ -137,7 +191,7 @@ class Session {
 
       return this.established;
     } catch (error) {
-      if (isFatal(error)) {
+      if (isFatal(error, this.established)) {
         throw error;
       }
 
@@ -146,6 +200,7 @@ class Session {
       this.signal.removeEventListener("abort", onAbort);
       this.stopHeartbeat();
       this.outbound.end();
+      this.abortInflight();
     }
   }
 
@@ -177,15 +232,25 @@ class Session {
 
       case "dispatch": {
         const task = message.frame.value.task;
-        if (task !== undefined && !this.draining) {
+        if (task === undefined) {
+          break;
+        }
+
+        if (this.draining) {
+          this.parked.add(task.id);
+        } else {
           void this.runOne(task, deadlineMs(message.frame.value.deadline));
         }
         break;
       }
 
       case "batchDispatch": {
-        if (!this.draining) {
-          void this.runBatch(message.frame.value.tasks, message.frame.value.group, deadlineMs(message.frame.value.deadline));
+        if (this.draining) {
+          for (const task of message.frame.value.tasks) {
+            this.parked.add(task.id);
+          }
+        } else {
+          void this.runBatch(message.frame.value.tasks, deadlineMs(message.frame.value.deadline));
         }
         break;
       }
@@ -202,48 +267,92 @@ class Session {
     }
   }
 
-  /** runOne executes a single dispatched task and reports its outcome. */
+  /**
+   * runOne executes a single dispatched task and reports its outcome. The task
+   * is tracked in `inflight` before a slot is acquired, so heartbeats extend the
+   * lease of work still queued behind the concurrency gate.
+   */
   private async runOne(envelope: TaskEnvelope, deadline: number | undefined): Promise<void> {
     const controller = this.scopedController(envelope.id, deadline);
 
     try {
-      const task = await this.openTask(envelope);
-      const handler = this.mux.resolve(envelope.type);
+      await this.slots.acquire();
 
-      if (handler === undefined) {
-        this.report(envelope.id, TaskOutcome.RETRY, `conveyor: no handler registered for type ${envelope.type}`);
-        return;
+      try {
+        // Aborted while queued behind the gate (a drain, a server cancel, or the
+        // deadline): the handler never runs; report the matching outcome.
+        if (controller.signal.aborted) {
+          this.report(envelope.id, outcomeForAbort(controller.signal), "");
+          return;
+        }
+
+        const task = await this.openTask(envelope);
+        const handler = this.mux.resolve(envelope.type);
+
+        if (handler === undefined) {
+          this.report(envelope.id, TaskOutcome.RETRY, `conveyor: no handler registered for type ${envelope.type}`);
+          return;
+        }
+
+        const [outcome, errorMsg] = await runHandler(handler, task, controller.signal, this.progressReporter(envelope.id));
+        this.report(envelope.id, outcome, errorMsg);
+      } finally {
+        this.slots.release();
       }
-
-      const [outcome, errorMsg] = await runHandler(handler, task, controller.signal, this.progressReporter(envelope.id));
-      this.report(envelope.id, outcome, errorMsg);
     } catch (error) {
       // A payload that could not be opened (e.g. an undecryptable task) is
-      // reported as a retryable failure; the handler never ran.
-      this.report(envelope.id, TaskOutcome.RETRY, errorMessage(error));
+      // retryable; a task the drain interrupted here is released, no penalty.
+      if (controller.signal.reason === DRAINING) {
+        this.report(envelope.id, TaskOutcome.RELEASED, "");
+      } else {
+        this.report(envelope.id, TaskOutcome.RETRY, errorMessage(error));
+      }
     } finally {
       this.finish(envelope.id, controller);
     }
   }
 
-  /** runBatch executes an aggregation group's members as one delivery. */
-  private async runBatch(envelopes: TaskEnvelope[], group: string, deadline: number | undefined): Promise<void> {
-    const controller = this.scopedController(`group:${group}`, deadline);
+  /**
+   * runBatch executes an aggregation group's members as one delivery. Every
+   * member id is tracked in `inflight` under one shared controller, so the
+   * heartbeat extends every member's lease (a batch longer than the lease TTL is
+   * not reaped and retried) and a Cancel for any member aborts the whole batch.
+   * A batch occupies a single concurrency slot, matching the one credit it holds.
+   */
+  private async runBatch(envelopes: TaskEnvelope[], deadline: number | undefined): Promise<void> {
     const ids = envelopes.map((envelope) => envelope.id);
+    const controller = this.scopedBatch(ids, deadline);
 
     try {
-      const handler = this.mux.resolveBatch(envelopes[0]?.type ?? "");
-      if (handler === undefined) {
-        this.reportEach(ids, TaskOutcome.RETRY, "conveyor: no batch handler registered");
-        return;
-      }
+      await this.slots.acquire();
 
-      const tasks = await Promise.all(envelopes.map((envelope) => this.openTask(envelope)));
-      await this.runBatchHandler(handler, tasks, ids, controller.signal);
+      try {
+        if (controller.signal.aborted) {
+          this.reportEach(ids, outcomeForAbort(controller.signal), "");
+          return;
+        }
+
+        const handler = this.mux.resolveBatch(envelopes[0]?.type ?? "");
+        if (handler === undefined) {
+          this.reportEach(ids, TaskOutcome.RETRY, "conveyor: no batch handler registered");
+          return;
+        }
+
+        const tasks = await Promise.all(envelopes.map((envelope) => this.openTask(envelope)));
+        await this.runBatchHandler(handler, tasks, ids, controller.signal);
+      } finally {
+        this.slots.release();
+      }
     } catch (error) {
-      this.reportEach(ids, TaskOutcome.RETRY, errorMessage(error));
+      // An undecryptable member is retryable; a batch the drain interrupted here
+      // is released, no penalty.
+      if (controller.signal.reason === DRAINING) {
+        this.reportEach(ids, TaskOutcome.RELEASED, "");
+      } else {
+        this.reportEach(ids, TaskOutcome.RETRY, errorMessage(error));
+      }
     } finally {
-      this.finish(`group:${group}`, controller);
+      this.finishBatch(ids, controller);
     }
   }
 
@@ -253,6 +362,13 @@ class Session {
       await handler(tasks, { signal, reportProgress: () => {} });
       this.reportEach(ids, TaskOutcome.SUCCESS, "");
     } catch (error) {
+      // A drain interrupted the whole batch: every member is released, no retry
+      // penalty, regardless of any partial-failure detail the handler raised.
+      if (signal.reason === DRAINING) {
+        this.reportEach(ids, TaskOutcome.RELEASED, "");
+        return;
+      }
+
       if (error instanceof BatchError) {
         for (const id of ids) {
           const failure = error.failures.get(id);
@@ -297,23 +413,71 @@ class Session {
     });
   }
 
-  /** scopedController registers an abort controller, firing at the deadline. */
+  /** scopedController registers a single task's abort controller under its id. */
   private scopedController(id: string, deadline: number | undefined): AbortController {
     const controller = new AbortController();
     this.inflight.set(id, controller);
-
-    if (deadline !== undefined) {
-      const remaining = deadline - Date.now();
-      const timer = setTimeout(() => controller.abort(), Math.max(0, remaining));
-      controller.signal.addEventListener("abort", () => clearTimeout(timer), { once: true });
-    }
+    this.armDeadline(controller, deadline);
 
     return controller;
+  }
+
+  /**
+   * scopedBatch registers one controller for a whole batch under every member
+   * id, so the heartbeat lists every member (extending each lease) and a Cancel
+   * for any member aborts the batch. There is no synthetic group key.
+   */
+  private scopedBatch(ids: string[], deadline: number | undefined): AbortController {
+    const controller = new AbortController();
+
+    for (const id of ids) {
+      this.inflight.set(id, controller);
+    }
+
+    this.armDeadline(controller, deadline);
+
+    return controller;
+  }
+
+  /** armDeadline aborts the controller at the delivery deadline, if any. */
+  private armDeadline(controller: AbortController, deadline: number | undefined): void {
+    if (deadline === undefined) {
+      return;
+    }
+
+    const remaining = deadline - Date.now();
+    const timer = setTimeout(() => controller.abort(), Math.max(0, remaining));
+    controller.signal.addEventListener("abort", () => clearTimeout(timer), { once: true });
   }
 
   private finish(id: string, controller: AbortController): void {
     this.inflight.delete(id);
     controller.abort();
+  }
+
+  private finishBatch(ids: string[], controller: AbortController): void {
+    for (const id of ids) {
+      this.inflight.delete(id);
+    }
+
+    controller.abort();
+  }
+
+  /**
+   * abortInflight aborts every execution still running when the session ends and
+   * forgets them. Nothing this session's handlers produce can reach the server
+   * once the stream is gone, and the server releases their leases and redelivers
+   * them, so letting them run would execute the same task twice at once after
+   * the worker reconnects. The Go and Python SDKs cancel in-flight work at the
+   * same point.
+   */
+  private abortInflight(): void {
+    for (const controller of new Set(this.inflight.values())) {
+      controller.abort();
+    }
+
+    this.inflight.clear();
+    this.parked.clear();
   }
 
   private report(taskId: string, outcome: TaskOutcome, errorMsg: string): void {
@@ -360,16 +524,25 @@ class Session {
   private startHeartbeat(): void {
     this.stopHeartbeat();
     this.heartbeatTimer = setInterval(() => {
-      if (this.inflight.size === 0) {
+      const activeTaskIds = this.activeTaskIds();
+      if (activeTaskIds.length === 0) {
         return;
       }
 
       this.outbound.push(
         create(WorkerMessageSchema, {
-          frame: { case: "heartbeat", value: create(HeartbeatSchema, { activeTaskIds: [...this.inflight.keys()] }) },
+          frame: { case: "heartbeat", value: create(HeartbeatSchema, { activeTaskIds }) },
         }),
       );
     }, this.heartbeatMs);
+  }
+
+  /**
+   * activeTaskIds lists every id whose lease this session must keep alive: the
+   * tasks executing plus those parked by the drain.
+   */
+  private activeTaskIds(): string[] {
+    return [...this.inflight.keys(), ...this.parked];
   }
 
   private stopHeartbeat(): void {
@@ -381,18 +554,33 @@ class Session {
 
   /**
    * drain stops accepting work and lets in-flight tasks finish (reporting their
-   * real outcomes) up to a grace window, then closes the stream — the server
-   * releases any still-held leases with no retry penalty.
+   * real outcomes) up to a grace window. The heartbeat keeps running throughout,
+   * so a task still executing does not lose its lease mid-drain and get
+   * redelivered at the cost of a retry. When the grace window expires, any
+   * handler still running is aborted so it reports RELEASED (no retry penalty),
+   * given a brief settle window to send that, and then the stream closes — the
+   * server releases anything still held on stream close.
    */
   private async drain(call: AbortController): Promise<void> {
     this.draining = true;
-    this.stopHeartbeat();
 
     const deadline = Date.now() + DRAIN_GRACE_MS;
     while (this.inflight.size > 0 && Date.now() < deadline) {
       await sleep(50, undefined);
     }
 
+    if (this.inflight.size > 0) {
+      for (const controller of new Set(this.inflight.values())) {
+        controller.abort(DRAINING);
+      }
+
+      const settle = Date.now() + DRAIN_SETTLE_MS;
+      while (this.inflight.size > 0 && Date.now() < settle) {
+        await sleep(20, undefined);
+      }
+    }
+
+    this.stopHeartbeat();
     this.outbound.end();
     call.abort();
   }
@@ -410,8 +598,14 @@ async function runHandler(
 
     return [TaskOutcome.SUCCESS, ""];
   } catch (error) {
+    // An explicit skip-retry is honored even mid-drain; a task the drain
+    // interrupted is released with no retry penalty; everything else retries.
     if (error instanceof SkipRetry) {
       return [TaskOutcome.SKIP_RETRY, error.message];
+    }
+
+    if (signal.reason === DRAINING) {
+      return [TaskOutcome.RELEASED, ""];
     }
 
     return [TaskOutcome.RETRY, errorMessage(error)];
@@ -427,17 +621,29 @@ function deadlineMs(deadline: { seconds: bigint; nanos: number } | undefined): n
   return Number(deadline.seconds) * 1000 + deadline.nanos / 1_000_000;
 }
 
-/** isFatal reports whether a stream error must stop the worker (no reconnect). */
-function isFatal(error: unknown): boolean {
+/**
+ * isFatal reports whether a stream error must stop the worker (no reconnect).
+ * A rejected session contract, meaning bad auth, an unmet server version, or a
+ * Hello the server refuses (invalid_argument, per the wire protocol), can never
+ * succeed by retrying, so retrying it is an endless loop.
+ *
+ * `established` says whether the session reached Welcome, and it is what keeps
+ * invalid_argument from being over-applied: the client library raises that same
+ * code locally when a connection is severed mid-envelope, which is transient and
+ * must reconnect. A Hello rejection always arrives before Welcome, so
+ * invalid_argument is fatal only while the session is not yet established. The
+ * Go SDK draws the same line by asking whether the code came off the wire.
+ */
+function isFatal(error: unknown, established: boolean): boolean {
   if (!(error instanceof ConnectError)) {
     return false;
   }
 
-  return (
-    error.code === Code.Unauthenticated ||
-    error.code === Code.PermissionDenied ||
-    error.code === Code.FailedPrecondition
-  );
+  if (error.code === Code.InvalidArgument) {
+    return !established;
+  }
+
+  return error.code === Code.Unauthenticated || error.code === Code.PermissionDenied;
 }
 
 function errorMessage(error: unknown): string {
@@ -448,6 +654,16 @@ function errorMessage(error: unknown): string {
   return String(error);
 }
 
+/**
+ * outcomeForAbort maps an aborted delivery's reason to its outcome: a drain
+ * releases the task (no retry penalty), while a server Cancel or a deadline —
+ * neither of which carries the draining reason — retries it so the server
+ * applies its own policy.
+ */
+function outcomeForAbort(signal: AbortSignal): TaskOutcome {
+  return signal.reason === DRAINING ? TaskOutcome.RELEASED : TaskOutcome.RETRY;
+}
+
 /** fullJitter returns a backoff delay in [0, min(max, base*2^attempt)). */
 function fullJitter(attempt: number): number {
   const ceiling = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** attempt);
@@ -455,19 +671,62 @@ function fullJitter(attempt: number): number {
   return Math.random() * ceiling;
 }
 
-/** sleep waits for `ms`, resolving early if the optional signal aborts. */
-function sleep(ms: number, signal: AbortSignal | undefined): Promise<void> {
+/**
+ * sleep waits for `ms`, resolving early if the optional signal aborts. The
+ * abort listener is removed when the timer fires, so a long-lived signal (the
+ * worker's own, listened to on every reconnect) does not accumulate one
+ * closure per call.
+ *
+ * Exported for tests only; it is not part of the package's public API.
+ */
+export function sleep(ms: number, signal: AbortSignal | undefined): Promise<void> {
   return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    signal?.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(timer);
-        resolve();
-      },
-      { once: true },
-    );
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      resolve();
+    };
+
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+
+    signal?.addEventListener("abort", onAbort, { once: true });
   });
+}
+
+/**
+ * Semaphore is an async counting gate limiting how many executions run at once.
+ * acquire resolves immediately while permits remain, otherwise queues until a
+ * release hands a permit directly to the next waiter (FIFO). It bounds a
+ * worker's concurrent handlers to its declared concurrency.
+ */
+class Semaphore {
+  private permits: number;
+  private readonly waiters: (() => void)[] = [];
+
+  constructor(permits: number) {
+    this.permits = permits;
+  }
+
+  acquire(): Promise<void> {
+    if (this.permits > 0) {
+      this.permits -= 1;
+
+      return Promise.resolve();
+    }
+
+    return new Promise<void>((resolve) => this.waiters.push(resolve));
+  }
+
+  release(): void {
+    const waiter = this.waiters.shift();
+    if (waiter !== undefined) {
+      waiter();
+    } else {
+      this.permits += 1;
+    }
+  }
 }
 
 /**

@@ -110,9 +110,11 @@ spec:
     - type: prometheus
       metadata:
         serverAddress: http://prometheus.monitoring.svc:9090
-        query: sum(conveyor_pending)         # total backlog; scope by queue label if needed
+        query: sum(max by (queue) (conveyor_pending))   # total backlog, deduplicated across nodes
         threshold: "100"                      # ~tasks pending per worker replica
 ```
+
+The Helm chart ships this ScaledObject as an opt-in: set `workerAutoscaling.enabled=true` and `workerAutoscaling.scaleTargetRef` to your worker Deployment's name (the other fields above map to `workerAutoscaling.*` values). It needs KEDA installed.
 
 ## Failure scenarios (all zero-loss)
 

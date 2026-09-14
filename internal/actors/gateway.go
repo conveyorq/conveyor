@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
+	"sort"
 	"time"
 
 	goakt "github.com/tochemey/goakt/v4/actor"
@@ -102,8 +104,9 @@ type GatewaySession struct {
 	// grain distributes leased tasks across gateways in proportion to these
 	// weights, so a higher weight draws proportionally more work.
 	Weights map[string]int32
-	// Concurrency is the worker's declared total execution slots; it is
-	// the dispatch capacity granted to each declared queue.
+	// Concurrency is the worker's declared total execution slots. It is split
+	// across the worker's declared queues by weight (see splitCapacity), so the
+	// worker holds at most this many tasks in flight across all its queues.
 	Concurrency int32
 	// BatchTypes are the task types this worker handles as batches, advertised
 	// to queue grains so a fired group dispatches only to a capable gateway.
@@ -157,8 +160,11 @@ type Gateway struct {
 	strategy backoff.Strategy
 	// name is this gateway's actor name, resolved at start.
 	name string
-	// identities caches the queue grain identity per declared queue.
-	identities map[string]*goakt.GrainIdentity
+	// capacities is the dispatch capacity registered with each declared queue:
+	// the worker's total concurrency split across its queues by weight, so the
+	// worker holds at most `concurrency` tasks in flight across all its queues
+	// rather than that many per queue. Computed once in PreStart.
+	capacities map[string]int32
 	// inflight tracks dispatched tasks by id until their result arrives.
 	inflight map[string]*inflightTask
 	// batches maps a batch lease id to its member task ids, so a BatchResult
@@ -193,12 +199,96 @@ func (g *Gateway) PreStart(ctx *goakt.Context) error {
 	if g.strategy.Base() <= 0 {
 		g.strategy = backoff.New(backoff.DefaultBase, backoff.DefaultCap)
 	}
-	g.identities = make(map[string]*goakt.GrainIdentity, len(g.session.Queues))
+	g.capacities = splitCapacity(g.session.Concurrency, g.session.Queues, g.session.Weights)
 	g.inflight = make(map[string]*inflightTask)
 	g.batches = make(map[string][]string)
 	g.breakers = make(map[string]*breaker.CircuitBreaker)
 
 	return nil
+}
+
+// splitCapacity divides a worker's declared concurrency across the queues it
+// serves, in proportion to the weights it declared in Hello, and returns the
+// per-queue share to register as that queue's capacity. The shares sum to
+// concurrency, so the total in flight across a worker's queues never exceeds
+// what it declared, however many queues it serves. This is what gives
+// cross-queue fairness: each queue receives a guaranteed capacity share, so a
+// busy low-weight queue cannot consume the slots a high-weight queue relies
+// on. A missing or non-positive weight is treated as one, matching the grain's
+// neutral-weight rule.
+//
+// One slot is reserved per queue before the rest is split, so no queue is
+// starved by a heavy sibling and the reservation never lifts the total above
+// concurrency. Largest-remainder rounding keeps the split of the rest exact.
+// Only when a worker serves more queues than it has slots does every queue
+// keep one anyway: a degenerate setup whose over-grant is bounded by the queue
+// count and still capped by the worker's own concurrency gate.
+func splitCapacity(concurrency int32, queues []string, weights map[string]int32) map[string]int32 {
+	capacities := make(map[string]int32, len(queues))
+	if len(queues) == 0 {
+		return capacities
+	}
+
+	reserved := int32(len(queues))
+	if concurrency <= reserved {
+		for _, queue := range queues {
+			capacities[queue] = 1
+		}
+
+		return capacities
+	}
+
+	var totalWeight int64
+	for _, queue := range queues {
+		totalWeight += int64(max(weights[queue], 1))
+	}
+
+	// share carries one queue's floored allocation of the unreserved slots and
+	// the remainder that ranks it for a leftover slot.
+	type share struct {
+		queue     string
+		base      int32
+		remainder int64
+	}
+
+	spare := concurrency - reserved
+
+	var assigned int32
+
+	shares := make([]share, 0, len(queues))
+	for _, queue := range queues {
+		product := int64(spare) * int64(max(weights[queue], 1))
+		base := int32(product / totalWeight)
+		assigned += base
+
+		shares = append(shares, share{queue: queue, base: base, remainder: product % totalWeight})
+	}
+
+	// Hand the leftover slots to the largest remainders, breaking ties by queue
+	// name so the split is deterministic across re-registrations.
+	sort.Slice(shares, func(i, j int) bool {
+		if shares[i].remainder != shares[j].remainder {
+			return shares[i].remainder > shares[j].remainder
+		}
+
+		return shares[i].queue < shares[j].queue
+	})
+
+	leftover := spare - assigned
+	for index := range shares {
+		if leftover <= 0 {
+			break
+		}
+
+		shares[index].base++
+		leftover--
+	}
+
+	for _, entry := range shares {
+		capacities[entry.queue] = entry.base + 1
+	}
+
+	return capacities
 }
 
 // Receive bridges queue grain dispatches and worker frames.
@@ -283,31 +373,23 @@ func (g *Gateway) drain(ctx *goakt.ReceiveContext) {
 // grain. It runs at start and on every registerTick; re-registration only
 // refreshes capacity on the grain side, so credits are never double-granted.
 func (g *Gateway) register(ctx *goakt.ReceiveContext) {
-	goCtx := ctx.Context()
-	system := ctx.ActorSystem()
-
 	for _, queue := range g.session.Queues {
-		identity, err := goakt.GrainOf[*QueueGrain](goCtx, system, QueueGrainName(queue),
-			goakt.WithGrainDeactivateAfter(g.runtime.Settings().PassivateAfter))
-		if err != nil {
-			g.runtime.Logger().Warn("resolving queue grain failed; next tick retries", "queue", queue, "error", err)
-
-			continue
-		}
-
-		g.identities[queue] = identity
-
-		err = system.TellGrain(goCtx, identity, &conveyorv1.RegisterGateway{
+		registration := &conveyorv1.RegisterGateway{
 			Queue:       queue,
 			GatewayName: g.name,
-			Capacity:    g.session.Concurrency,
+			Capacity:    g.capacities[queue],
 			BatchTypes:  g.session.BatchTypes,
 			Weight:      g.session.Weights[queue],
-		})
-		if err != nil {
-			g.runtime.Logger().Warn("gateway registration failed; next tick retries", "queue", queue, "error", err)
 		}
+
+		tellQueueGrain(ctx.Context(), ctx.ActorSystem(), g.runtime, queue, registration, "gateway registration failed; next tick retries", nil)
 	}
+}
+
+// serves reports whether the session declared the queue; a report for any
+// other queue belongs to no grain this gateway registered with.
+func (g *Gateway) serves(queue string) bool {
+	return slices.Contains(g.session.Queues, queue)
 }
 
 // dispatch forwards one leased task down the worker stream and tracks it
@@ -621,7 +703,9 @@ func (g *Gateway) deferCompletion(ctx *goakt.ReceiveContext, queue, taskID strin
 
 // heartbeat extends the lease of every task the worker reports as still
 // executing. A lost lease means another delivery owns the task now: the
-// worker is told to cancel and the slot is reported back to the grain.
+// worker is told to cancel and the credit the delivery held returns to the
+// grain, since the worker's eventual result for it is dropped as unknown and
+// would otherwise never refill it.
 func (g *Gateway) heartbeat(ctx *goakt.ReceiveContext, message *conveyorv1.Heartbeat) {
 	goCtx := ctx.Context()
 	taskLog := g.runtime.Broker()
@@ -646,6 +730,7 @@ func (g *Gateway) heartbeat(ctx *goakt.ReceiveContext, message *conveyorv1.Heart
 
 		delete(g.inflight, taskID)
 		g.runtime.Counters().Active.Add(-1)
+		g.refundLostLease(ctx, entry)
 
 		cancel := &conveyorv1.ServerMessage{
 			Frame: &conveyorv1.ServerMessage_Cancel{Cancel: &conveyorv1.Cancel{TaskId: taskID}},
@@ -657,6 +742,39 @@ func (g *Gateway) heartbeat(ctx *goakt.ReceiveContext, message *conveyorv1.Heart
 
 		g.runtime.Logger().Debug("lease lost; worker canceled", "task_id", taskID, "gateway", g.name)
 	}
+}
+
+// refundLostLease returns the dispatch credit a delivery held when its lease
+// was lost to another delivery. The task did not complete here (the reclaiming
+// delivery owns it now), so no completion is reported and no outcome counted;
+// only the credit returns, capped at capacity by the grain. A batch holds one
+// credit for all its members: it returns once the last tracked member is gone,
+// and the batch bookkeeping entry goes with it.
+func (g *Gateway) refundLostLease(ctx *goakt.ReceiveContext, entry *inflightTask) {
+	if members, batched := g.batches[entry.leaseID]; batched {
+		for _, member := range members {
+			if _, tracked := g.inflight[member]; tracked {
+				return
+			}
+		}
+
+		delete(g.batches, entry.leaseID)
+	}
+
+	g.refillCredit(ctx, entry.queue)
+}
+
+// refillCredit hands one dispatch credit back to a queue grain without a
+// completion report, for a delivery this session no longer owns.
+func (g *Gateway) refillCredit(ctx *goakt.ReceiveContext, queue string) {
+	if !g.serves(queue) {
+		g.runtime.Logger().Warn("credit refill dropped: queue not registered", "queue", queue)
+
+		return
+	}
+
+	credit := &conveyorv1.GatewayCredit{Queue: queue, GatewayName: g.name, Credits: 1}
+	tellQueueGrain(ctx.Context(), ctx.ActorSystem(), g.runtime, queue, credit, "credit refill failed", nil)
 }
 
 // cancelActive forwards a best-effort Cancel frame for an admin-canceled
@@ -689,19 +807,14 @@ func (g *Gateway) cancelActive(message *conveyorv1.CancelActive) {
 // grain caps credits at the declared capacity, so this can never inflate
 // dispatch beyond what registration granted.
 func (g *Gateway) credit(ctx *goakt.ReceiveContext, message *conveyorv1.Credit) {
-	goCtx := ctx.Context()
-	system := ctx.ActorSystem()
-
-	for queue, identity := range g.identities {
+	for _, queue := range g.session.Queues {
 		grant := &conveyorv1.GatewayCredit{
 			Queue:       queue,
 			GatewayName: g.name,
 			Credits:     message.GetN(),
 		}
 
-		if err := system.TellGrain(goCtx, identity, grant); err != nil {
-			g.runtime.Logger().Warn("credit grant failed", "queue", queue, "error", err)
-		}
+		tellQueueGrain(ctx.Context(), ctx.ActorSystem(), g.runtime, queue, grant, "credit grant failed", nil)
 	}
 }
 
@@ -724,8 +837,7 @@ func (g *Gateway) resolveDependents(ctx *goakt.ReceiveContext, taskID string) {
 // reportCompletion tells the task's queue grain that one execution slot is
 // free again. The grain decrements its active count and refills one credit.
 func (g *Gateway) reportCompletion(ctx *goakt.ReceiveContext, queue, taskID string, success bool) {
-	identity, ok := g.identities[queue]
-	if !ok {
+	if !g.serves(queue) {
 		g.runtime.Logger().Warn("completion report dropped: queue not registered", "queue", queue, "task_id", taskID)
 
 		return
@@ -738,9 +850,7 @@ func (g *Gateway) reportCompletion(ctx *goakt.ReceiveContext, queue, taskID stri
 		GatewayName: g.name,
 	}
 
-	if err := ctx.ActorSystem().TellGrain(ctx.Context(), identity, completed); err != nil {
-		g.runtime.Logger().Warn("completion report failed", "task_id", taskID, "error", err)
-	}
+	tellQueueGrain(ctx.Context(), ctx.ActorSystem(), g.runtime, queue, completed, "completion report failed", nil, "task_id", taskID)
 }
 
 // GatewayHandle lets the session handler drive its gateway actor: worker

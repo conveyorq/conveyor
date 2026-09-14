@@ -1,0 +1,70 @@
+{{- if .Values.prometheusRule.enabled -}}
+# Requires the Prometheus Operator CRDs. Alert rules over the metrics conveyord
+# exposes on its metrics port, each written so it fires for the cluster rather
+# than per replica. Counters are per-node and are summed. conveyor_pending is
+# not: every node reads the same queue depth from the shared broker and reports
+# the identical value, so it is deduplicated with max by (queue) before the
+# queues are summed, or the backlog would read as replicaCount times its real
+# size.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "conveyor.fullname" . }}
+  labels:
+    {{- include "conveyor.labels" . | nindent 4 }}
+    {{- with .Values.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: conveyor
+      rules:
+        - alert: ConveyorNoNodes
+          expr: absent(conveyor_active)
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "No conveyord node is exposing metrics"
+            description: "conveyor_active has been absent for 5m: every node is down or unscraped, so nothing is dispatching."
+        - alert: ConveyorLeaseExpiryHigh
+          expr: sum(rate(conveyor_lease_expired_total[5m])) > {{ .Values.prometheusRule.leaseExpiredPerSecond }}
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Workers are losing task leases"
+            description: "The reaper is reclaiming expired leases in {{ "{{ $value | humanize }}" }} queues/s: workers are crashing or missing heartbeats, and each reclaim spends a retry."
+        - alert: ConveyorPendingBacklogHigh
+          expr: sum(max by (queue) (conveyor_pending)) > {{ .Values.prometheusRule.pendingBacklog }}
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Pending task backlog is high"
+            description: "{{ "{{ $value }}" }} tasks have been pending across the cluster for 15m: add worker capacity or check that workers are connected."
+        - alert: ConveyorBreakerOpen
+          expr: sum(rate(conveyor_breaker_open_total[5m])) > 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "A task type's circuit breaker is open"
+            description: "Completions are being deferred because a task type keeps failing; its downstream is likely down."
+        - alert: ConveyorEventsDropped
+          expr: sum(rate(conveyor_events_dropped_total[5m])) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Lifecycle events are being dropped"
+            description: "A WatchEvents consumer or the event webhook is too slow to keep up and is losing events."
+        - alert: ConveyorMaintenanceFailing
+          expr: sum by (pass) (rate(conveyor_maintenance_failures_total[5m])) > 0
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Maintenance pass {{ "{{ $labels.pass }}" }} keeps failing"
+            description: "The {{ "{{ $labels.pass }}" }} pass has failed on every tick for 10m, so its work (lease reclaim, purge, promotion, or cron) is not happening; check broker connectivity."
+{{- end }}

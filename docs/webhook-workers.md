@@ -79,7 +79,7 @@ conveyor webhooks delete billing-hooks
 | Name            | (first argument)    | Unique handle for the registration, e.g. `billing-hooks`.         |
 | URL             | (second argument)   | Delivery URL. `https` is required unless the server runs `--dev`. |
 | Queues          | `--queue name=w`    | Served queues and weights, like an SDK worker's. Repeatable.      |
-| Concurrency     | `--concurrency`     | Max in-flight tasks (sync requests plus accepted async). Min 1.   |
+| Concurrency     | `--concurrency`     | Max in-flight tasks across all served queues, split by weight (sync requests plus accepted async). Min 1. |
 | Secrets         | `--secret`          | Signing secret, newest first. Repeatable (two during rotation).   |
 | Batch types     | `--batch-type`      | Your own task-type names (not a fixed set) delivered as one batch when their group fires. Repeatable. |
 | Request timeout | `--request-timeout` | Synchronous response wait; server default (30s) when unset.       |
@@ -89,6 +89,12 @@ conveyor webhooks delete billing-hooks
 A registration with no secret is unsigned; provide at least one secret in any environment where the endpoint is reachable by anyone but you.
 
 Server config may declare registrations statically; declared entries are upserted by name at boot, so config and CLI/dashboard changes compose.
+
+### Endpoints must be public addresses
+
+A registration is an operator action, so an endpoint URL is something the server will fetch on an operator's behalf. To keep an admin token from turning the server into a probe of its own network, delivery refuses any endpoint that resolves to a loopback, link-local, private, or multicast address. Link-local covers the cloud metadata address `169.254.169.254`. The host is resolved at dial time and the approved address is pinned for the connection, so a name cannot be re-pointed at an internal target between the check and the request, and redirects are never followed.
+
+Set `webhooks.allow_private_targets: true` when the endpoints are private by design, which is the normal case for a worker running inside the same cluster or network as the server. The `--dev` preset turns it on already, since development endpoints are local.
 
 ## The delivery call
 

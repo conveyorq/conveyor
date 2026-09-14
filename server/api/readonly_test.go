@@ -56,6 +56,20 @@ func TestReadOnlyInterceptorBlocksMutations(t *testing.T) {
 	_, err = wrapped(context.Background(), stubRequest{procedure: conveyorv1connect.AdminServiceDeleteGroupConfigProcedure})
 	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
 
+	// The webhook-worker mutations are blocked too: registering a delivery
+	// target is the one admin write that makes the server call out.
+	for _, procedure := range []string{
+		conveyorv1connect.AdminServiceUpsertWebhookWorkerProcedure,
+		conveyorv1connect.AdminServicePauseWebhookWorkerProcedure,
+		conveyorv1connect.AdminServiceResumeWebhookWorkerProcedure,
+		conveyorv1connect.AdminServiceDeleteWebhookWorkerProcedure,
+	} {
+		_, err = wrapped(context.Background(), stubRequest{procedure: procedure})
+		require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err), procedure)
+	}
+
+	require.False(t, called)
+
 	// A read procedure passes through to the handler.
 	_, err = wrapped(context.Background(), stubRequest{procedure: conveyorv1connect.AdminServiceListTasksProcedure})
 	require.NoError(t, err)

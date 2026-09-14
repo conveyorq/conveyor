@@ -25,6 +25,8 @@ import (
 	"github.com/knadh/koanf/v2"
 
 	"github.com/conveyorq/conveyor/internal/backoff"
+	"github.com/conveyorq/conveyor/internal/webhook"
+	"github.com/conveyorq/conveyor/server/api"
 )
 
 // Deployment modes. Embedded mode is a Go package, not a conveyord mode,
@@ -41,14 +43,10 @@ const (
 	BrokerMemory   = "memory"
 )
 
-// Cluster discovery providers.
+// Cluster discovery providers that conveyord wires directly. Any other name
+// must be a custom provider registered through RegisterDiscovery.
 const (
 	DiscoveryStatic     = "static"
-	DiscoveryNATS       = "nats"
-	DiscoveryConsul     = "consul"
-	DiscoveryEtcd       = "etcd"
-	DiscoveryMDNS       = "mdns"
-	DiscoveryDNSSD      = "dnssd"
 	DiscoveryKubernetes = "kubernetes"
 )
 
@@ -109,6 +107,10 @@ const (
 	defaultGroupGracePeriod  = 10 * time.Second
 	defaultGroupSweep        = time.Second
 	defaultRateLimitEnabled  = true
+	// defaultArchiveRetention keeps dead-lettered and canceled tasks a week for
+	// inspection before the reaper purges them, bounding table growth without
+	// deleting the dead-letter queue out from under an operator.
+	defaultArchiveRetention = 7 * 24 * time.Hour
 	// defaultEventsEnabled is off: nothing consumes the stream out of the box, so
 	// a production node pays no per-transition cost until an operator opts in
 	// (a webhook or a live watcher). The --dev preset turns it on.
@@ -142,6 +144,19 @@ type Config struct {
 	Events EventsConfig `koanf:"events"`
 	// WebhookWorkers declares webhook worker registrations seeded at boot.
 	WebhookWorkers []WebhookWorkerConfig `koanf:"webhook_workers"`
+	// Webhooks configures behavior shared by every webhook worker.
+	Webhooks WebhooksConfig `koanf:"webhooks"`
+}
+
+// WebhooksConfig configures behavior shared by every webhook worker
+// registration.
+type WebhooksConfig struct {
+	// AllowPrivateTargets permits webhook delivery to private, loopback, and
+	// link-local addresses. It defaults off so a registration cannot point the
+	// server at internal services (an SSRF vector); enable it only for a
+	// development or in-cluster deployment whose endpoints are private by
+	// design.
+	AllowPrivateTargets bool `koanf:"allow_private_targets"`
 }
 
 // EventsConfig configures the task lifecycle event stream and the optional
@@ -219,6 +234,28 @@ type BrokerConfig struct {
 	Driver string `koanf:"driver"`
 	// DSN is the database connection string (required for postgres).
 	DSN string `koanf:"dsn"`
+	// Pool tunes the Postgres connection pool; the memory driver ignores it.
+	Pool PoolConfig `koanf:"pool"`
+}
+
+// PoolConfig tunes the Postgres connection pool. Every field is optional: a
+// zero value leaves the driver's own default in place, and a DSN parameter for
+// the same setting is overridden only when the field is set.
+type PoolConfig struct {
+	// MaxConns caps the open connections per conveyord node. Every node opens
+	// its own pool against the same database, so the database must admit
+	// replicas × max_conns. Zero keeps the driver default.
+	MaxConns int32 `koanf:"max_conns"`
+	// MinConns is the number of idle connections the pool keeps warm. Zero
+	// keeps the driver default.
+	MinConns int32 `koanf:"min_conns"`
+	// ConnectTimeout bounds establishing one connection. Zero keeps the driver
+	// default.
+	ConnectTimeout time.Duration `koanf:"connect_timeout"`
+	// StatementTimeout is the server-side statement_timeout applied to every
+	// connection, so a runaway query fails instead of holding a pool slot and
+	// stalling dispatch. Zero leaves statements unbounded.
+	StatementTimeout time.Duration `koanf:"statement_timeout"`
 }
 
 // TLSConfig points at a certificate/key pair; both fields are set or none.
@@ -241,10 +278,18 @@ type APIConfig struct {
 	Listen string `koanf:"listen"`
 	// TLS optionally enables TLS on the API port.
 	TLS TLSConfig `koanf:"tls"`
-	// AuthTokens are accepted bearer tokens. An empty list disables
-	// authentication, which is intended for development only and logged
-	// loudly at startup.
+	// AuthTokens are accepted bearer tokens with full access to every service
+	// (produce, consume, and admin). An empty list, together with an empty
+	// ScopedTokens, disables authentication, which is intended for development
+	// only and logged loudly at startup. For least-privilege tokens, use
+	// ScopedTokens instead.
 	AuthTokens []string `koanf:"auth_tokens"`
+	// ScopedTokens are accepted bearer tokens restricted to named scopes
+	// ("produce", "consume", "admin"), so a producer, a worker, and an operator
+	// can each hold a token that reaches only its own service. Because each
+	// entry is a token with its own scope list, ScopedTokens is set from the
+	// config file rather than a single environment variable.
+	ScopedTokens []ScopedTokenConfig `koanf:"scoped_tokens"`
 	// AllowUnauthenticated permits the API to run with authentication
 	// disabled (no AuthTokens). It must be set explicitly: outside the
 	// `--dev` preset, an empty AuthTokens without this flag fails validation,
@@ -269,6 +314,16 @@ type APIConfig struct {
 	// actions) is rejected. The dashboard reads this flag and hides its action
 	// controls. Task ingestion through the enqueue API is unaffected.
 	ReadOnly bool `koanf:"read_only"`
+}
+
+// ScopedTokenConfig declares one bearer token restricted to named scopes.
+type ScopedTokenConfig struct {
+	// Token is the bearer token value presented in the Authorization header.
+	Token string `koanf:"token"`
+	// Scopes lists the services the token may call: "produce" (enqueue),
+	// "consume" (worker sessions), and "admin" (administration). At least one
+	// is required.
+	Scopes []string `koanf:"scopes"`
 }
 
 // ClusterConfig configures GoAkt clustering.
@@ -358,6 +413,10 @@ type EngineConfig struct {
 	RateLimitRatePerSec float64 `koanf:"rate_limit_rate_per_sec"`
 	// RateLimitBurst is the global default token-bucket depth.
 	RateLimitBurst int `koanf:"rate_limit_burst"`
+	// ArchiveRetention is how long archived (dead-lettered) and canceled tasks
+	// are kept before the reaper purges them. Zero keeps them forever. Completed
+	// tasks follow their own per-task retention, not this value.
+	ArchiveRetention time.Duration `koanf:"archive_retention"`
 }
 
 // LogConfig configures structured logging.
@@ -412,6 +471,7 @@ func DefaultConfig() *Config {
 			GroupGracePeriod:     defaultGroupGracePeriod,
 			GroupSweepInterval:   defaultGroupSweep,
 			RateLimitEnabled:     defaultRateLimitEnabled,
+			ArchiveRetention:     defaultArchiveRetention,
 		},
 		Log:     LogConfig{Level: LogLevelInfo, Format: LogFormatJSON},
 		Otel:    OtelConfig{ServiceName: defaultOtelServiceName},
@@ -435,6 +495,9 @@ func DevConfig() *Config {
 	// Dev turns the lifecycle event stream on so the local experience (and
 	// `conveyor events`) is events-first; production leaves it off by default.
 	config.Events.Enabled = true
+	// Dev endpoints are local by design, so permit webhook delivery to private
+	// and loopback addresses; production keeps the SSRF guard on by default.
+	config.Webhooks.AllowPrivateTargets = true
 
 	return config
 }
@@ -552,6 +615,79 @@ func validateRetryBackoff(engine EngineConfig) error {
 	return nil
 }
 
+// validateAuth checks the API authentication configuration: a token is present
+// unless unauthenticated access is explicitly permitted, every full-access
+// token is non-empty, every scoped token is well-formed, and no token value is
+// declared twice.
+func (c *Config) validateAuth() error {
+	if c.AuthDisabled() && !c.API.AllowUnauthenticated {
+		return fmt.Errorf("api.auth_tokens: set at least one token, or set api.allow_unauthenticated to run the API without authentication (the --dev preset does this)")
+	}
+
+	for index, token := range c.API.AuthTokens {
+		if token == "" {
+			return fmt.Errorf("api.auth_tokens[%d]: must not be empty", index)
+		}
+	}
+
+	if err := validateScopedTokens(c.API.ScopedTokens); err != nil {
+		return err
+	}
+
+	return validateTokensAreDistinct(c.API)
+}
+
+// validateTokensAreDistinct rejects a token value declared more than once across
+// api.auth_tokens and api.scoped_tokens. The interceptor takes the first entry
+// that matches, and full-access tokens are registered first, so a token left in
+// auth_tokens while also being given a narrow scope list would silently keep
+// full access: an operator who believes they have demoted a credential would
+// still be handing out every admin RPC. Refusing the ambiguity at startup is the
+// only way that mistake surfaces.
+func validateTokensAreDistinct(config APIConfig) error {
+	seen := make(map[string]string, len(config.AuthTokens)+len(config.ScopedTokens))
+
+	for index, token := range config.AuthTokens {
+		seen[token] = fmt.Sprintf("api.auth_tokens[%d]", index)
+	}
+
+	for index, entry := range config.ScopedTokens {
+		key := fmt.Sprintf("api.scoped_tokens[%d]", index)
+
+		if first, duplicate := seen[entry.Token]; duplicate {
+			return fmt.Errorf("%s.token: the same token is already declared at %s; a token must appear once, or only its first declaration applies", key, first)
+		}
+
+		seen[entry.Token] = key
+	}
+
+	return nil
+}
+
+// validateScopedTokens checks every scoped bearer token: a non-empty token
+// value and at least one recognized scope.
+func validateScopedTokens(tokens []ScopedTokenConfig) error {
+	for index, entry := range tokens {
+		key := fmt.Sprintf("api.scoped_tokens[%d]", index)
+
+		if entry.Token == "" {
+			return fmt.Errorf("%s.token: must not be empty", key)
+		}
+
+		if len(entry.Scopes) == 0 {
+			return fmt.Errorf("%s.scopes: at least one scope is required", key)
+		}
+
+		for _, scope := range entry.Scopes {
+			if _, ok := api.ParseScope(scope); !ok {
+				return fmt.Errorf("%s.scopes: %q is not one of %q, %q, %q", key, scope, api.ScopeProduce, api.ScopeConsume, api.ScopeAdmin)
+			}
+		}
+	}
+
+	return nil
+}
+
 // webhookWorkerNamePattern restricts registration names to what actor
 // identity names accept, the same grammar queue names follow.
 var webhookWorkerNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9-_.]*$`)
@@ -561,8 +697,11 @@ var webhookWorkerNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9-_.]*$`
 // positive weight, a positive concurrency, at least one secret, and a
 // non-negative timeout. Plaintext http URLs pass only when allowInsecure is
 // set (an unauthenticated development server): signed deliveries over
-// cleartext would hand the payload to the network.
-func validateWebhookWorkers(workers []WebhookWorkerConfig, allowInsecure bool) error {
+// cleartext would hand the payload to the network. A URL whose host is a
+// non-public IP literal is rejected unless allowPrivate is set, closing the
+// obvious server-side request forgery target; a hostname is verified against
+// its resolved address at dial time.
+func validateWebhookWorkers(workers []WebhookWorkerConfig, allowInsecure bool, allowPrivate bool) error {
 	names := make(map[string]bool, len(workers))
 
 	for index, worker := range workers {
@@ -585,6 +724,10 @@ func validateWebhookWorkers(workers []WebhookWorkerConfig, allowInsecure bool) e
 
 		if parsed.Scheme == "http" && !allowInsecure {
 			return fmt.Errorf("%s.url: plaintext http requires an unauthenticated development server; use https, got %q", key, worker.URL)
+		}
+
+		if err := webhook.CheckURLTarget(worker.URL, allowPrivate); err != nil {
+			return fmt.Errorf("%s.url: %w", key, err)
 		}
 
 		if len(worker.Queues) == 0 {
@@ -649,13 +792,8 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("mode: %q is not one of %v", c.Mode, modes)
 	}
 
-	drivers := []string{BrokerPostgres, BrokerMemory}
-	if !slices.Contains(drivers, c.Broker.Driver) {
-		return fmt.Errorf("broker.driver: %q is not one of %v", c.Broker.Driver, drivers)
-	}
-
-	if c.Broker.Driver == BrokerPostgres && c.Broker.DSN == "" {
-		return fmt.Errorf("broker.dsn: required when broker.driver is %q", BrokerPostgres)
+	if err := c.Broker.validate(); err != nil {
+		return err
 	}
 
 	if c.API.Listen == "" {
@@ -666,14 +804,11 @@ func (c *Config) Validate() error {
 		return err
 	}
 
-	if c.AuthDisabled() && !c.API.AllowUnauthenticated {
-		return fmt.Errorf("api.auth_tokens: set at least one token, or set api.allow_unauthenticated to run the API without authentication (the --dev preset does this)")
+	if err := c.validateAuth(); err != nil {
+		return err
 	}
 
-	providers := []string{
-		DiscoveryStatic, DiscoveryNATS, DiscoveryConsul, DiscoveryEtcd,
-		DiscoveryMDNS, DiscoveryDNSSD, DiscoveryKubernetes,
-	}
+	providers := []string{DiscoveryStatic, DiscoveryKubernetes}
 
 	if !slices.Contains(providers, c.Cluster.Discovery) {
 		if _, ok := lookupDiscovery(c.Cluster.Discovery); !ok {
@@ -740,6 +875,10 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("engine.default_max_retry: must not be negative, got %d", c.Engine.DefaultMaxRetry)
 	}
 
+	if c.Engine.ArchiveRetention < 0 {
+		return fmt.Errorf("engine.archive_retention: must not be negative, got %s", c.Engine.ArchiveRetention)
+	}
+
 	if err := validateRateLimitDefault(c.Engine); err != nil {
 		return err
 	}
@@ -752,7 +891,7 @@ func (c *Config) Validate() error {
 		return err
 	}
 
-	if err := validateWebhookWorkers(c.WebhookWorkers, c.AuthDisabled()); err != nil {
+	if err := validateWebhookWorkers(c.WebhookWorkers, c.AuthDisabled(), c.Webhooks.AllowPrivateTargets); err != nil {
 		return err
 	}
 
@@ -769,9 +908,58 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// AuthDisabled reports whether the API accepts unauthenticated requests.
+// AuthDisabled reports whether the API accepts unauthenticated requests: no
+// full-access tokens and no scoped tokens are configured.
 func (c *Config) AuthDisabled() bool {
-	return len(c.API.AuthTokens) == 0
+	return len(c.API.AuthTokens) == 0 && len(c.API.ScopedTokens) == 0
+}
+
+// validate checks the broker block: a known driver, a DSN whenever the driver
+// needs one, and well-formed pool knobs.
+func (b *BrokerConfig) validate() error {
+	drivers := []string{BrokerPostgres, BrokerMemory}
+	if !slices.Contains(drivers, b.Driver) {
+		return fmt.Errorf("broker.driver: %q is not one of %v", b.Driver, drivers)
+	}
+
+	if b.Driver == BrokerPostgres && b.DSN == "" {
+		return fmt.Errorf("broker.dsn: required when broker.driver is %q", BrokerPostgres)
+	}
+
+	return b.Pool.validate()
+}
+
+// validate checks the pool knobs: none may be negative, and a minimum
+// connection count may not exceed an explicit maximum.
+func (p *PoolConfig) validate() error {
+	if p.MaxConns < 0 {
+		return fmt.Errorf("broker.pool.max_conns: must not be negative, got %d", p.MaxConns)
+	}
+
+	if p.MinConns < 0 {
+		return fmt.Errorf("broker.pool.min_conns: must not be negative, got %d", p.MinConns)
+	}
+
+	if p.MaxConns > 0 && p.MinConns > p.MaxConns {
+		return fmt.Errorf("broker.pool.min_conns: %d exceeds max_conns %d", p.MinConns, p.MaxConns)
+	}
+
+	if p.ConnectTimeout < 0 {
+		return fmt.Errorf("broker.pool.connect_timeout: must not be negative, got %s", p.ConnectTimeout)
+	}
+
+	if p.StatementTimeout < 0 {
+		return fmt.Errorf("broker.pool.statement_timeout: must not be negative, got %s", p.StatementTimeout)
+	}
+
+	// Postgres takes statement_timeout in whole milliseconds and reads zero as
+	// "no limit". A sub-millisecond value would truncate to zero and silently
+	// turn the timeout off, the opposite of what was asked for.
+	if p.StatementTimeout > 0 && p.StatementTimeout < time.Millisecond {
+		return fmt.Errorf("broker.pool.statement_timeout: must be at least 1ms, got %s", p.StatementTimeout)
+	}
+
+	return nil
 }
 
 // validate checks that a TLS block names both halves of the pair or neither.

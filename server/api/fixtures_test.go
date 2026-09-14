@@ -58,11 +58,12 @@ func startTestEngine(t *testing.T) (*actors.Engine, broker.Broker) {
 		PeersPort:     ports[2],
 		Provider:      static.NewDiscovery(&static.Config{Hosts: []string{self}}),
 		Settings: actors.Settings{
-			LeaseTTL:        2 * time.Second,
-			LeaseBatchMax:   100,
-			ReapInterval:    200 * time.Millisecond,
-			PromoteInterval: 100 * time.Millisecond,
-			PassivateAfter:  5 * time.Minute,
+			LeaseTTL:                   2 * time.Second,
+			LeaseBatchMax:              100,
+			ReapInterval:               200 * time.Millisecond,
+			PromoteInterval:            100 * time.Millisecond,
+			PassivateAfter:             5 * time.Minute,
+			AllowPrivateWebhookTargets: true,
 		},
 	})
 
@@ -84,7 +85,13 @@ func startAPIServer(t *testing.T, engine *actors.Engine, taskLog broker.Broker, 
 
 	var options []connect.HandlerOption
 	if len(tokens) > 0 {
-		options = append(options, connect.WithInterceptors(NewAuthInterceptor(tokens)))
+		scoped := make([]ScopedToken, 0, len(tokens))
+
+		for _, token := range tokens {
+			scoped = append(scoped, ScopedToken{Token: token, Scopes: AllScopes()})
+		}
+
+		options = append(options, connect.WithInterceptors(NewAuthInterceptor(scoped)))
 	}
 
 	mux := http.NewServeMux()
@@ -93,7 +100,7 @@ func startAPIServer(t *testing.T, engine *actors.Engine, taskLog broker.Broker, 
 	workerService := NewWorkerService(engine, slog.New(slog.DiscardHandler), clock.System())
 	mux.Handle(conveyorv1connect.NewWorkerServiceHandler(workerService, options...))
 	mux.Handle(conveyorv1connect.NewAdminServiceHandler(
-		NewAdminService(engine, taskLog, clock.System(), workerService, true), options...))
+		NewAdminService(engine, taskLog, clock.System(), workerService, true, false), options...))
 	// Lease-token authenticated, mounted without the bearer interceptor,
 	// mirroring production.
 	mux.Handle(conveyorv1connect.NewWebhookServiceHandler(NewWebhookService(engine, taskLog)))

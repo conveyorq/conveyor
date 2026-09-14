@@ -44,6 +44,19 @@ broker:
   dsnSecret:
     name: ""
     key: dsn
+  # pool tunes the Postgres connection pool. Every node opens its own pool
+  # against the same database, so the database must admit
+  # replicaCount × maxConns. A zero or empty value keeps the driver default.
+  pool:
+    # maxConns caps open connections per node.
+    maxConns: 0
+    # minConns is the number of idle connections kept warm.
+    minConns: 0
+    # connectTimeout bounds establishing one connection.
+    connectTimeout: 0s
+    # statementTimeout is the server-side statement_timeout on every
+    # connection, so a runaway query fails instead of holding a pool slot.
+    statementTimeout: 0s
 
 auth:
   # tokens are accepted API bearer tokens. With no tokens (and no
@@ -106,8 +119,22 @@ engine:
   passivateAfter: 5m
   # defaultMaxRetry applies to tasks that do not set their own max_retry.
   defaultMaxRetry: 25
+  # archiveRetention is how long archived (dead-lettered) and canceled tasks
+  # are kept before the reaper purges them; 0s keeps them forever. Completed
+  # tasks follow their own per-task retention.
+  archiveRetention: 168h
   # shutdownTimeout bounds graceful drain of the whole node on SIGTERM.
   shutdownTimeout: 30s
+
+# webhooks configures behaviour shared by every webhook worker registration.
+webhooks:
+  # allowPrivateTargets permits webhook delivery to private, loopback, and
+  # link-local endpoints. It defaults off so an admin token cannot aim the
+  # server at internal services. Turn it on when the webhook endpoints are
+  # private by design, which is the usual case for workers running in this
+  # cluster: a Service address resolves to a private ClusterIP and is refused
+  # while this is false.
+  allowPrivateTargets: false
 
 log:
   # level is one of debug, info, warn, error.
@@ -176,6 +203,52 @@ serviceMonitor:
 # pods while leaving the API port open. Review before enabling in production.
 networkPolicy:
   enabled: false
+
+# prometheusRule ships alert rules for the Prometheus Operator: lease expiry
+# (workers losing leases), pending backlog, an open task-type circuit breaker,
+# dropped lifecycle events, maintenance passes failing, and no node exposing
+# metrics. Opt-in because it needs the Operator's CRD installed.
+prometheusRule:
+  enabled: false
+  # labels are stamped on the PrometheusRule so an Operator instance selects it
+  # (for example release: prometheus).
+  labels: {}
+  # pendingBacklog is the cluster-wide pending task count that pages.
+  pendingBacklog: 1000
+  # leaseExpiredPerSecond is the rate that pages, counted in queues where the
+  # reaper reclaimed at least one expired lease on a tick, not in individual
+  # leases: one busy queue losing many leases scores the same as one losing a
+  # single lease. It is a signal that workers are crashing or missing
+  # heartbeats, and each reclaim spends one of the task's retries.
+  leaseExpiredPerSecond: 0.1
+
+# workerAutoscaling creates an optional KEDA ScaledObject that scales your
+# worker Deployment on queue backlog, the conveyor_pending gauge conveyord
+# already exports. Workers run outside this chart, so scaleTargetRef must name
+# your own worker Deployment. It needs KEDA installed and a Prometheus scraping
+# conveyord's metrics port, so it stays opt-in (enabling it without KEDA's CRD
+# fails the install).
+workerAutoscaling:
+  enabled: false
+  # scaleTargetRef is the name of the worker Deployment to scale; required when
+  # enabled.
+  scaleTargetRef: ""
+  # minReplicaCount / maxReplicaCount bound the worker replica count.
+  minReplicaCount: 2
+  maxReplicaCount: 20
+  # cooldownPeriod is the seconds to wait after the last trigger before scaling
+  # back down.
+  cooldownPeriod: 120
+  # prometheusAddress is the in-cluster Prometheus query endpoint.
+  prometheusAddress: http://prometheus.monitoring.svc:9090
+  # query is the PromQL backlog signal; scope it by queue label if a subset of
+  # queues should drive scaling. Every conveyord node reports the same
+  # broker-wide depth, so the inner max deduplicates the replicas before the
+  # queues are summed; a plain sum would scale on replicaCount times the real
+  # backlog.
+  query: sum(max by (queue) (conveyor_pending))
+  # threshold is the approximate pending tasks per worker replica.
+  threshold: "100"
 
 resources:
   requests:

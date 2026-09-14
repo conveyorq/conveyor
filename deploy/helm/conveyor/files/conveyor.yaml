@@ -17,6 +17,13 @@ mode: {{ .Values.mode }}
 broker:
   # Broker driver: postgres or memory. The DSN arrives via CONVEYOR_BROKER__DSN.
   driver: {{ .Values.broker.driver }}
+  # Postgres connection pool. Zero keeps the driver default; the database must
+  # admit replicaCount × max_conns because every node opens its own pool.
+  pool:
+    max_conns: {{ .Values.broker.pool.maxConns }}
+    min_conns: {{ .Values.broker.pool.minConns }}
+    connect_timeout: {{ .Values.broker.pool.connectTimeout }}
+    statement_timeout: {{ .Values.broker.pool.statementTimeout }}
 
 api:
   # Public ConnectRPC + health listener.
@@ -88,9 +95,19 @@ engine:
   passivate_after: {{ .Values.engine.passivateAfter }}
   # Retry budget for tasks that do not set their own max_retry.
   default_max_retry: {{ .Values.engine.defaultMaxRetry }}
+  # How long archived (dead-lettered) and canceled tasks are kept before the
+  # reaper purges them; 0s keeps them forever.
+  archive_retention: {{ .Values.engine.archiveRetention }}
   # Bound on graceful drain of the whole node on SIGTERM. The pod's
   # terminationGracePeriodSeconds must exceed this.
   shutdown_timeout: {{ .Values.engine.shutdownTimeout }}
+
+webhooks:
+  # Permit webhook delivery to private, loopback, and link-local endpoints.
+  # Off by default so an admin token cannot aim the server at internal
+  # services; turn it on for endpoints that are private by design, such as a
+  # worker Service in this cluster.
+  allow_private_targets: {{ .Values.webhooks.allowPrivateTargets }}
 
 log:
   # One of debug, info, warn, error.

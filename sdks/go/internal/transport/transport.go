@@ -17,6 +17,14 @@ import (
 	"github.com/conveyorq/conveyor/internal/wire"
 )
 
+// maxReadBytes bounds the size of one message the client decodes from the
+// server, so a malformed or hostile server cannot exhaust client memory. It
+// mirrors the server's request ceiling (server/api.MaxRequestBytes): the largest
+// legitimate frame is a full batch — 1000 tasks at the 1 MiB payload cap plus
+// per-task field overhead. It lives here rather than importing the server, which
+// SDK consumers must not pull in.
+const maxReadBytes = 1000 * (1<<20 + 64<<10)
+
 // Client is the SDK's wire client: task RPCs and worker sessions over one
 // HTTP/2 connection pool.
 type Client struct {
@@ -33,7 +41,7 @@ type Client struct {
 func New(baseURL, token string) *Client {
 	httpClient := wire.NewH2CClient()
 
-	var options []connect.ClientOption
+	options := []connect.ClientOption{connect.WithReadMaxBytes(maxReadBytes)}
 	if token != "" {
 		options = append(options, connect.WithInterceptors(wire.NewBearerInterceptor(token)))
 	}

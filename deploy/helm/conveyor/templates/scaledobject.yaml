@@ -1,0 +1,28 @@
+{{- if .Values.workerAutoscaling.enabled -}}
+{{- if not .Values.workerAutoscaling.scaleTargetRef -}}
+{{- fail "workerAutoscaling.enabled requires workerAutoscaling.scaleTargetRef (the name of your worker Deployment)" -}}
+{{- end -}}
+# Requires the KEDA CRDs. Scales your worker Deployment on queue backlog, read
+# from conveyord's conveyor_pending gauge through Prometheus. Workers run
+# outside this chart, so scaleTargetRef names your own Deployment.
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ include "conveyor.fullname" . }}-worker
+  labels:
+    {{- include "conveyor.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    name: {{ .Values.workerAutoscaling.scaleTargetRef }}
+  minReplicaCount: {{ .Values.workerAutoscaling.minReplicaCount }}
+  maxReplicaCount: {{ .Values.workerAutoscaling.maxReplicaCount }}
+  cooldownPeriod: {{ .Values.workerAutoscaling.cooldownPeriod }}
+  triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: {{ .Values.workerAutoscaling.prometheusAddress | quote }}
+        # Total backlog; scope by queue label if a subset should drive scaling.
+        query: {{ .Values.workerAutoscaling.query | quote }}
+        # Approximate pending tasks per worker replica.
+        threshold: {{ .Values.workerAutoscaling.threshold | quote }}
+{{- end }}

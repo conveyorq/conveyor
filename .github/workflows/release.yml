@@ -2,8 +2,9 @@ name: release
 
 # Publishes the conveyor container image to the GitHub Container Registry and,
 # for releases, the Helm chart. This workflow runs in three ways:
-#   - push to main          -> rebuilds the :<short-sha> image when something
-#                              baked into the image changed (see `changes`).
+#   - push to main          -> rebuilds the :<short-sha> image and moves the
+#                              :edge tag onto it when something baked into the
+#                              image changed (see `changes`).
 #   - push of a v* tag       -> publishes the :X.Y.Z image + chart (covers a tag
 #                              pushed manually with git).
 #   - workflow_call/_dispatch with a `tag` input -> publishes the :X.Y.Z image +
@@ -18,10 +19,14 @@ name: release
 # Each build produces a single multi-arch image (amd64 + arm64). A multi-arch
 # image is an index that references one manifest per architecture, so GHCR always
 # lists those per-arch manifests as untagged versions next to the tag:
+#   - main build   -> :<short-sha>   plus the moving :edge tag (latest main)
 #   - branch build -> :<short-sha>   (a single tag: the 7-char commit)
 #   - release build -> :X.Y.Z        (the release version, nothing else)
-# No SBOM/provenance attestations are attached (each would add another untagged
-# manifest); the originating commit is still recorded as the OCI
+# The build attaches an SBOM and SLSA provenance and signs the image with cosign
+# (keyless). These attach extra untagged manifests to the package listing; the
+# cleanup job prunes only genuinely orphaned versions and keeps the ones a tagged
+# image references (per-arch children, attestations, and .sig signatures). The
+# originating commit is also recorded as the OCI
 # org.opencontainers.image.revision label.
 #
 # On a release build it also packages and pushes the Helm chart as an OCI artifact
@@ -182,11 +187,13 @@ jobs:
         uses: docker/metadata-action@v6
         with:
           images: ${{ env.IMAGE }}
+          # main build    -> :<7-char short commit SHA> and the moving :edge tag
           # branch build  -> a single tag: the 7-char short commit SHA (no "sha-" prefix)
           # release build -> :X.Y.Z only (latest=false, so no :latest is added)
           flavor: latest=false
           tags: |
             type=sha,format=short,prefix=,enable=${{ needs.setup.outputs.is_release != 'true' }}
+            type=raw,value=edge,enable=${{ needs.setup.outputs.is_release != 'true' && github.ref == 'refs/heads/main' }}
             type=semver,pattern={{version}},value=${{ needs.setup.outputs.ref }},enable=${{ needs.setup.outputs.is_release == 'true' }}
 
       - id: build
@@ -201,9 +208,21 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             VERSION=${{ steps.meta.outputs.version }}
-          # No SBOM/provenance attestations: each attaches an extra untagged
-          # manifest per platform to the package listing.
-          provenance: false
+          # Attach an SBOM and full SLSA provenance to the published image. Each
+          # adds an untagged manifest to the package listing; the cleanup job
+          # keeps the ones a tagged image references and prunes only orphans.
+          sbom: true
+          provenance: mode=max
+
+      - uses: sigstore/cosign-installer@v4.1.2
+        name: Install cosign
+      - name: Sign the published image
+        # Sign the pushed multi-arch index by digest with cosign keyless, using
+        # the job's OIDC token; consumers verify against the GitHub Actions
+        # issuer. Signing the digest covers whichever tag was published.
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: cosign sign --yes "${IMAGE}@${DIGEST}"
 
   publish-chart:
     name: Package & publish Helm chart

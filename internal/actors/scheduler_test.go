@@ -9,6 +9,8 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -42,16 +44,52 @@ func (s tellFailSystem) TellGrain(context.Context, *goakt.GrainIdentity, any) er
 
 // newBufferRuntime builds a runtime whose logger writes to the returned buffer,
 // so wakeQueue's swallowed warnings can be asserted on.
-func newBufferRuntime(t *testing.T) (*bytes.Buffer, *Runtime) {
+func newBufferRuntime(t *testing.T) (*syncBuffer, *Runtime) {
 	t.Helper()
 
 	taskLog := memory.New(clock.System())
 	t.Cleanup(func() { _ = taskLog.Close() })
 
-	logs := new(bytes.Buffer)
+	logs := new(syncBuffer)
 	logger := slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
 	return logs, NewRuntime(taskLog, clock.System(), testSettings, logger)
+}
+
+// syncBuffer is a log sink a test can read while goroutines still write to
+// it: the grain tells the actors make run off their turns, so their failure
+// logs land after the call that triggered them returns.
+type syncBuffer struct {
+	// mutex guards buffer.
+	mutex sync.Mutex
+	// buffer holds the written log lines.
+	buffer bytes.Buffer
+}
+
+// Write implements io.Writer.
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	return b.buffer.Write(p)
+}
+
+// String returns everything written so far.
+func (b *syncBuffer) String() string {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	return b.buffer.String()
+}
+
+// requireLogged waits for a log line containing want, since the tells that
+// produce these logs run off the calling turn.
+func requireLogged(t *testing.T, logs *syncBuffer, want string) {
+	t.Helper()
+
+	require.Eventually(t, func() bool {
+		return strings.Contains(logs.String(), want)
+	}, 10*time.Second, 10*time.Millisecond, "expected a log line containing %q, got:\n%s", want, logs.String())
 }
 
 // startWakeSystem starts a live single-node actor system carrying the runtime
@@ -84,7 +122,7 @@ func TestWakeQueueLogsResolveAndTellFailures(t *testing.T) {
 	require.NoError(t, err)
 
 	wakeQueue(ctx, unstarted, resolveRuntime, "q", 0)
-	require.Contains(t, resolveLogs.String(), "resolving queue grain failed")
+	requireLogged(t, resolveLogs, "resolving queue grain failed")
 
 	// Tell-failure branch: resolution succeeds against a live system, but the
 	// wake-up tell fails.
@@ -92,7 +130,7 @@ func TestWakeQueueLogsResolveAndTellFailures(t *testing.T) {
 	system := startWakeSystem(t, tellRuntime)
 
 	wakeQueue(ctx, tellFailSystem{ActorSystem: system, err: errors.New("tell down")}, tellRuntime, "q", 0)
-	require.Contains(t, tellLogs.String(), "waking queue grain failed")
+	requireLogged(t, tellLogs, "waking queue grain failed")
 }
 
 func TestSchedulerIgnoresUnknownMessage(t *testing.T) {

@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import random
+import re
 import signal
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -28,9 +29,17 @@ from .task import Task
 #: The SDK version reported in Hello.
 SDK_VERSION = "conveyor-py/0.1.0"
 
+# Queue names the server accepts, per the wire protocol. Validating the same
+# shape locally turns a name the server would refuse into a construction error
+# instead of a session rejected on every reconnect.
+_QUEUE_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9\-_.]*$")
+
 # Reconnection backoff (full jitter), per the wire protocol section 5.9.
 _RECONNECT_BASE = 0.5
 _RECONNECT_MAX = 30.0
+# The exponent is capped so a long outage cannot grow the ceiling past what a
+# float holds; the delay saturates at _RECONNECT_MAX long before this.
+_RECONNECT_MAX_EXPONENT = 16
 
 # Default lease/heartbeat fallbacks when Welcome omits them (seconds).
 _DEFAULT_LEASE_TTL = 60.0
@@ -39,13 +48,20 @@ _DEFAULT_HEARTBEAT = 20.0
 # How long graceful drain waits for in-flight tasks before closing the stream.
 _DRAIN_GRACE = 25.0
 
+# After the grace window expires, how long to let the handlers that were aborted
+# report RELEASED before the stream closes. Anything still unreported is released
+# by the server on stream close.
+_DRAIN_SETTLE = 2.0
+
 # After half-closing on drain, how long to let the server end the stream cleanly
 # before forcing the call down so run() cannot hang.
 _CLOSE_GRACE = 5.0
 
 # gRPC status codes that must stop the worker rather than trigger a reconnect:
 # bad auth, or a server-side rejection of the session contract (an outdated SDK
-# version, a malformed Hello, an unmet minimum server version). gRPC does not
+# version, a malformed Hello, an unmet minimum server version). This is the set
+# the wire protocol names, and it matches the Go and TypeScript SDKs. Every other
+# code, FAILED_PRECONDITION included, is transient and reconnects. gRPC does not
 # synthesize INVALID_ARGUMENT for a severed connection (that surfaces as
 # UNAVAILABLE), so an INVALID_ARGUMENT here always came from the server.
 _FATAL_CODES = frozenset(
@@ -88,6 +104,19 @@ class Worker:
     ) -> None:
         if not queues:
             raise ConveyorError("conveyor: a worker must declare at least one queue")
+
+        # Validate the session contract locally so a Hello the server would
+        # reject fails fast here rather than becoming an endless reconnect loop
+        # against a permanent INVALID_ARGUMENT.
+        for name, weight in queues.items():
+            if not _QUEUE_NAME_PATTERN.fullmatch(name):
+                raise ConveyorError(
+                    f"conveyor: queue name {name!r} must start with a letter or digit "
+                    "and contain only letters, digits, '-', '_' or '.'"
+                )
+
+            if weight <= 0:
+                raise ConveyorError(f"conveyor: queue {name} weight must be positive, got {weight}")
 
         if concurrency <= 0:
             raise ConveyorError("conveyor: worker concurrency must be positive")
@@ -213,6 +242,15 @@ class _Session:
 
         self._outbound: "asyncio.Queue[Optional[service_pb2.WorkerMessage]]" = asyncio.Queue()
         self._inflight: Dict[str, asyncio.Event] = {}
+        # Ids of tasks dispatched after the drain began. They are never started,
+        # but their leases are kept alive by the heartbeat until the stream
+        # closes, when the server releases them with no retry penalty; reporting
+        # RELEASED at once would only have the server redispatch them here.
+        self._parked: Set[str] = set()
+        # Ids of tasks the drain aborted after the grace window: their outcome is
+        # reported RELEASED (returned to the queue, no retry penalty) rather than
+        # RETRY. A server cancel or a deadline is not recorded here and so retries.
+        self._released_ids: Set[str] = set()
         self._tasks: Set[asyncio.Task[None]] = set()
         self._sem = asyncio.Semaphore(config.concurrency)
         self._call: Optional["grpc.aio.StreamStreamCall"] = None
@@ -244,6 +282,14 @@ class _Session:
                 raise
 
             return self._established
+        except asyncio.CancelledError:
+            # The drain tears the call down itself when the server lingers past
+            # the half-close; that cancellation ends the session, it does not
+            # propagate. Any other cancellation is the caller's and does.
+            if self._draining or stop.is_set():
+                return self._established
+
+            raise
         finally:
             drainer.cancel()
             self._stop_heartbeat()
@@ -273,11 +319,18 @@ class _Session:
         if which == "welcome":
             self._on_welcome(message.welcome)
         elif which == "dispatch":
-            if not self._draining and message.dispatch.HasField("task"):
+            if not message.dispatch.HasField("task"):
+                return
+
+            if self._draining:
+                self._parked.add(message.dispatch.task.id)
+            else:
                 self._spawn(self._run_one(message.dispatch.task, _deadline(message.dispatch)))
         elif which == "batch_dispatch":
-            if not self._draining:
-                batch = message.batch_dispatch
+            batch = message.batch_dispatch
+            if self._draining:
+                self._parked.update(task.id for task in batch.tasks)
+            else:
                 self._spawn(self._run_batch(list(batch.tasks), batch.group, _deadline(batch)))
         elif which == "cancel":
             event = self._inflight.get(message.cancel.task_id)
@@ -300,6 +353,8 @@ class _Session:
         try:
             async with self._sem:
                 if self._draining:
+                    # Never started before drain: released, no retry penalty.
+                    self._report(envelope.id, service_pb2.TASK_OUTCOME_RELEASED, "")
                     return
 
                 task = self._open_task(envelope)
@@ -312,9 +367,18 @@ class _Session:
 
                 ctx = HandlerContext(cancelled, deadline, self._progress_reporter(envelope.id))
                 outcome, error_msg = await _run_handler(handler, task, ctx, self._executor)
+
+                # A task the drain interrupted is released, not retried; a task
+                # that still succeeded (or asked to skip) keeps that outcome.
+                if outcome == service_pb2.TASK_OUTCOME_RETRY and envelope.id in self._released_ids:
+                    outcome, error_msg = service_pb2.TASK_OUTCOME_RELEASED, ""
+
                 self._report(envelope.id, outcome, error_msg)
         except Exception as error:  # noqa: BLE001 -- undecryptable/decoding failure → retryable
-            self._report(envelope.id, service_pb2.TASK_OUTCOME_RETRY, str(error))
+            if envelope.id in self._released_ids:
+                self._report(envelope.id, service_pb2.TASK_OUTCOME_RELEASED, "")
+            else:
+                self._report(envelope.id, service_pb2.TASK_OUTCOME_RETRY, str(error))
         finally:
             if timer is not None:
                 timer.cancel()
@@ -338,6 +402,8 @@ class _Session:
         try:
             async with self._sem:
                 if self._draining:
+                    # Never started before drain: released, no retry penalty.
+                    self._report_each(ids, service_pb2.TASK_OUTCOME_RELEASED, "")
                     return
 
                 handler = self._mux.resolve_batch(envelopes[0].type if envelopes else "")
@@ -350,7 +416,10 @@ class _Session:
                 tasks = [self._open_task(envelope) for envelope in envelopes]
                 await self._run_batch_handler(handler, tasks, ids, HandlerContext(cancelled, deadline))
         except Exception as error:  # noqa: BLE001
-            self._report_each(ids, service_pb2.TASK_OUTCOME_RETRY, str(error))
+            if self._is_released(ids):
+                self._report_each(ids, service_pb2.TASK_OUTCOME_RELEASED, "")
+            else:
+                self._report_each(ids, service_pb2.TASK_OUTCOME_RETRY, str(error))
         finally:
             if timer is not None:
                 timer.cancel()
@@ -365,6 +434,12 @@ class _Session:
             await _invoke(handler, tasks, ctx, self._executor)
             self._report_each(ids, service_pb2.TASK_OUTCOME_SUCCESS, "")
         except BatchError as batch_error:
+            # A drain interrupted the whole batch: every member is released, no
+            # retry penalty, regardless of any partial-failure detail raised.
+            if self._is_released(ids):
+                self._report_each(ids, service_pb2.TASK_OUTCOME_RELEASED, "")
+                return
+
             for task_id in ids:
                 failure = batch_error.failures.get(task_id)
 
@@ -375,7 +450,10 @@ class _Session:
                 else:
                     self._report(task_id, service_pb2.TASK_OUTCOME_RETRY, str(failure))
         except Exception as error:  # noqa: BLE001 -- whole-batch failure retries each member
-            self._report_each(ids, service_pb2.TASK_OUTCOME_RETRY, str(error))
+            if self._is_released(ids):
+                self._report_each(ids, service_pb2.TASK_OUTCOME_RELEASED, "")
+            else:
+                self._report_each(ids, service_pb2.TASK_OUTCOME_RETRY, str(error))
 
     def _open_task(self, envelope: "task_pb2.TaskEnvelope") -> Task:
         """Decode a dispatched envelope into a Task, decrypting if it is marked."""
@@ -458,25 +536,45 @@ class _Session:
         while True:
             await asyncio.sleep(self._heartbeat_interval)
 
-            if not self._inflight:
+            active = self._active_task_ids()
+            if not active:
                 continue
 
-            self._send(
-                service_pb2.WorkerMessage(
-                    heartbeat=service_pb2.Heartbeat(active_task_ids=list(self._inflight.keys()))
-                )
-            )
+            self._send(service_pb2.WorkerMessage(heartbeat=service_pb2.Heartbeat(active_task_ids=active)))
+
+    def _active_task_ids(self) -> List[str]:
+        """Return every id whose lease this session must keep alive: the tasks
+        executing plus those parked by the drain."""
+        return [*self._inflight.keys(), *self._parked]
 
     async def _drain_on_stop(self, stop: asyncio.Event) -> None:
-        """Wait for the stop signal, then drain in-flight work and close the stream."""
+        """Wait for the stop signal, then drain in-flight work and close the stream.
+
+        The heartbeat keeps running through the grace window, so a task still
+        executing does not lose its lease mid-drain and get redelivered at the
+        cost of a retry. When the grace window expires, any handler still running
+        is aborted so it reports RELEASED (no retry penalty) and given a brief
+        settle window to send it; the server releases anything still held on
+        stream close.
+        """
         await stop.wait()
 
         self._draining = True
-        self._stop_heartbeat()
 
         deadline = time.monotonic() + _DRAIN_GRACE
         while self._inflight and time.monotonic() < deadline:
             await asyncio.sleep(0.05)
+
+        if self._inflight:
+            self._released_ids.update(self._inflight.keys())
+            for event in list(self._inflight.values()):
+                event.set()
+
+            settle = time.monotonic() + _DRAIN_SETTLE
+            while self._inflight and time.monotonic() < settle:
+                await asyncio.sleep(0.02)
+
+        self._stop_heartbeat()
 
         # End the request stream; the server releases any still-held leases with
         # no retry penalty (a deploy is therefore free).
@@ -489,6 +587,11 @@ class _Session:
         await asyncio.sleep(_CLOSE_GRACE)
         if self._call is not None:
             self._call.cancel()
+
+    def _is_released(self, ids: List[str]) -> bool:
+        """Report whether the drain aborted this delivery (all members share one
+        cancellation, so any member being marked released marks the batch)."""
+        return any(task_id in self._released_ids for task_id in ids)
 
     def _cancel_inflight(self) -> None:
         for event in self._inflight.values():
@@ -562,7 +665,7 @@ def _arm_deadline(cancelled: asyncio.Event, deadline: Optional[float]) -> Option
 
 
 def _full_jitter(attempt: int) -> float:
-    ceiling = min(_RECONNECT_MAX, _RECONNECT_BASE * (2 ** attempt))
+    ceiling = min(_RECONNECT_MAX, _RECONNECT_BASE * (2 ** min(attempt, _RECONNECT_MAX_EXPONENT)))
 
     return random.random() * ceiling
 

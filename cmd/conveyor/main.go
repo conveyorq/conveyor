@@ -7,25 +7,27 @@
 //
 // Usage:
 //
-//	conveyor [--addr URL] [--token TOKEN] <command> [arguments]
+//	conveyor [--addr URL] [--token TOKEN] [--output table|json] <command> [arguments]
 //
-// Commands:
+// Command groups:
 //
-//	enqueue <type> [--queue NAME] [--json PAYLOAD] [--id ID] [--in DUR]
-//	               [--at RFC3339] [--expires-in DUR] [--expires-at RFC3339]
-//	               [--max-retry N] [--priority N] [--retention DUR]
-//	               [--unique DUR] [--unique-key KEY] [--encryption-key ID:SECRET]
-//	enqueue-tx --file PATH [--encryption-key ID:SECRET]
-//	stats
-//	queues pause|resume <name>
-//	ratelimit set <queue> --rate N [--burst N] | rm <queue> | ls
-//	concurrency set <queue> --max N | rm <queue> | ls
-//	tasks get <id>
-//	tasks list [--queue NAME] [--state STATE] [--limit N] [--page TOKEN]
-//	tasks run|cancel|delete <id>
-//	cron list | pause <id> | resume <id>
-//	cluster info
-//	events [--queue NAME]... [--type TYPE]...
+//	enqueue      enqueue one task
+//	enqueue-tx   enqueue a file of tasks atomically
+//	stats        queue depths and states
+//	queues       pause and resume a queue
+//	ratelimit    per-queue dispatch rate limits
+//	concurrency  per-key concurrency limits
+//	tasks        inspect, list, run, cancel, archive, and delete tasks
+//	group        aggregation group configuration
+//	cron         cron schedules
+//	webhooks     webhook worker registrations
+//	cluster      cluster membership and worker sessions
+//	broker       broker engine information
+//	events       follow the task lifecycle event stream
+//
+// Run "conveyor <group> --help" for a group's commands and flags; the full
+// reference is in docs/cli.md. Every listing and inspection command honors
+// --output json, which renders the wire response.
 //
 // The server address and token come from --addr/--token or the
 // CONVEYOR_ADDR/CONVEYOR_TOKEN environment variables; flags win. The
@@ -44,15 +46,25 @@ import (
 	"strings"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
 
 	"github.com/conveyorq/conveyor/encryption"
+	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 	conveyor "github.com/conveyorq/conveyor/sdks/go"
 )
 
 // defaultAddr is the server base URL used when neither --addr nor
 // CONVEYOR_ADDR is set.
 const defaultAddr = "http://localhost:8080"
+
+// Output formats for the --output flag. table is the human-readable default;
+// json renders the wire response for listing and inspection commands, for
+// scripting.
+const (
+	outputTable = "table"
+	outputJSON  = "json"
+)
 
 // Environment variables read for connection settings.
 const (
@@ -91,6 +103,14 @@ type connection struct {
 	addr string
 	// token is the --token flag value; empty falls back to the environment.
 	token string
+	// output selects how listing and inspection commands render: "table"
+	// (default, human-readable) or "json".
+	output string
+}
+
+// jsonOutput reports whether --output json was requested.
+func (c *connection) jsonOutput() bool {
+	return c.output == outputJSON
 }
 
 // baseURL resolves the server base URL with flag > environment > default
@@ -127,6 +147,15 @@ The server address and token come from --addr/--token or the
 CONVEYOR_ADDR/CONVEYOR_TOKEN environment variables; flags win.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		PersistentPreRunE: func(_ *cobra.Command, _ []string) error {
+			switch conn.output {
+			case outputTable, outputJSON:
+				return nil
+
+			default:
+				return fmt.Errorf("invalid --output %q: use %q or %q", conn.output, outputTable, outputJSON)
+			}
+		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			_ = cmd.Usage()
 
@@ -134,8 +163,9 @@ CONVEYOR_ADDR/CONVEYOR_TOKEN environment variables; flags win.`,
 		},
 	}
 
-	root.PersistentFlags().StringVar(&conn.addr, "addr", "", "server base URL (default $CONVEYOR_ADDR or "+defaultAddr+")")
-	root.PersistentFlags().StringVar(&conn.token, "token", "", "bearer token (default $CONVEYOR_TOKEN)")
+	root.PersistentFlags().StringVar(&conn.addr, flagAddr, "", "server base URL (default $CONVEYOR_ADDR or "+defaultAddr+")")
+	root.PersistentFlags().StringVar(&conn.token, flagToken, "", "bearer token (default $CONVEYOR_TOKEN)")
+	root.PersistentFlags().StringVarP(&conn.output, flagOutput, flagOutputShort, outputTable, "output format for listing and inspection commands: table|json")
 
 	root.AddCommand(
 		newEnqueueCommand(conn),
@@ -149,6 +179,7 @@ CONVEYOR_ADDR/CONVEYOR_TOKEN environment variables; flags win.`,
 		newCronCommand(conn),
 		newWebhooksCommand(conn),
 		newClusterCommand(conn),
+		newBrokerCommand(conn),
 		newEventsCommand(conn),
 	)
 
@@ -177,7 +208,7 @@ func newEnqueueCommand(conn *connection) *cobra.Command {
 	)
 
 	command := &cobra.Command{
-		Use:     "enqueue <type>",
+		Use:     cmdEnqueue + " <type>",
 		Short:   "Commit one task",
 		Example: `  conveyor enqueue email:welcome --queue critical --json '{"user_id":42}' --in 5m`,
 		Args: func(_ *cobra.Command, args []string) error {
@@ -229,22 +260,22 @@ func newEnqueueCommand(conn *connection) *cobra.Command {
 	}
 
 	flags := command.Flags()
-	flags.StringVar(&queue, "queue", "", "target queue (server default when empty)")
-	flags.StringVar(&payload, "json", "", "JSON payload")
-	flags.StringVar(&taskID, "id", "", "client-assigned task id for idempotent retries")
-	flags.DurationVar(&processIn, "in", 0, "delay execution by duration, e.g. 5m")
-	flags.StringVar(&processAt, "at", "", "delay execution until an RFC3339 time")
-	flags.DurationVar(&expiresIn, "expires-in", 0, "archive the task if not dispatched within this duration of enqueue")
-	flags.StringVar(&expiresAt, "expires-at", "", "archive the task if not dispatched by this RFC3339 time")
-	flags.IntVar(&maxRetry, "max-retry", 0, "retry budget (server default when 0)")
-	flags.IntVar(&priority, "priority", 0, "dispatch priority 1..9 (server default when 0)")
-	flags.DurationVar(&retention, "retention", 0, "keep the completed task visible for this long")
-	flags.DurationVar(&unique, "unique", 0, "reject duplicates of this task for the given TTL")
-	flags.StringVar(&uniqueKey, "unique-key", "", "explicit uniqueness key (default: type + payload hash)")
-	flags.StringVar(&encryptionKey, "encryption-key", "", `encrypt the payload with AES-256-GCM, as "<id>:<base64-secret>" (default $CONVEYOR_ENCRYPTION_KEY)`)
-	flags.StringVar(&retryStrategy, "retry-strategy", "", "retry backoff strategy: exponential|linear|fixed (server default when empty)")
-	flags.DurationVar(&retryBase, "retry-base", 0, "first-retry delay ceiling (server default when 0)")
-	flags.DurationVar(&retryMax, "retry-max", 0, "overall retry delay cap (server default when 0)")
+	flags.StringVar(&queue, flagQueue, "", "target queue (server default when empty)")
+	flags.StringVar(&payload, flagJSON, "", "JSON payload")
+	flags.StringVar(&taskID, flagID, "", "client-assigned task id for idempotent retries")
+	flags.DurationVar(&processIn, flagIn, 0, "delay execution by duration, e.g. 5m")
+	flags.StringVar(&processAt, flagAt, "", "delay execution until an RFC3339 time")
+	flags.DurationVar(&expiresIn, flagExpiresIn, 0, "archive the task if not dispatched within this duration of enqueue")
+	flags.StringVar(&expiresAt, flagExpiresAt, "", "archive the task if not dispatched by this RFC3339 time")
+	flags.IntVar(&maxRetry, flagMaxRetry, 0, "retry budget (server default when 0)")
+	flags.IntVar(&priority, flagPriority, 0, "dispatch priority 1..9 (server default when 0)")
+	flags.DurationVar(&retention, flagRetention, 0, "keep the completed task visible for this long")
+	flags.DurationVar(&unique, flagUnique, 0, "reject duplicates of this task for the given TTL")
+	flags.StringVar(&uniqueKey, flagUniqueKey, "", "explicit uniqueness key (default: type + payload hash)")
+	flags.StringVar(&encryptionKey, flagEncryptionKey, "", `encrypt the payload with AES-256-GCM, as "<id>:<base64-secret>" (default $CONVEYOR_ENCRYPTION_KEY)`)
+	flags.StringVar(&retryStrategy, flagRetryStrategy, "", "retry backoff strategy: exponential|linear|fixed (server default when empty)")
+	flags.DurationVar(&retryBase, flagRetryBase, 0, "first-retry delay ceiling (server default when 0)")
+	flags.DurationVar(&retryMax, flagRetryMax, 0, "overall retry delay cap (server default when 0)")
 
 	return command
 }
@@ -292,7 +323,7 @@ func newEnqueueTxCommand(conn *connection) *cobra.Command {
 	)
 
 	command := &cobra.Command{
-		Use:   "enqueue-tx --file <path>",
+		Use:   cmdEnqueueTx + " --file <path>",
 		Short: "Commit many tasks atomically (all-or-nothing)",
 		Example: `  conveyor enqueue-tx --file tasks.json
 
@@ -332,9 +363,9 @@ func newEnqueueTxCommand(conn *connection) *cobra.Command {
 	}
 
 	flags := command.Flags()
-	flags.StringVar(&file, "file", "", "path to a JSON array of task specs (required)")
-	flags.StringVar(&encryptionKey, "encryption-key", "", `encrypt every payload with AES-256-GCM, as "<id>:<base64-secret>" (default $CONVEYOR_ENCRYPTION_KEY)`)
-	_ = command.MarkFlagRequired("file")
+	flags.StringVar(&file, flagFile, "", "path to a JSON array of task specs (required)")
+	flags.StringVar(&encryptionKey, flagEncryptionKey, "", `encrypt every payload with AES-256-GCM, as "<id>:<base64-secret>" (default $CONVEYOR_ENCRYPTION_KEY)`)
+	_ = command.MarkFlagRequired(flagFile)
 
 	return command
 }
@@ -430,16 +461,16 @@ func buildRetryPolicy(strategy string, base, maxDelay time.Duration) (conveyor.E
 	parsed := conveyor.RetryDefault
 
 	switch strategy {
-	case "", "default":
+	case "", retryStrategyDefault:
 		parsed = conveyor.RetryDefault
 
-	case "exponential":
+	case retryStrategyExponential:
 		parsed = conveyor.RetryExponential
 
-	case "linear":
+	case retryStrategyLinear:
 		parsed = conveyor.RetryLinear
 
-	case "fixed":
+	case retryStrategyFixed:
 		parsed = conveyor.RetryFixed
 
 	default:
@@ -452,7 +483,7 @@ func buildRetryPolicy(strategy string, base, maxDelay time.Duration) (conveyor.E
 // newTasksCommand groups the task inspection and operation subcommands.
 func newTasksCommand(conn *connection) *cobra.Command {
 	command := &cobra.Command{
-		Use:   "tasks",
+		Use:   cmdTasks,
 		Short: "Inspect and operate on tasks",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_ = cmd.Usage()
@@ -472,6 +503,7 @@ func newTasksCommand(conn *connection) *cobra.Command {
 		newTasksRescheduleCommand(conn),
 		newTasksCancelCommand(conn),
 		newTasksDeleteCommand(conn),
+		newTasksArchiveCommand(conn),
 	)
 
 	return command
@@ -480,10 +512,24 @@ func newTasksCommand(conn *connection) *cobra.Command {
 // newTasksGetCommand builds the tasks get subcommand.
 func newTasksGetCommand(conn *connection) *cobra.Command {
 	return &cobra.Command{
-		Use:   "get <id>",
+		Use:   cmdGet + " <id>",
 		Short: "Print the current state of one task",
 		Args:  exactTaskID("tasks get"),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			stdout := cmd.OutOrStdout()
+
+			// JSON renders the wire response, as every other inspection command
+			// does, rather than the SDK's task struct.
+			if conn.jsonOutput() {
+				response, err := conn.tasks().GetTask(context.Background(),
+					connect.NewRequest(&conveyorv1.GetTaskRequest{Id: args[0]}))
+				if err != nil {
+					return err
+				}
+
+				return printJSON(stdout, response.Msg)
+			}
+
 			client, err := conn.client()
 			if err != nil {
 				return err
@@ -494,7 +540,6 @@ func newTasksGetCommand(conn *connection) *cobra.Command {
 				return err
 			}
 
-			stdout := cmd.OutOrStdout()
 			_, _ = fmt.Fprintf(stdout, "id:          %s\n", info.ID)
 			_, _ = fmt.Fprintf(stdout, "queue:       %s\n", info.Queue)
 			_, _ = fmt.Fprintf(stdout, "type:        %s\n", info.Type)

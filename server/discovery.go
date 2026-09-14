@@ -95,8 +95,7 @@ func lookupDiscovery(name string) (DiscoveryFactory, bool) {
 // wires directly, which custom registrations may not shadow.
 func isBuiltinDiscovery(name string) bool {
 	switch name {
-	case DiscoveryStatic, DiscoveryKubernetes, DiscoveryNATS, DiscoveryConsul,
-		DiscoveryEtcd, DiscoveryMDNS, DiscoveryDNSSD:
+	case DiscoveryStatic, DiscoveryKubernetes:
 		return true
 
 	default:

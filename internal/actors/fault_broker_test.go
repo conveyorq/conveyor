@@ -21,7 +21,7 @@ const (
 	methodRelease            = "Release"
 	methodSetQueuePaused     = "SetQueuePaused"
 	methodReapExpiredLeases  = "ReapExpiredLeases"
-	methodPurgeCompleted     = "PurgeCompleted"
+	methodPurgeTerminal      = "PurgeTerminal"
 	methodArchiveExpired     = "ArchiveExpired"
 	methodPendingCount       = "PendingCount"
 	methodPromoteScheduled   = "PromoteScheduled"
@@ -36,6 +36,8 @@ const (
 	methodFail               = "Fail"
 	methodArchive            = "Archive"
 	methodLeaseGroup         = "LeaseGroup"
+	methodExtendLease        = "ExtendLease"
+	methodAckBatch           = "AckBatch"
 )
 
 // faultBroker wraps a real broker and returns a configured error from selected
@@ -116,13 +118,13 @@ func (f *faultBroker) ReapExpiredLeases(ctx context.Context, limit int) ([]strin
 	return f.Broker.ReapExpiredLeases(ctx, limit)
 }
 
-// PurgeCompleted fails when armed, otherwise delegates.
-func (f *faultBroker) PurgeCompleted(ctx context.Context, limit int) (int, error) {
-	if err := f.armed(methodPurgeCompleted); err != nil {
+// PurgeTerminal fails when armed, otherwise delegates.
+func (f *faultBroker) PurgeTerminal(ctx context.Context, archiveRetention time.Duration, limit int) (int, error) {
+	if err := f.armed(methodPurgeTerminal); err != nil {
 		return 0, err
 	}
 
-	return f.Broker.PurgeCompleted(ctx, limit)
+	return f.Broker.PurgeTerminal(ctx, archiveRetention, limit)
 }
 
 // ArchiveExpired fails when armed, otherwise delegates.
@@ -222,6 +224,24 @@ func (f *faultBroker) LeaseGroup(ctx context.Context, queue, group string, limit
 	}
 
 	return f.Broker.LeaseGroup(ctx, queue, group, limit, ttl, leaseID)
+}
+
+// ExtendLease fails when armed, otherwise delegates.
+func (f *faultBroker) ExtendLease(ctx context.Context, taskID, leaseID string, ttl time.Duration) error {
+	if err := f.armed(methodExtendLease); err != nil {
+		return err
+	}
+
+	return f.Broker.ExtendLease(ctx, taskID, leaseID, ttl)
+}
+
+// AckBatch fails when armed, otherwise delegates.
+func (f *faultBroker) AckBatch(ctx context.Context, items []broker.AckItem) ([]string, error) {
+	if err := f.armed(methodAckBatch); err != nil {
+		return nil, err
+	}
+
+	return f.Broker.AckBatch(ctx, items)
 }
 
 // Ack fails when armed, otherwise delegates.

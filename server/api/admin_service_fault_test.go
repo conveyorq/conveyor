@@ -168,7 +168,7 @@ func newFaultAdminService(t *testing.T, failOn string) *AdminService {
 
 	engine, taskLog := startTestEngine(t)
 
-	return NewAdminService(engine, &faultBroker{Broker: taskLog, failOn: failOn}, clock.System(), stubSessions(nil), true)
+	return NewAdminService(engine, &faultBroker{Broker: taskLog, failOn: failOn}, clock.System(), stubSessions(nil), true, false)
 }
 
 // TestAdminConfigHandlersReturnInternalOnBrokerFault asserts every per-queue

@@ -135,6 +135,47 @@ describe("integration against a live conveyord", () => {
     await running;
   }, 30_000);
 
+  it("never runs more handlers at once than the declared concurrency", async () => {
+    const client = new Client(baseUrl);
+    // One slot across two queues is the case the gate has to catch. The server
+    // splits a worker's concurrency across its queues by weight but floors every
+    // served queue at one slot, so two queues are granted one credit each: the
+    // server can have two dispatches outstanding while the worker declared one,
+    // and only the local gate keeps the second handler from starting. A
+    // concurrency that divides evenly across the queues would leave the server
+    // unable to over-grant, and the assertion would hold with no gate at all.
+    const concurrency = 1;
+    const perQueue = 4;
+
+    let active = 0;
+    let peak = 0;
+    let done = 0;
+
+    const handler = async (): Promise<void> => {
+      active += 1;
+      peak = Math.max(peak, active);
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      active -= 1;
+      done += 1;
+    };
+
+    const mux = new Mux().handle("gate:a", handler).handle("gate:b", handler);
+    const worker = new Worker(baseUrl, { queues: { gatea: 1, gateb: 1 }, concurrency });
+    const stop = new AbortController();
+    const running = worker.run(mux, stop.signal);
+
+    for (let i = 0; i < perQueue; i += 1) {
+      await client.enqueue(newTask("gate:a", json({})), { queue: "gatea", retention: 3_600_000 });
+      await client.enqueue(newTask("gate:b", json({})), { queue: "gateb", retention: 3_600_000 });
+    }
+
+    await waitUntil(async () => done >= perQueue * 2, 20_000);
+    expect(peak).toBeLessThanOrEqual(concurrency);
+
+    stop.abort();
+    await running;
+  }, 40_000);
+
   it("round-trips an end-to-end encrypted task", async () => {
     const secret = new Uint8Array(32).fill(7);
     const codec = newAESGCM("k1", { id: "k1", secret });

@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"slices"
 	"time"
 
 	"connectrpc.com/connect"
@@ -50,6 +51,13 @@ const healthzBody = "ok"
 // readHeaderTimeout bounds header parsing on the API listener so idle or
 // slow-loris connections cannot pin server goroutines.
 const readHeaderTimeout = 10 * time.Second
+
+// idleTimeout closes a keep-alive connection that carries no active stream for
+// this long, reclaiming connections left open by departed clients. It bounds
+// idle connections only: a worker session's long-lived bidi stream keeps its
+// connection active, so this never interrupts one. A whole-request ReadTimeout
+// is deliberately not set, since it would abort those long-lived streams.
+const idleTimeout = 2 * time.Minute
 
 // readyzTimeout bounds the broker probe of one readiness check.
 const readyzTimeout = 2 * time.Second
@@ -98,7 +106,7 @@ func New(config *Config, logger *slog.Logger) (*Server, error) {
 	return &Server{
 		config: config,
 		logger: logger,
-		http:   &http.Server{ReadHeaderTimeout: readHeaderTimeout},
+		http:   &http.Server{ReadHeaderTimeout: readHeaderTimeout, IdleTimeout: idleTimeout},
 	}, nil
 }
 
@@ -153,22 +161,24 @@ func (s *Server) Start(ctx context.Context) error {
 		Provider:      provider,
 		TLS:           clusterTLS,
 		Settings: actors.Settings{
-			LeaseTTL:            s.config.Engine.LeaseTTL,
-			LeaseBatchMax:       s.config.Engine.LeaseBatchMax,
-			ResolverPoolSize:    s.config.Engine.ResolverPoolSize,
-			ReapInterval:        s.config.Engine.ReapInterval,
-			PromoteInterval:     s.config.Engine.PromoteInterval,
-			PassivateAfter:      s.config.Engine.PassivateAfter,
-			GroupMaxSize:        s.config.Engine.GroupMaxSize,
-			GroupMaxDelay:       s.config.Engine.GroupMaxDelay,
-			GroupGracePeriod:    s.config.Engine.GroupGracePeriod,
-			GroupSweepInterval:  s.config.Engine.GroupSweepInterval,
-			RateLimitEnabled:    s.config.Engine.RateLimitEnabled,
-			RateLimitRatePerSec: s.config.Engine.RateLimitRatePerSec,
-			RateLimitBurst:      s.config.Engine.RateLimitBurst,
-			EventsEnabled:       s.config.Events.Enabled,
-			EventBufferSize:     s.config.Events.BufferSize,
-			RetryBackoff:        retryBackoff,
+			LeaseTTL:                   s.config.Engine.LeaseTTL,
+			LeaseBatchMax:              s.config.Engine.LeaseBatchMax,
+			ResolverPoolSize:           s.config.Engine.ResolverPoolSize,
+			ReapInterval:               s.config.Engine.ReapInterval,
+			PromoteInterval:            s.config.Engine.PromoteInterval,
+			PassivateAfter:             s.config.Engine.PassivateAfter,
+			GroupMaxSize:               s.config.Engine.GroupMaxSize,
+			GroupMaxDelay:              s.config.Engine.GroupMaxDelay,
+			GroupGracePeriod:           s.config.Engine.GroupGracePeriod,
+			GroupSweepInterval:         s.config.Engine.GroupSweepInterval,
+			RateLimitEnabled:           s.config.Engine.RateLimitEnabled,
+			RateLimitRatePerSec:        s.config.Engine.RateLimitRatePerSec,
+			RateLimitBurst:             s.config.Engine.RateLimitBurst,
+			EventsEnabled:              s.config.Events.Enabled,
+			EventBufferSize:            s.config.Events.BufferSize,
+			RetryBackoff:               retryBackoff,
+			AllowPrivateWebhookTargets: s.config.Webhooks.AllowPrivateTargets,
+			ArchiveRetention:           s.config.Engine.ArchiveRetention,
 		},
 	})
 
@@ -256,7 +266,13 @@ func (s *Server) buildBroker(ctx context.Context) (broker.Broker, error) {
 		return memory.New(clock.System()), nil
 
 	case BrokerPostgres:
-		taskLog, err := postgres.New(ctx, s.config.Broker.DSN, clock.System())
+		pool := s.config.Broker.Pool
+		taskLog, err := postgres.NewWithPool(ctx, s.config.Broker.DSN, clock.System(), postgres.PoolSettings{
+			MaxConns:         pool.MaxConns,
+			MinConns:         pool.MinConns,
+			ConnectTimeout:   pool.ConnectTimeout,
+			StatementTimeout: pool.StatementTimeout,
+		})
 		if err != nil {
 			return nil, fmt.Errorf("connecting postgres broker: %w", err)
 		}
@@ -425,9 +441,12 @@ func (s *Server) buildMux() *http.ServeMux {
 
 	mux.HandleFunc(readyzPath, s.readyz)
 
-	var options []connect.HandlerOption
+	// Bound the decoded size of every request (and every stream frame) so an
+	// oversized or unbounded message is rejected before decode rather than
+	// after, closing the memory-exhaustion exposure of an unlimited EnqueueBatch.
+	options := []connect.HandlerOption{connect.WithReadMaxBytes(api.MaxRequestBytes)}
 	if !s.config.AuthDisabled() {
-		options = append(options, connect.WithInterceptors(api.NewAuthInterceptor(s.config.API.AuthTokens)))
+		options = append(options, connect.WithInterceptors(api.NewAuthInterceptor(scopedTokens(s.config.API))))
 	}
 
 	taskService := api.NewTaskService(s.engine, s.taskLog, clock.System(), int32(s.config.Engine.DefaultMaxRetry))
@@ -436,23 +455,51 @@ func (s *Server) buildMux() *http.ServeMux {
 	s.workerService = api.NewWorkerService(s.engine, s.logger, clock.System())
 	mux.Handle(conveyorv1connect.NewWorkerServiceHandler(s.workerService, options...))
 
-	adminOptions := options
+	adminOptions := slices.Clone(options)
 	if s.config.API.ReadOnly {
 		adminOptions = append(adminOptions, connect.WithInterceptors(api.NewReadOnlyInterceptor()))
 	}
 
-	adminService := api.NewAdminService(s.engine, s.taskLog, clock.System(), s.workerService, s.config.AuthDisabled())
+	adminService := api.NewAdminService(s.engine, s.taskLog, clock.System(), s.workerService, s.config.AuthDisabled(), s.config.Webhooks.AllowPrivateTargets)
 	mux.Handle(conveyorv1connect.NewAdminServiceHandler(adminService, adminOptions...))
 
 	// The webhook callback service authenticates with per-delivery lease
 	// tokens, never bearer tokens, so it mounts without the auth
-	// interceptor: endpoints hold no API credentials by design.
+	// interceptor: endpoints hold no API credentials by design. Because that
+	// leaves it reachable by anyone who can reach the port, it is also held to
+	// the single-message bound rather than the batch-sized one: its calls carry
+	// one task's result, never a batch.
 	webhookService := api.NewWebhookService(s.engine, s.taskLog)
-	mux.Handle(conveyorv1connect.NewWebhookServiceHandler(webhookService))
+	mux.Handle(conveyorv1connect.NewWebhookServiceHandler(webhookService, connect.WithReadMaxBytes(api.MaxMessageBytes)))
 
 	s.mountDashboard(mux)
 
 	return mux
+}
+
+// scopedTokens assembles the accepted bearer tokens for the auth interceptor:
+// every api.auth_tokens entry as a full-access token, plus every
+// api.scoped_tokens entry with its declared scopes. Config validation has
+// already accepted the scope names, so the parse here cannot miss.
+func scopedTokens(config APIConfig) []api.ScopedToken {
+	tokens := make([]api.ScopedToken, 0, len(config.AuthTokens)+len(config.ScopedTokens))
+
+	for _, token := range config.AuthTokens {
+		tokens = append(tokens, api.ScopedToken{Token: token, Scopes: api.AllScopes()})
+	}
+
+	for _, entry := range config.ScopedTokens {
+		scopes := make([]api.Scope, 0, len(entry.Scopes))
+
+		for _, name := range entry.Scopes {
+			scope, _ := api.ParseScope(name)
+			scopes = append(scopes, scope)
+		}
+
+		tokens = append(tokens, api.ScopedToken{Token: entry.Token, Scopes: scopes})
+	}
+
+	return tokens
 }
 
 // readyz reports readiness: the engine is running and the broker answers.

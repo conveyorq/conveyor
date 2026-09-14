@@ -43,6 +43,26 @@ const maxDependencies = 1000
 // maxBatchTasks caps the number of items in one EnqueueBatch request.
 const maxBatchTasks = 1000
 
+// perTaskOverheadBytes bounds one task's non-payload fields (id, queue, type,
+// metadata, options) beyond the payload cap when sizing the request read limit.
+const perTaskOverheadBytes = 64 << 10
+
+// MaxRequestBytes bounds one decoded API request, and one frame of a stream, so
+// the server rejects an oversized message before decoding it rather than after.
+// It is the largest legitimate request: a full EnqueueBatch of maxBatchTasks
+// tasks, each at the payload cap plus field overhead. The per-task payload cap
+// (maxPayloadBytes) is still enforced per task after decode.
+const MaxRequestBytes = maxBatchTasks * (maxPayloadBytes + perTaskOverheadBytes)
+
+// MaxMessageBytes bounds one decoded message that carries a single task rather
+// than a batch of them. Only EnqueueBatch legitimately arrives at
+// MaxRequestBytes, so a service that never receives a batch is held to one
+// task's worth of bytes. It is what the webhook callback service is mounted
+// with: that service authenticates per delivery with a lease token instead of a
+// bearer token, so anyone who can reach the port can post to it, and it must not
+// be handed a batch-sized decode budget.
+const MaxMessageBytes = maxPayloadBytes + perTaskOverheadBytes
+
 // TaskService serves the enqueue-side API.
 type TaskService struct {
 	// engine commits tasks and wakes their queue grains.

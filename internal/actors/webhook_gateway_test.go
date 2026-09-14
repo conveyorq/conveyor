@@ -436,6 +436,58 @@ func TestWebhookAsyncLeaseLossCancelsAndRefills(t *testing.T) {
 		"the dropped delivery's credit is returned so the task redelivers")
 }
 
+// TestWebhookSyncLeaseLossRefillsCredit proves the synchronous lost-lease
+// path returns the delivery's credit: when the lease under an open delivery is
+// stolen, the extension tick aborts the request and the single-slot
+// registration can deliver again, which it could not if the slot stayed held.
+func TestWebhookSyncLeaseLossRefillsCredit(t *testing.T) {
+	const queue = "hooks-sync-lost"
+
+	ctx := context.Background()
+	taskLog := memory.New(clock.System())
+
+	// The first delivery blocks until the test ends; every later one completes.
+	release := make(chan struct{})
+
+	var executes atomic.Int32
+
+	endpoint := newRPCEndpoint(t, func(request *webhook.Request) *webhook.Response {
+		if request.Method == webhook.MethodExecute && executes.Add(1) == 1 {
+			<-release
+		}
+
+		return completedFor(request)
+	})
+
+	// Registered after the endpoint so it runs before the server closes,
+	// which waits for the blocked handler.
+	t.Cleanup(func() { close(release) })
+
+	worker := testWebhookWorker(endpoint.server.URL, queue)
+	worker.Concurrency = 1
+	seedWebhookWorker(t, taskLog, worker)
+
+	engine := startEngine(t, taskLog)
+
+	require.NoError(t, taskLog.Enqueue(ctx, newTask("sync-lost-1", queue, "email:send", 4)))
+	require.Eventually(t, func() bool { return executeCount(endpoint) >= 1 }, 10*time.Second, 50*time.Millisecond)
+
+	claims, err := webhook.ParseLeaseToken(paramsOf(t, endpoint.seen()[0]).Lease.Token)
+	require.NoError(t, err)
+
+	// Steal the open delivery's lease, then run the extension tick that finds
+	// it gone.
+	require.NoError(t, taskLog.Release(ctx, claims.TaskID, claims.LeaseID))
+
+	pid, err := engine.system.ActorOf(ctx, webhookGatewayPrefix+worker.Name)
+	require.NoError(t, err)
+	require.NoError(t, goakt.Tell(ctx, pid, registerTick{}))
+
+	require.Eventually(t, func() bool { return executeCount(endpoint) >= 2 }, 10*time.Second, 100*time.Millisecond,
+		"the aborted delivery's credit is returned so the task redelivers")
+	requireTaskState(t, engine, "sync-lost-1", conveyorv1.TaskState_TASK_STATE_COMPLETED)
+}
+
 // TestWebhookAsyncLeaseExpiryRetries proves a silent endpoint loses its
 // lease: the reaper reclaims the accepted task and the retry delivers again.
 func TestWebhookAsyncLeaseExpiryRetries(t *testing.T) {
@@ -1020,6 +1072,28 @@ func blockingEndpoint(t *testing.T) (*httptest.Server, func()) {
 	})
 
 	return server, releaseOnce
+}
+
+// TestWebhookGatewaySplitsCapacityAcrossQueues proves a registration's
+// concurrency is the cap across all its queues, not per queue: each queue is
+// announced its weighted share, and the breaker states override the share.
+func TestWebhookGatewaySplitsCapacityAcrossQueues(t *testing.T) {
+	gateway := newWebhookGateway(&broker.WebhookWorker{
+		Name:        "split",
+		Queues:      map[string]int32{"high": 3, "low": 1},
+		Concurrency: 4,
+	})
+	gateway.capacities = gateway.splitCapacities()
+
+	require.Equal(t, map[string]int32{"high": 3, "low": 1}, gateway.capacities)
+	require.EqualValues(t, 3, gateway.capacity("high"))
+	require.EqualValues(t, 1, gateway.capacity("low"))
+
+	gateway.probing = true
+	require.EqualValues(t, 1, gateway.capacity("high"), "a probing endpoint gets one delivery")
+
+	gateway.withholding = true
+	require.EqualValues(t, 0, gateway.capacity("high"), "a withholding endpoint gets none")
 }
 
 // TestWebhookGatewayDropsUnknownMessages proves every "unknown correlation"

@@ -6,6 +6,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -118,6 +119,47 @@ func TestSessionWelcomeCarriesLeaseParameters(t *testing.T) {
 
 // TestSessionDispatchAndResult drives one task through the raw protocol:
 // Hello, Welcome, Dispatch, Result, durable completion.
+// TestSessionWelcomeIsFirstFrameWithWorkWaiting pins the frame order the
+// protocol requires when a queue already holds work as a session opens: the
+// gateway registers with the queue the moment it spawns and dispatches at
+// once, and that Dispatch must still follow Welcome. An SDK that sees a
+// Dispatch first drops the session as a protocol violation and reconnects
+// with backoff, which kept workers off a busy queue for seconds at a time.
+// The race is a scheduling one, so several fresh sessions are opened to give
+// it room to appear.
+func TestSessionWelcomeIsFirstFrameWithWorkWaiting(t *testing.T) {
+	const sessions = 8
+
+	ctx := context.Background()
+
+	for index := range sessions {
+		stream, backend := openSession(t)
+
+		task := &conveyorv1.TaskEnvelope{
+			Id:          fmt.Sprintf("task-waiting-%d", index),
+			Queue:       "default",
+			Type:        "test:protocol",
+			Payload:     []byte(`{}`),
+			ContentType: "application/json",
+			Options:     &conveyorv1.TaskOptions{MaxRetry: 3, Priority: 4},
+		}
+		require.NoError(t, backend.engine.Enqueue(ctx, task))
+
+		require.NoError(t, stream.Send(helloFrame(map[string]int32{"default": 1}, 1)))
+
+		first, err := stream.Receive()
+		require.NoError(t, err)
+		require.NotNil(t, first.GetWelcome(), "session %d: the first frame must be Welcome, got %T", index, first.GetFrame())
+
+		second, err := stream.Receive()
+		require.NoError(t, err)
+		require.Equal(t, task.GetId(), second.GetDispatch().GetTask().GetId(), "session %d: the waiting task follows Welcome", index)
+
+		require.NoError(t, stream.CloseRequest())
+		_ = stream.CloseResponse()
+	}
+}
+
 func TestSessionDispatchAndResult(t *testing.T) {
 	stream, backend := openSession(t)
 

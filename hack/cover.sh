@@ -30,8 +30,9 @@ cd "$(dirname "$0")/.."
 GO=${GO:-go}
 
 # Packages with no tests of their own; excluded from both the test run and
-# the coverage total.
-NON_TEST='/examples/|/benchmark$|/internal/proto/|/internal/broker/brokertest$'
+# the coverage total. The conformance suite is a separate `make conformance`
+# job (behind a build tag, driving Node and Python), never the race suite.
+NON_TEST='/examples/|/benchmark$|/internal/proto/|/internal/broker/brokertest$|/conformance(/|$)'
 
 # Additionally excluded from the coverage total only: entrypoints, tooling,
 # and the embed-only dashboard package.

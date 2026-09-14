@@ -19,7 +19,7 @@ A task is one job to do: a **type** (a string like `"email:welcome"` that select
 
 ## Queue
 
-A queue is a named channel (`"default"`, `"emails"`, `"billing"`) that tasks are enqueued onto. Queues are **weighted**: when several queues have work waiting, the server dispatches from them in proportion to their weights, so a busy low-priority queue never starves a high-priority one. Queues can be paused, resumed, and rate-limited at runtime. They are created on demand; there is no separate "declare a queue" step.
+A queue is a named channel (`"default"`, `"emails"`, `"billing"`) that tasks are enqueued onto. Queues are **weighted**: a worker that serves several queues splits its capacity across them in proportion to their weights, so each queue keeps a guaranteed share of the worker and a busy low-priority queue never starves a high-priority one. Queues can be paused, resumed, and rate-limited at runtime. They are created on demand; there is no separate "declare a queue" step.
 
 ## Client (producer)
 
