@@ -36,6 +36,11 @@ node_modules/
 sdks/typescript/dist/
 examples/typescript/**/dist/
 
+# Documentation site: VitePress builds the guides under docs/ into dist/ (CI
+# deploys it) and keeps a dev cache next to it; the Markdown stays committed.
+docs/.vitepress/dist/
+docs/.vitepress/cache/
+
 # Python SDK and examples: ignore virtualenvs, caches, and build output. The
 # generated stubs under sdks/python/src/conveyorq/gen are committed (regenerate
 # with `make sdk-py-gen`); everything else here is local.

@@ -1,0 +1,70 @@
+name: docs
+
+# Publishes the documentation site to GitHub Pages. VitePress builds the guides
+# under docs/ (the same `make docs` the ci.yml docs job runs on pull requests)
+# and the result is deployed whenever main changes the site's sources.
+#
+# One-time setup: in the repository settings, under Pages, set the source to
+# "GitHub Actions" (the default GITHUB_TOKEN cannot enable Pages itself). The
+# site is then served at https://conveyorq.github.io/conveyor/, which is the
+# `base` configured in docs/.vitepress/config.mts.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time. A newer push queues behind an in-flight deploy
+# rather than cancelling it, so a half-published site is never left behind.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build documentation site
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        name: Checkout
+        with:
+          # Full history so each page can show when it was last updated.
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v6
+        name: Setup pnpm
+        with:
+          version: 12
+      - uses: actions/setup-node@v7
+        name: Setup Node
+        with:
+          node-version: "24"
+      - uses: actions/configure-pages@v6
+        name: Configure Pages
+      - name: Build docs (vitepress)
+        run: make docs
+      - uses: actions/upload-pages-artifact@v5
+        name: Upload site
+        with:
+          path: docs/.vitepress/dist
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/deploy-pages@v5
+        name: Deploy
+        id: deployment

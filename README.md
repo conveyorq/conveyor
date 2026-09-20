@@ -443,6 +443,12 @@ a different-origin UI, and `api.grafana_url` for the metrics link. See the
 
 ## Documentation
 
+The guides below are also published as a searchable site at
+<https://conveyorq.github.io/conveyor/>, built from [`docs/`](docs) with
+VitePress (`make docs-dev` previews it locally).
+
+- [Installation](docs/install.md): every way to run the server (source,
+  container image, Compose, Helm), plus the CLI and the three SDK installs.
 - [Concepts](docs/concepts.md): the core vocabulary in plain terms: task,
   queue, client, server, worker, and broker, and how they fit together. Start here.
 - [Usage guide](docs/usage.md): the full worker and enqueue snippets for Go,
