@@ -14,14 +14,14 @@ Everything below assumes you've accepted that difference.
 
 |             | River                                                  | Conveyor                                                                                                 |
 |-------------|--------------------------------------------------------|----------------------------------------------------------------------------------------------------------|
-| Topology    | A library embedded in your app                         | A **server** clients/workers connect to (or an in-process [embedded](../README.md#embedded-mode) engine) |
+| Topology    | A library embedded in your app                         | A **server** clients/workers connect to (or an in-process [embedded](embedded.md) engine) |
 | Job args    | Generic Go type implementing `JobArgs`                 | Opaque payload + content type (`conveyor.JSON`/`Bytes`/`Proto`), decoded with `task.Bind`                |
 | Enqueue     | `Insert` / `InsertTx` (transactional)                  | `Enqueue` / `EnqueueTx` over the API. `EnqueueTx` is atomic across the tasks in the call, but not with your DB transaction |
 | Dispatch    | Poll + `LISTEN`/`NOTIFY`                               | Server pushes over a stream                                                                              |
 | HA          | Postgres advisory-lock leader election                 | Built-in application-tier clustering with grain relocation on node loss                                  |
 | Dead-letter | OSS: exhausted jobs go to a terminal `discarded` state | OSS: exhausted jobs are archived (inspectable), at parity                                                |
 | Form factor | Library only                                           | Library (embedded) **and** standalone server with a language-neutral protocol                            |
-| Web UI      | riverui                                                | Embedded operations dashboard                                                                            |
+| Web UI      | riverui                                                | Embedded operations [dashboard](dashboard.md)                                                            |
 
 ## Defining work
 
@@ -105,7 +105,7 @@ conveyor cron add nightly-report "0 0 2 * * *" report:daily --queue reports
 
 ## Inspection
 
-riverui maps to the `conveyor` CLI and Admin API (a web dashboard is planned):
+riverui maps to the embedded [dashboard](dashboard.md), the `conveyor` CLI, and the Admin API:
 
 ```sh
 conveyor stats

@@ -9,7 +9,7 @@ Operating the system lives here and in the dashboard, deliberately kept out of t
 
 > The CLI talks to a running `conveyord`. It does not start a server. To run one,
 > see the [operations guide](operations.md); for an in-process server, see
-> [embedded mode](../README.md#embedded-mode).
+> [embedded mode](embedded.md).
 
 ## Installing
 

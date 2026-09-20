@@ -37,9 +37,11 @@
   max-width: 960px;
 }
 
-/* Hand-drawn diagrams in the guides carry their own white background; frame
-   them like the home page diagram so they read as a card in dark mode too. */
-.vp-doc img[src$='.svg'] {
+/* Hand-drawn diagrams carry their own white background and screenshots their
+   own dark one; frame both like the home page diagram so they read as a card
+   in either theme. */
+.vp-doc img[src$='.svg'],
+.vp-doc img[src$='.png'] {
   border: 1px solid var(--vp-c-divider);
   border-radius: 10px;
 }

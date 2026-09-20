@@ -85,7 +85,7 @@ The SDK is the **produce and consume** surface: a client enqueues, a worker runs
 
 ## Where to go next
 
-- [Writing a worker](../README.md#writing-a-worker): the minimal Go worker, with handler registration and graceful shutdown.
+- [Writing a worker](usage.md#writing-a-worker): the minimal Go worker, with handler registration and graceful shutdown.
 - Build a client and worker in your language:
   - [Go SDK](../sdks/go/README.md): the reference client and worker.
   - [TypeScript SDK](../sdks/typescript/README.md): enqueue and process tasks from Node.

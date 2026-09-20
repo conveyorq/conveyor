@@ -59,7 +59,7 @@ Point `broker.dsnSecret` at the cluster's read-write endpoint. Schema migrations
 
 ## Worker tier
 
-Workers are **your** processes, built with any [SDK](../README.md#sdks), external and stateless. Run them as their own Deployment with two or more replicas. The chart README's [connecting workers](../deploy/helm/conveyor/README.md#connecting-clients-and-workers) note covers the address and token. A complete worker Deployment:
+Workers are **your** processes, built with any [SDK](install.md#sdks), external and stateless. Run them as their own Deployment with two or more replicas. The chart README's [connecting workers](../deploy/helm/conveyor/README.md#connecting-clients-and-workers) note covers the address and token. A complete worker Deployment:
 
 ```yaml
 apiVersion: apps/v1

@@ -7,7 +7,7 @@ Conveyor is a server (`conveyord`), a command-line client (`conveyor`), and an S
 - **Go 1.27+**, the toolchain for the server, SDK, and CLI.
 - **Postgres** for every deployment mode except `--dev`, which uses the in-memory broker. See [deployment modes](operations.md#deployment-modes).
 - **Docker**, only for the Compose stack below.
-- **Node 20+**, only needed to rebuild the web dashboard that the server embeds.
+- **Node 20+**, only needed to rebuild the web [dashboard](dashboard.md) that the server embeds.
 
 ## Server
 
@@ -56,7 +56,7 @@ Pin a chart version with `--version X.Y.Z`. The [chart README](../deploy/helm/co
 
 `make build` produces `bin/conveyord`. The [systemd unit](../deploy/systemd/conveyord.service) in the repository has the install steps in its header: copy the binary to `/usr/local/bin`, create a `conveyor` system user, put `conveyor.yaml` under `/etc/conveyor`, and keep the broker DSN and auth tokens in an environment file rather than in the unit.
 
-The dashboard is embedded into the binary at build time. `go build` does not need Node, but the dashboard stays empty until you run `make dashboard` (needs Node) and rebuild.
+The [dashboard](dashboard.md) is embedded into the binary at build time. `go build` does not need Node, but the dashboard stays empty until you run `make dashboard` (needs Node) and rebuild.
 
 ## CLI
 
@@ -120,11 +120,13 @@ The [Python SDK README](../sdks/python/README.md) covers editable installs from 
 
 ## Check that it works
 
-The server answers on its health endpoint, and the dashboard is served at the API root, so open the server's API URL in a browser:
+The server answers on its health endpoint:
 
 ```sh
 curl -f http://localhost:8080/healthz
 ```
+
+The [dashboard](dashboard.md) is served at the API root, so the same address in a browser, `http://localhost:8080/`, opens the operations console. With `--dev` there is no token to enter.
 
 The smallest end-to-end loop is one `conveyord`, one worker, and one client, in three terminals:
 

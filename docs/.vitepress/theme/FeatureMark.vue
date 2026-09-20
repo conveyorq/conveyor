@@ -31,6 +31,13 @@ defineProps<{ name: string }>()
       <path d="M7.5 10l2.5 2-2.5 2M12.5 14h4" />
     </template>
 
+    <!-- Dashboard: a console with a sidebar and stat tiles. -->
+    <template v-else-if="name === 'dashboard'">
+      <rect x="3.5" y="4.5" width="17" height="15" rx="2" />
+      <path d="M9 4.5v15" opacity="0.45" />
+      <path d="M12 9h5M12 13h5" />
+    </template>
+
     <!-- HTTP: two endpoints, a dashed hop. -->
     <template v-else-if="name === 'http'">
       <circle cx="6" cy="12" r="2.4" />
@@ -42,6 +49,18 @@ defineProps<{ name: string }>()
     <template v-else-if="name === 'webhook'">
       <circle cx="6.5" cy="12" r="2.2" />
       <path d="M9.2 12h8.3M15.2 8.5 19.5 12l-4.3 3.5" />
+    </template>
+
+    <!-- Use cases: a list of shapes. -->
+    <template v-else-if="name === 'list'">
+      <path d="M5 7h2M5 12h2M5 17h2" />
+      <path d="M10.5 7h8.5M10.5 12h8.5M10.5 17h8.5" opacity="0.55" />
+    </template>
+
+    <!-- Embedded: a chip in your own process. -->
+    <template v-else-if="name === 'embedded'">
+      <rect x="7" y="7" width="10" height="10" rx="1.5" />
+      <path d="M10 4v3M14 4v3M10 17v3M14 17v3M4 10h3M4 14h3M17 10h3M17 14h3" opacity="0.55" />
     </template>
 
     <!-- SDK: one package. -->
@@ -121,6 +140,12 @@ defineProps<{ name: string }>()
     <template v-else-if="name === 'protocol'">
       <path d="M7 4.5h7l4 4V19.5H7z" />
       <path d="M14 4.5v4h4M9.5 13h5M9.5 16h5" />
+    </template>
+
+    <!-- Compare: two columns side by side. -->
+    <template v-else-if="name === 'compare'">
+      <rect x="4.5" y="9" width="6" height="10.5" rx="1.5" />
+      <rect x="13.5" y="4.5" width="6" height="15" rx="1.5" />
     </template>
 
     <!-- Migrate: a task moving between systems. -->

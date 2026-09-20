@@ -73,6 +73,7 @@ const config = defineConfig({
         items: [
           { text: 'Installation', link: '/install' },
           { text: 'Concepts', link: '/concepts' },
+          { text: 'Use cases', link: '/use-cases' },
           { text: 'Usage guide', link: '/usage' },
         ],
       },
@@ -80,8 +81,10 @@ const config = defineConfig({
         text: '🔌 Interfaces',
         items: [
           { text: 'CLI reference', link: '/cli' },
+          { text: 'Dashboard', link: '/dashboard' },
           { text: 'HTTP API', link: '/http-api' },
           { text: 'Webhook workers', link: '/webhook-workers' },
+          { text: 'Embedded mode', link: '/embedded' },
         ],
       },
       {
@@ -115,6 +118,7 @@ const config = defineConfig({
       {
         text: '🔄 Migrate',
         items: [
+          { text: 'How it compares', link: '/comparison' },
           { text: 'From asynq', link: '/migrate-from-asynq' },
           { text: 'From River', link: '/migrate-from-river' },
         ],

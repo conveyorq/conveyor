@@ -7,10 +7,10 @@
 |          | asynq                                    | Conveyor                                                                                                                        |
 |----------|------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------|
 | Storage  | Redis                                    | Postgres (or in-memory for dev)                                                                                                 |
-| Topology | A library in your worker process         | A **server** (`conveyord`) your clients and workers connect to, or an in-process [embedded](../README.md#embedded-mode) engine |
+| Topology | A library in your worker process         | A **server** (`conveyord`) your clients and workers connect to, or an in-process [embedded](embedded.md) engine |
 | Dispatch | Workers **poll** Redis                   | The server **pushes** tasks to connected workers over a stream                                                                  |
 | Cron     | Registered in code via `asynq.Scheduler` | Persisted on the server; managed via the API/CLI                                                                                |
-| Web UI   | asynqmon                                 | None yet (Grafana dashboard for metrics)                                                                                        |
+| Web UI   | asynqmon                                 | Embedded operations [dashboard](dashboard.md)                                                                                   |
 
 The important practical consequence: with asynq your worker binary talks to Redis directly; with Conveyor your client and worker talk to `conveyord`, which owns the broker. Run one `conveyord` (plus Postgres) and point both at it.
 
@@ -106,7 +106,7 @@ The spec is a 6-field cron expression (seconds first).
 
 ## Inspection
 
-asynqmon and the `asynq` CLI map to the `conveyor` CLI and the Admin API:
+asynqmon and the `asynq` CLI map to the embedded [dashboard](dashboard.md), the `conveyor` CLI, and the Admin API:
 
 ```sh
 conveyor stats                 # per-queue counts and pause flags
@@ -115,7 +115,7 @@ conveyor tasks run <id>        # make a scheduled/retry task due now
 conveyor queues pause critical
 ```
 
-A read-only web dashboard is planned; today, metrics are exported in Prometheus format (see the [operations guide](operations.md)).
+The dashboard is a read and write console covering queues, tasks, cron, limits, webhook workers, and connected workers, and metrics are exported in Prometheus format (see the [operations guide](operations.md)).
 
 ## What you gain, what you give up
 

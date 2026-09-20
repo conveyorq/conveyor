@@ -41,6 +41,10 @@ bands:
         icon: task
         details: "The core vocabulary in plain terms: task, queue, client, server, worker, and broker, and how they fit together. Start here."
         link: /concepts
+      - title: Use cases
+        icon: list
+        details: "The shapes of work Conveyor suits, from transactional email to AI inference jobs, and the features each leans on."
+        link: /use-cases
       - title: Usage guide
         icon: worker
         details: "The full worker and enqueue snippets for Go, TypeScript, Python, and the CLI."
@@ -49,6 +53,10 @@ bands:
         icon: cli
         details: "Every conveyor command, its flags, and the global address, token, and encryption settings, for producing and operating."
         link: /cli
+      - title: Dashboard
+        icon: dashboard
+        details: "The embedded operations console: inspect queues, tasks, cron, and workers, and act on them from a browser."
+        link: /dashboard
       - title: HTTP API
         icon: http
         details: "Enqueue and inspect tasks from any language over plain HTTP/JSON, no SDK required."
@@ -57,6 +65,10 @@ bands:
         icon: webhook
         details: "Process pushed tasks over a signed JSON-RPC endpoint, with no SDK, while staying push-based."
         link: /webhook-workers
+      - title: Embedded mode
+        icon: embedded
+        details: "Run broker, server, and dispatch inside your own Go process, and what that means for durability and availability."
+        link: /embedded
       - title: Go, TypeScript, and Python SDKs
         icon: sdk
         details: "One wire protocol, three SDKs: a task enqueued from any of them runs on a worker written in any other."
@@ -115,6 +127,10 @@ bands:
         icon: protocol
         details: "The normative protocol spec for SDK authors building a Conveyor client or worker in another language."
         link: /protocol
+      - title: How it compares
+        icon: compare
+        details: "Conveyor next to asynq and River, capability by capability, and when a workflow engine is the better fit."
+        link: /comparison
       - title: Migrating from asynq
         icon: migrate
         details: "Side-by-side API mapping."

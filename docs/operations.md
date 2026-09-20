@@ -32,7 +32,7 @@ Environment keys mirror the file with `CONVEYOR_` and `__` between levels. `brok
 Key groups:
 
 - `broker.driver` (`postgres` | `memory`), `broker.dsn`, and `broker.pool.{max_conns,min_conns,connect_timeout,statement_timeout}`.
-- `api.listen` (default `:8080`), `api.auth_tokens`, `api.scoped_tokens`, `api.tls`.
+- `api.listen` (default `:8080`), `api.auth_tokens`, `api.scoped_tokens`, `api.tls`, and the [dashboard](dashboard.md) settings `api.dashboard`, `api.cors_origins`, `api.grafana_url`, and `api.read_only`.
 - `webhooks.allow_private_targets` (default `false`; permits webhook delivery to private and loopback endpoints).
 - `cluster.discovery`, `cluster.bind_addr`, the remoting/discovery/peers ports, `cluster.tls`, and `cluster.kubernetes` (namespace + pod labels).
 - `engine.lease_ttl`, `reap_interval`, `lease_batch_max`, `promote_interval`, `passivate_after`, `default_max_retry`, `archive_retention`, `shutdown_timeout`.
@@ -80,11 +80,7 @@ Priorities and weights shape *what* runs first: per-task `Priority(1..9)` orders
 
 ## Dashboard
 
-`conveyord` embeds a read+write operations console, served at the API root.
-
-- **Enable/disable.** On by default (`api.dashboard: true`); set it `false` to expose the API without the UI. The static shell is served unauthenticated (it holds no secrets); the data calls it makes go through the bearer-token- authenticated API, so with auth on, enter a token in the UI.
-- **Hosting models.** (1) *Embedded*, served by `conveyord`, same origin, no CORS. (2) *Same-origin behind a proxy*, your own UI and the API behind one ingress, no CORS. (3) *Different origin*, a separately hosted UI (CDN/your host); set `api.cors_origins` to the UI's origin(s) (empty disables CORS; `*` allows any). The same built bundle works in all three; it reads its API base URL at runtime (defaults to same-origin, overridable via `?api=` or a global).
-- **Metrics link.** Set `api.grafana_url` to surface a "Metrics" link to your Grafana; the dashboard owns task-level inspection and operations, Grafana owns the time-series charts.
+`conveyord` embeds a read+write operations console, served at the API root and on by default. The [dashboard guide](dashboard.md) covers what each view shows and the actions it offers, signing in, read-only mode, hosting the UI on another origin, and the `api.dashboard`, `api.cors_origins`, and `api.grafana_url` settings.
 
 ## Observability
 
