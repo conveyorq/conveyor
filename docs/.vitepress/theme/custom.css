@@ -1,0 +1,45 @@
+/* Conveyor brand: the blues of the architecture diagram, not VitePress indigo. */
+:root {
+  --vp-c-brand-1: #2563eb;
+  --vp-c-brand-2: #1d4ed8;
+  --vp-c-brand-3: #1e40af;
+  --vp-c-brand-soft: rgba(37, 99, 235, 0.14);
+  --vp-home-hero-name-color: transparent;
+  --vp-home-hero-name-background: -webkit-linear-gradient(120deg, #1d4ed8 20%, #60a5fa 80%);
+}
+
+.dark {
+  --vp-c-brand-1: #60a5fa;
+  --vp-c-brand-2: #93c5fd;
+  --vp-c-brand-3: #3b82f6;
+  --vp-c-brand-soft: rgba(96, 165, 250, 0.16);
+  --vp-home-hero-name-background: -webkit-linear-gradient(120deg, #60a5fa 15%, #bfdbfe 85%);
+}
+
+/*
+ * The default theme lays the hero out for a logo on the right: the text column
+ * takes two thirds of the width and the heading and tagline are capped at
+ * 576px even when no image is configured. There is no logo, so let the text
+ * use the full width instead of leaving the right third empty.
+ */
+@media (min-width: 960px) {
+  .VPHero:not(.has-image) .main {
+    width: 100%;
+  }
+}
+
+.VPHero:not(.has-image) .name,
+.VPHero:not(.has-image) .text {
+  max-width: none;
+}
+
+.VPHero:not(.has-image) .tagline {
+  max-width: 960px;
+}
+
+/* Hand-drawn diagrams in the guides carry their own white background; frame
+   them like the home page diagram so they read as a card in dark mode too. */
+.vp-doc img[src$='.svg'] {
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 10px;
+}

@@ -18,6 +18,7 @@ jobs:
       build: ${{ steps.filter.outputs.build }}
       deploy: ${{ steps.filter.outputs.deploy }}
       ts_py: ${{ steps.filter.outputs.ts_py }}
+      docs: ${{ steps.filter.outputs.docs }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -71,6 +72,12 @@ jobs:
               - 'examples/typescript/**'
               - 'examples/python/**'
               - 'conformance/**'
+              - 'Makefile'
+              - '.github/workflows/ci.yml'
+            # "docs" is true when the documentation site changed: the guides
+            # under docs/ or their VitePress setup. It gates the docs build job.
+            docs:
+              - 'docs/**'
               - 'Makefile'
               - '.github/workflows/ci.yml'
 
@@ -208,6 +215,29 @@ jobs:
         run: make sdk-ts-test
       - name: Test Python SDK (pytest)
         run: make sdk-py-test
+
+  # Documentation site build. VitePress renders the guides under docs/, so a
+  # broken link between guides or Markdown that fails to render is caught on
+  # the pull request; docs.yml deploys the same build from main.
+  docs:
+    name: Build documentation site
+    needs: changes
+    if: needs.changes.outputs.docs == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        name: Checkout
+      - uses: pnpm/action-setup@v6
+        name: Setup pnpm
+        with:
+          version: 12
+      - uses: actions/setup-node@v7
+        name: Setup Node
+        with:
+          node-version: "24"
+      - name: Build docs (vitepress)
+        run: make docs
 
   # Cross-SDK protocol conformance: start a real conveyord and drive the Go,
   # TypeScript, and Python workers through one checklist, asserting each honors

@@ -12,46 +12,7 @@ Conveyor is a **push-based, durable task queue** built on the [GoAkt](https://gi
 
 ## Component overview
 
-```mermaid
-flowchart LR
-    PROD["Producer / CLI"]
-    WORK["Worker"]
-    EP["Webhook endpoint<br/>external HTTP service"]
-
-    subgraph node["conveyord node (clustered)"]
-      direction TB
-      API["ConnectRPC API<br/>TaskService · WorkerService · AdminService · WebhookService"]
-      ENG["Engine<br/>enqueue entry · hosts the actor system"]
-      QG["QueueGrain<br/>one per queue · dispatcher · credits · rate & concurrency limits"]
-      GW["Gateway<br/>one per worker session · durable transitions"]
-      WGW["WebhookGateway<br/>one per registration · JSON-RPC delivery · durable transitions"]
-      WMGR["WebhookManager<br/>singleton · one gateway per registration"]
-      SING["Cluster singletons<br/>Scheduler · Reaper · GroupSweeper"]
-    end
-
-    BROKER[("Broker: sole durable state<br/>Postgres / in-memory<br/>(+ optional encryption)")]
-
-    PROD -->|"Enqueue (gRPC)"| API
-    WORK <-->|"Session stream"| API
-    EP -->|"Heartbeat / ReportResult"| API
-    API --> ENG
-    ENG -->|"TasksAvailable"| QG
-    API -->|"spawn per session"| GW
-    API -->|"route async callback"| WGW
-    QG -->|"ExecuteTask / ExecuteBatch"| GW
-    QG -->|"ExecuteTask / ExecuteBatch"| WGW
-    GW -->|"credit + completion"| QG
-    WGW -->|"credit + completion"| QG
-    WGW -->|"JSON-RPC POST"| EP
-    WMGR -->|"spawn per registration"| WGW
-    SING -->|"wake / FireGroup"| QG
-    ENG --> BROKER
-    QG <--> BROKER
-    GW --> BROKER
-    WGW --> BROKER
-    WMGR --> BROKER
-    SING --> BROKER
-```
+![Component overview: producers, workers, and webhook endpoints talk to the ConnectRPC API of a conveyord node; inside it the Engine wakes a QueueGrain per queue, which dispatches to a Gateway per worker session or a WebhookGateway per registration and takes back credits and completions, while the WebhookManager and cluster singletons run alongside; every durable transition goes to the broker.](architecture-components.svg)
 
 Everything above lives in one `conveyord` process; clustering replicates the process across nodes (see [Clustering & HA](#clustering--ha)). Worker and producer processes are external and speak ConnectRPC; a webhook endpoint is any external HTTP service that receives signed JSON-RPC deliveries and answers with the outcome (see [Webhook workers](webhook-workers.md)).
 

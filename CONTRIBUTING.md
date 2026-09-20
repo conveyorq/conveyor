@@ -116,6 +116,21 @@ Open the dev server with `?api=http://localhost:8080` so it targets the running
 server. After changing the UI, run `make dashboard` to rebuild the `dist/` bundle
 that ships in the binary.
 
+## Documentation site
+
+The guides under `docs/` are published with [VitePress](https://vitepress.dev)
+at <https://conveyorq.github.io/conveyor/>. Edit the Markdown in place (it stays
+readable on GitHub) and preview the site locally (needs Node):
+
+```sh
+make docs-dev  # hot-reloading site on :5173
+make docs      # production build into docs/.vitepress/dist
+```
+
+Links that leave `docs/` (`../README.md`, `../sdks/...`) are rewritten to GitHub
+at build time, and a broken link between guides fails the build, which CI runs
+on every pull request that touches `docs/`.
+
 ## Dependencies and vendoring
 
 `vendor/` is git-ignored; CI and the release build regenerate it. When you add or

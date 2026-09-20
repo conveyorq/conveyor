@@ -33,6 +33,7 @@ DASHBOARD_DIR   := web/dashboard
 SDK_TS_DIR      := sdks/typescript
 SDK_PY_DIR      := sdks/python
 EXAMPLES_TS_DIR := examples/typescript
+DOCS_DIR        := docs
 
 # License-header tooling. addlicense is fetched on demand with GOFLAGS cleared,
 # so it resolves even when the build runs under -mod=vendor/-mod=readonly. The
@@ -42,7 +43,7 @@ COPYRIGHT_HOLDER   := ConveyorQ
 GO_SOURCES         := $(shell find . -path ./vendor -prune -o -name '*.go' -print)
 ADDLICENSE         := GOFLAGS= $(GO) run github.com/google/addlicense@$(ADDLICENSE_VERSION) -l apache -s -c "$(COPYRIGHT_HOLDER)"
 
-.PHONY: help all image build test lint lint-go lint-ts lint-py license-check license-fix licenses proto proto-format proto-lint proto-breaking quickstart chaos e2e e2e-clean e2e-dashboard e2e-demo postmark-demo postmark-stats postmark-pause postmark-resume postmark-archived postmark-events postmark-kill-node postmark-down postmark-clean benchmark helm-lint release clean dashboard dashboard-gen dashboard-test sdk-gen sdk-ts-gen sdk-ts-test sdk-ts-test-integration sdk-py-gen sdk-py-test conformance
+.PHONY: help all image build test lint lint-go lint-ts lint-py license-check license-fix licenses proto proto-format proto-lint proto-breaking quickstart chaos e2e e2e-clean e2e-dashboard e2e-demo postmark-demo postmark-stats postmark-pause postmark-resume postmark-archived postmark-events postmark-kill-node postmark-down postmark-clean benchmark helm-lint release clean dashboard dashboard-gen dashboard-test sdk-gen sdk-ts-gen sdk-ts-test sdk-ts-test-integration sdk-py-gen sdk-py-test conformance docs docs-dev
 
 help: ## Show available targets
 	@awk 'BEGIN{FS=":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -201,6 +202,14 @@ dashboard-gen: ## Regenerate the dashboard's TypeScript Connect client from the 
 
 dashboard-test: ## Run the dashboard frontend unit tests (needs Node)
 	cd $(DASHBOARD_DIR) && pnpm install --frozen-lockfile && pnpm test
+
+# The documentation site is built by VitePress from the guides under docs/ into
+# a git-ignored docs/.vitepress/dist; CI deploys that build to GitHub Pages.
+docs: ## Build the documentation site (needs Node)
+	cd $(DOCS_DIR) && pnpm install --frozen-lockfile && pnpm run build
+
+docs-dev: ## Serve the documentation site locally with hot reload (needs Node)
+	cd $(DOCS_DIR) && pnpm install --frozen-lockfile && pnpm run dev
 
 sdk-ts-gen: ## Regenerate the TypeScript SDK's protobuf from the protos
 	cd $(SDK_TS_DIR) && pnpm install
