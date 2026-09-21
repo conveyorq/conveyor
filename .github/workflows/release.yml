@@ -224,6 +224,44 @@ jobs:
           DIGEST: ${{ steps.build.outputs.digest }}
         run: cosign sign --yes "${IMAGE}@${DIGEST}"
 
+  # Prove the cut tag installs the way the docs say: `go install
+  # module/cmd@tag` for the server and the CLI, fetched straight from the
+  # repository (GOPROXY=direct, so the check does not wait for the module proxy
+  # to index the tag). v0.4.1 broke this silently: its go.mod carried an
+  # exclude block, which `go install pkg@version` refuses. The check needs only
+  # the tag, so it runs alongside the image build.
+  verify-install:
+    name: Verify go install of the tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: setup
+    if: needs.setup.outputs.is_release == 'true'
+    steps:
+      - uses: actions/checkout@v7
+        name: Checkout
+        with:
+          ref: ${{ needs.setup.outputs.ref }}
+
+      - uses: actions/setup-go@v7
+        name: Setup Go
+        with:
+          go-version-file: go.mod
+          check-latest: false
+
+      - name: Install the server and the CLI from the tag
+        env:
+          RELEASE_REF: ${{ needs.setup.outputs.ref }}
+          GOPROXY: direct
+        run: |
+          set -euo pipefail
+          export GOBIN="$(mktemp -d)"
+          # Run outside the checkout so the local go.mod plays no part.
+          cd "$(mktemp -d)"
+          go install "github.com/conveyorq/conveyor/cmd/conveyord@${RELEASE_REF}"
+          go install "github.com/conveyorq/conveyor/cmd/conveyor@${RELEASE_REF}"
+          "${GOBIN}/conveyord" --help >/dev/null
+          "${GOBIN}/conveyor" --help >/dev/null
+
   publish-chart:
     name: Package & publish Helm chart
     runs-on: ubuntu-latest

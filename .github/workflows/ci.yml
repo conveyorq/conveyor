@@ -135,6 +135,18 @@ jobs:
       - name: Download dependencies
         run: |
           go mod download
+      - name: Verify go.mod stays installable
+        # `go install module/cmd@version` refuses a module whose go.mod carries
+        # an exclude or replace directive; v0.4.1 shipped with an exclude block
+        # and could not be installed that way. Fail here so a dependency
+        # workaround never breaks the install path again.
+        run: |
+          set -euo pipefail
+          directives=$(go mod edit -json | jq '[(.Exclude // []), (.Replace // [])] | map(length) | add')
+          if [[ "${directives}" != "0" ]]; then
+            echo "::error file=go.mod::go.mod contains exclude or replace directives, which break go install"
+            exit 1
+          fi
       - uses: pnpm/action-setup@v6
         name: Setup pnpm
         with:

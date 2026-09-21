@@ -2,6 +2,49 @@
 
 All notable changes to Conveyor are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow [Semantic Versioning](https://semver.org/).
 
+## [v0.5.0] - 2026-09-21
+
+This release makes Conveyor installable with `go install`, adds scoped API tokens, JSON output and batch actions to the CLI, Postgres pool and retention settings, and opt-in Prometheus alerts and KEDA worker autoscaling to the Helm chart, on top of the fixes from a code review pass. The wire protocol is unchanged. Postgres deployments apply one new migration (`0012`) on startup.
+
+### Added
+
+- **`go install` works**: `go install github.com/conveyorq/conveyor/cmd/conveyord@latest` (and `cmd/conveyor` for the CLI) now succeeds. v0.4.1 failed because its `go.mod` carried an `exclude` block for `armon/go-metrics`, which `go install pkg@version` refuses; memberlist v0.7.0 no longer needs it, so the block is gone. CI rejects a reintroduced `exclude` or `replace`, and every release installs both binaries from the cut tag as a check.
+- **Scoped API tokens**: `api.scoped_tokens` grants each bearer token a subset of `produce`, `consume`, and `admin`, so a producer's token cannot open a worker stream or call the admin API; `api.auth_tokens` still grants every scope. `GetTask` is now admitted under `admin` as well as `produce`, so `conveyor tasks get` works with an admin token.
+- **CLI**: `--output json` on every listing, inspection, and task-action command renders the wire response for scripting. `tasks run`, `tasks cancel`, `tasks delete`, and the new `tasks archive` accept several ids, report each outcome, and exit non-zero if the server rejected any. New commands: `cron delete`, `cluster sessions` (worker sessions on the reachable node), and `broker info` (driver and engine statistics).
+- **Postgres pool and retention settings**: `broker.pool.{max_conns,min_conns,connect_timeout,statement_timeout}` tune each node's connection pool and set a server-side statement timeout. `engine.archive_retention` (default 168h) bounds how long archived and canceled tasks are kept before the reaper purges them; completed tasks keep their per-task retention. Migration `0012` adds a partial index over terminal rows so a purge scales with the rows it removes, and extends the expiry index to blocked tasks.
+- **Deleting a task with waiting dependents is refused**: `DeleteTask` now fails with `FailedPrecondition` while a non-terminal dependent still waits on the task; a dependent already in a terminal state does not block it. Previously the delete went through and silently dropped the dependency edges.
+- **Helm chart**: opt-in `prometheusRule` with six alerts (no nodes exposing metrics, lease expiry, pending backlog, an open task-type circuit breaker, dropped lifecycle events, failing maintenance passes); opt-in `workerAutoscaling` rendering a KEDA `ScaledObject` that scales your worker Deployment on backlog; and the `webhooks.allowPrivateTargets`, `broker.pool`, and `broker.archiveRetention` values.
+- **Maintenance failure metric**: `conveyor_maintenance_failures_total{pass}` counts maintenance passes that failed and were skipped until the next tick, with `pass` one of `reap`, `purge`, `archive_expired`, `promote_dependents`, `pending_sweep`, `promote_scheduled`, `cron`, and `group_sweep`. The Grafana dashboard gained panels for it, for lease expiry, and for dropped events.
+- **Cross-SDK conformance suite** (`make conformance`): starts a real `conveyord` and drives the Go, TypeScript, and Python workers through one checklist of wire-contract behaviour (lease-keeping heartbeats, batch member ids, drain without a burned retry, local Hello validation), running in CI on every server or SDK change. A nightly job runs the throughput and weighted-drain performance gates without the race detector.
+- **Documentation site** at <https://conveyorq.github.io/conveyor/>, built with VitePress from `docs/`, with new installation, comparison, dashboard, embedded-mode, and use-case guides and a rewritten README. The CLI reference now covers the `webhooks` commands, and the protocol spec documents the `Progress` frame, dependencies, concurrency keys, retry policies, and the drain rule.
+
+### Fixed
+
+- **Lost-lease credit refund**: when a heartbeat found the reaper had reclaimed a task's lease, the task left the session without returning its dispatch slot, so every reclaimed lease cost the worker one slot until it reconnected. The slot is now refunded on detection, for single tasks and for batches.
+- **Welcome is the first frame**: with work already waiting, a session's first Dispatch could be written before its Welcome, so the Go SDK dropped the session and reconnected with growing backoff. Welcome is now written before the session can receive dispatches.
+- **Node-wide stall under load**: an actor waiting on a queue grain from inside its own turn could exhaust the shared dispatcher pool and wedge every grain on the node until request timeouts fired. Actors now hand grain messages off asynchronously (the rule is in `docs/architecture.md`), and a test pins the pool at its floor to catch a regression.
+- **Batch members retry with their own policy**: a task delivered as part of a batch fell back to the server's default retry backoff; it now uses its own `retry_policy` like a singly dispatched task.
+- **Webhook delivery is no longer a network probe**: an endpoint that resolves to a loopback, link-local, private, or multicast address (including the cloud metadata address) is refused, the approved address is pinned for the connection, and redirects are not followed. Set `webhooks.allow_private_targets: true` for endpoints that are private by design; `--dev` enables it.
+- **`api.read_only`** now also refuses the webhook-worker admin mutations.
+- **Migrations under a statement timeout**: the migration runner clears `statement_timeout` for its own transaction, so `broker.pool.statement_timeout` cannot abort an index build.
+- **Go SDK**: the client bounds the size of one message it decodes from the server, mirroring the server's request ceiling, so a malformed server cannot exhaust client memory.
+- **TypeScript and Python SDKs**: a dispatch that arrives while the worker is draining is parked and listed in heartbeats instead of started or released, so the lease survives to the close and the task is redelivered elsewhere without a burned retry. Python caps the reconnect backoff exponent and treats the cancellation its own drain raises as the end of the session rather than an error. TypeScript no longer leaves an abort listener behind after each reconnect sleep.
+- **CLI**: a batch result carrying fewer outcomes than ids is reported as an error instead of a clean exit.
+
+### Changed
+
+- **Worker concurrency is split across queues by weight**: a worker serving several queues now divides its declared concurrency among them in proportion to their weights, one slot reserved per queue and the rest by largest remainder, so each queue keeps a guaranteed share and the total never exceeds `concurrency` (given at least one slot per queue). Previously each queue was offered the worker's full concurrency, so one busy queue could occupy the whole worker. Webhook workers follow the same rule.
+- **Request bodies are bounded**: the task, worker, and admin services refuse a request larger than the largest legitimate batch (1000 tasks at the 1 MiB payload cap plus 64 KiB of per-task overhead), and the webhook service refuses a message larger than one task. There was no ceiling before.
+- **Backlog is counted once across nodes**: `conveyor_pending` is broker-wide and identical on every node, so the shipped Grafana panel and the KEDA query take `max by (queue)` before summing. A plain `sum` scaled with the replica count.
+- **Broker interface**: `PurgeCompleted` became `PurgeTerminal` (it also purges archived and canceled rows by `archive_retention`), and `AckBatch` completes a batch's members in one call. Only custom broker implementations are affected.
+- **README**: the discovery providers that ship are Kubernetes and static, with a provider interface for others; the earlier text listed DNS, NATS, Consul, and etcd as built in.
+
+### Dependencies
+
+- **Go**: GoAkt v4.5.6, memberlist v0.7.0 (which drops the `armon/go-metrics` exclude block), `connectrpc.com/connect` v1.21.0, pgx v5.11.0, gRPC v1.84.0, and the `golang.org/x/*` line.
+- **TypeScript SDK and dashboard**: `@bufbuild/protobuf` ^2.15.0, `@connectrpc/connect` ^2.2.0, React 19.3, Vite 8.3, and pnpm 12.4.1 as the shared `packageManager` pin; generated stubs refreshed for the new `protoc-gen-es`.
+- **Toolchain and CI**: buf v1.73.0, `protoc-gen-connect-go` v1.21.0, `setup-uv` v10.1.0.
+
 ## [v0.4.1] - 2026-09-07
 
 A maintenance release: a worker-session teardown fix, a replicated cluster placement registry, a repaired release pipeline, regenerated SDK stubs, and a broad dependency refresh. The wire protocol, the Go SDK, and the CLI are unchanged.

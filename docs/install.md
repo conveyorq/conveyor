@@ -11,6 +11,17 @@ Conveyor is a server (`conveyord`), a command-line client (`conveyor`), and an S
 
 ## Server
 
+### Install with `go install`
+
+The server and the CLI are `main` packages in the repository's Go module, so Go builds and installs them straight from a release tag with no clone:
+
+```sh
+go install github.com/conveyorq/conveyor/cmd/conveyord@latest   # server
+go install github.com/conveyorq/conveyor/cmd/conveyor@latest    # CLI
+```
+
+Both land in `$GOBIN`, by default `$HOME/go/bin`. Pin a release with `@vX.Y.Z` instead of `@latest`. A server installed this way serves an empty [dashboard](dashboard.md): the dashboard bundle is built into the binary from a checkout (`make dashboard`, then `make build`), and the published image ships with it built in.
+
 ### Run a dev server from a checkout
 
 ```sh
@@ -54,13 +65,19 @@ Pin a chart version with `--version X.Y.Z`. The [chart README](../deploy/helm/co
 
 ### Binary on a host (systemd)
 
-`make build` produces `bin/conveyord`. The [systemd unit](../deploy/systemd/conveyord.service) in the repository has the install steps in its header: copy the binary to `/usr/local/bin`, create a `conveyor` system user, put `conveyor.yaml` under `/etc/conveyor`, and keep the broker DSN and auth tokens in an environment file rather than in the unit.
+`make build` produces `bin/conveyord`, or install it with `go install` as above. The [systemd unit](../deploy/systemd/conveyord.service) in the repository has the install steps in its header: copy the binary to `/usr/local/bin`, create a `conveyor` system user, put `conveyor.yaml` under `/etc/conveyor`, and keep the broker DSN and auth tokens in an environment file rather than in the unit.
 
 The [dashboard](dashboard.md) is embedded into the binary at build time. `go build` does not need Node, but the dashboard stays empty until you run `make dashboard` (needs Node) and rebuild.
 
 ## CLI
 
-Build it from the repository:
+Install it with Go:
+
+```sh
+go install github.com/conveyorq/conveyor/cmd/conveyor@latest
+```
+
+Or build it from a checkout:
 
 ```sh
 go build -o conveyor ./cmd/conveyor
