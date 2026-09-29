@@ -12,29 +12,27 @@ Lose a server node and its work relocates. Lose a worker and its in-flight tasks
 
 ## Topology
 
+```mermaid
+flowchart TB
+    producers["Producers"]
+    workers["Workers<br/><small>Deployment, autoscaled</small>"]
+
+    svc["<b>Service</b> (ClusterIP)<br/>api :8080 · metrics :9464"]
+
+    subgraph sts["conveyord StatefulSet · replicaCount: 3 · mode: kubernetes"]
+        direction LR
+        n0["node-0"] <--> n1["node-1"] <--> n2["node-2"]
+    end
+
+    pg[("Postgres<br/><small>HA: managed · CloudNativePG · Patroni/Stolon</small>")]
+
+    producers -- "enqueue: HTTP/2 + bearer token" --> svc
+    workers -- "session stream (push)" --> svc
+    svc --> sts
+    sts --> pg
 ```
-   producers                                   workers  (Deployment, autoscaled)
-       │                                            │
-       │  enqueue: HTTP/2 + bearer token            │  session stream (push)
-       └─────────────────────┬──────────────────────┘
-                             ▼
-              ┌───────────────────────────┐
-              │ Service  (ClusterIP)      │
-              │ api :8080 · metrics :9464 │
-              └───────────────────────────┘
-                             │
-                             ▼
-   conveyord StatefulSet  ·  replicaCount: 3  ·  mode: kubernetes
-   ┌──────────┐     ┌──────────┐     ┌──────────┐
-   │  node-0  │◀───▶│  node-1  │◀───▶│  node-2  │   peer mTLS over
-   └──────────┘     └──────────┘     └──────────┘   the headless service
-        remoting :9000 · gossip :9001 · cluster :9002
-                             │
-                             ▼
-   ┌─────────────────────────────────────────────────────────┐
-   │ Postgres - HA: managed · CloudNativePG · Patroni/Stolon │
-   └─────────────────────────────────────────────────────────┘
-```
+
+Nodes talk to each other over peer mTLS through the headless service, on remoting `:9000`, gossip `:9001`, and cluster `:9002`.
 
 ## Server tier
 

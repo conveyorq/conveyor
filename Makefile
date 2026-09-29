@@ -43,7 +43,7 @@ COPYRIGHT_HOLDER   := ConveyorQ
 GO_SOURCES         := $(shell find . -path ./vendor -prune -o -name '*.go' -print)
 ADDLICENSE         := GOFLAGS= $(GO) run github.com/google/addlicense@$(ADDLICENSE_VERSION) -l apache -s -c "$(COPYRIGHT_HOLDER)"
 
-.PHONY: help all image build test lint lint-go lint-ts lint-py license-check license-fix licenses proto proto-format proto-lint proto-breaking quickstart chaos e2e e2e-clean e2e-dashboard e2e-demo postmark-demo postmark-stats postmark-pause postmark-resume postmark-archived postmark-events postmark-kill-node postmark-down postmark-clean benchmark helm-lint release clean dashboard dashboard-gen dashboard-test sdk-gen sdk-ts-gen sdk-ts-test sdk-ts-test-integration sdk-py-gen sdk-py-test conformance docs docs-dev
+.PHONY: help all image build test lint lint-go lint-ts lint-py license-check license-fix licenses proto proto-format proto-lint proto-breaking quickstart chaos e2e e2e-clean e2e-dashboard e2e-demo postmark-demo postmark-stats postmark-pause postmark-resume postmark-archived postmark-events postmark-kill-node postmark-down postmark-clean benchmark helm-lint release clean dashboard dashboard-gen dashboard-test sdk-gen sdk-ts-gen sdk-ts-test sdk-ts-test-integration sdk-py-gen sdk-py-test conformance docs docs-dev upgrade upgrade-go upgrade-ts upgrade-py vulncheck
 
 help: ## Show available targets
 	@awk 'BEGIN{FS=":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -89,6 +89,48 @@ license-check: ## Verify the Apache-2.0 SPDX header on every Go source file
 
 license-fix: ## Add the Apache-2.0 SPDX header to any Go source file missing it
 	$(ADDLICENSE) $(GO_SOURCES)
+
+# Dependency upgrades. Renovate raises these one PR at a time on a weekly
+# schedule; `make upgrade` does the whole sweep locally in one go, e.g. to pick
+# up a CVE fix without waiting for the next run. It bumps across majors, so run
+# `make all` afterwards and review the diff. pnpm's minimumReleaseAge policy
+# still applies, so a version published in the last day is held back.
+PNPM_DIRS := $(DASHBOARD_DIR) $(SDK_TS_DIR) $(EXAMPLES_TS_DIR) $(DOCS_DIR)
+GOVULNCHECK_VERSION := latest
+
+upgrade: upgrade-go upgrade-ts upgrade-py vulncheck ## Upgrade every dependency to its latest version, then scan for CVEs
+
+# Only direct requirements go to @latest; indirect ones move just as far as those
+# need. A blanket `go get -u` would also float modules the Kubernetes libraries
+# pin (kube-openapi is untagged, so -u takes master), breaking the build. An
+# indirect module with a CVE shows up in vulncheck and gets an explicit
+# `go get <module>@<fixed>`.
+upgrade-go: ## Upgrade direct Go dependencies to latest and re-vendor
+	$(GO) get $$(GOFLAGS=-mod=mod $(GO) list -m -f '{{if not (or .Indirect .Main)}}{{.Path}}@latest{{end}}' all)
+	$(GO) mod tidy
+	$(GO) mod vendor
+
+upgrade-ts: ## Upgrade every pnpm project to the latest versions (rewrites package.json ranges)
+	@set -e; for d in $(PNPM_DIRS); do \
+		echo "==> $$d"; \
+		( cd $$d && pnpm update --latest && pnpm install ); \
+	done
+
+# The Python SDK pins only lower bounds and has no lockfile, so consumers already
+# resolve the latest releases; this refreshes the local dev venv to match.
+upgrade-py: ## Upgrade the Python SDK's dev venv to the latest dependency versions
+	cd $(SDK_PY_DIR) && { test -d .venv || uv venv .venv; } && \
+		uv pip install --python .venv --upgrade -e ".[dev]"
+
+vulncheck: ## Scan Go, npm, and Python dependencies for known vulnerabilities
+	GOFLAGS= $(GO) run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
+	@set -e; for d in $(PNPM_DIRS); do \
+		echo "==> pnpm audit $$d"; \
+		( cd $$d && pnpm audit --prod ); \
+	done
+	cd $(SDK_PY_DIR) && { test -d .venv || uv venv .venv; } && \
+		uv pip install --python .venv -e ".[dev]" pip-audit && \
+		.venv/bin/pip-audit --skip-editable
 
 licenses: ## Print the dependency license report backing docs/licenses.md
 	$(GO) run github.com/google/go-licenses@latest report \

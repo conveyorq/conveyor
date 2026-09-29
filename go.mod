@@ -10,7 +10,7 @@ require (
 	github.com/knadh/koanf/providers/env/v2 v2.0.1
 	github.com/knadh/koanf/providers/rawbytes v1.0.1
 	github.com/knadh/koanf/providers/structs v1.0.1
-	github.com/knadh/koanf/v2 v2.3.6
+	github.com/knadh/koanf/v2 v2.3.7
 	github.com/oklog/ulid/v2 v2.1.2
 	github.com/pashagolub/pgxmock/v5 v5.2.0
 	github.com/prometheus/client_golang v1.24.1
