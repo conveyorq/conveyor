@@ -374,8 +374,6 @@ func (s *Server) buildDiscovery() (discovery.Provider, error) {
 			Namespace:         k8s.Namespace,
 			PodLabels:         k8s.PodLabels,
 			DiscoveryPortName: k8s.DiscoveryPortName,
-			RemotingPortName:  k8s.RemotingPortName,
-			PeersPortName:     k8s.PeersPortName,
 		}), nil
 
 	default:

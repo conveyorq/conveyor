@@ -69,10 +69,8 @@ cluster:
       {{- else }}
       {{- include "conveyor.selectorLabels" . | nindent 6 }}
       {{- end }}
-    # Named container ports the provider reads off discovered pods.
-    remoting_port_name: remoting
+    # Named container port the provider reads off discovered pods.
     discovery_port_name: gossip
-    peers_port_name: cluster
   {{- if .Values.cluster.tls.enabled }}
   # Mutual TLS between cluster peers. The cert Secret must carry tls.crt,
   # tls.key, and ca.crt (the CA each node verifies its peers against).

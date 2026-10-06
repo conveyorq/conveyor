@@ -2,6 +2,21 @@
 
 All notable changes to Conveyor are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Deprecated
+
+- **`cluster.kubernetes.remoting_port_name` and `cluster.kubernetes.peers_port_name`** are ignored. The Kubernetes discovery provider now reads only `discovery_port_name`; nodes learn each other's remoting and peers ports from the metadata they exchange once they join the cluster. Existing configuration files still load, and the matching `server.KubernetesConfig` fields remain so Go code that sets them still compiles. The Helm chart no longer renders the two keys.
+
+### Dependencies
+
+- **Go**: GoAkt v4.5.6 to v4.6.1; OpenTelemetry v1.46.0 to v1.47.0 with the Prometheus exporter at v0.69.0; the `koanf` environment provider v2.0.2.
+- **TypeScript SDK**: `@bufbuild/protobuf` and `protoc-gen-es` ^2.16.0 (stubs regenerated) and Vitest 5.0.3.
+- **Python SDK**: runtime floors raised to `grpcio>=1.84` and `protobuf>=7.36.2,<8`; stubs regenerated with the protobuf 36.2 and grpc 1.84.0 plugins, so the generated code refuses to load on an older `protobuf`.
+- **Dashboard**: Vite 8.3.2, Vitest 5.0.3, `@vitejs/plugin-react` 6.1.2, and jsdom 30.1.2.
+- **Documentation site**: mermaid 12.1.0.
+- **Toolchain**: golangci-lint v2.14.0 in the tools image, matching CI, and pnpm 12.9.1 as the `packageManager` pin for every pnpm project.
+
 ## [v0.5.0] - 2026-09-21
 
 This release makes Conveyor installable with `go install`, adds scoped API tokens, JSON output and batch actions to the CLI, Postgres pool and retention settings, and opt-in Prometheus alerts and KEDA worker autoscaling to the Helm chart, on top of the fixes from a code review pass. The wire protocol is unchanged. Postgres deployments apply one new migration (`0012`) on startup.

@@ -25,8 +25,8 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-  "grpcio>=1.83",
-  "protobuf>=7.36.1,<8",
+  "grpcio>=1.84",
+  "protobuf>=7.36.2,<8",
   "cryptography>=50",
 ]
 

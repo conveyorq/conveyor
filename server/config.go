@@ -87,10 +87,8 @@ const (
 	defaultRemotingPort  = 9000
 	defaultDiscoveryPort = 9001
 	defaultPeersPort     = 9002
-	// Kubernetes named container ports the discovery provider reads.
+	// Kubernetes named container port the discovery provider reads.
 	defaultDiscoveryPortName = "gossip"
-	defaultRemotingPortName  = "remoting"
-	defaultPeersPortName     = "cluster"
 	defaultLeaseTTL          = 60 * time.Second
 	defaultLeaseBatchMax     = 100
 	defaultResolverPoolSize  = 8
@@ -355,8 +353,9 @@ type ClusterConfig struct {
 }
 
 // KubernetesConfig configures GoAkt's Kubernetes discovery provider, which
-// finds peers by listing pods. The port names must match the named container
-// ports the node exposes for gossip, remoting, and the peers protocol.
+// finds peers by listing pods. DiscoveryPortName must match the named
+// container port the node exposes for gossip; peers learn each other's
+// remoting and peers ports from the metadata they exchange once they join.
 type KubernetesConfig struct {
 	// Namespace is the namespace the node's pods run in.
 	Namespace string `koanf:"namespace"`
@@ -364,9 +363,17 @@ type KubernetesConfig struct {
 	PodLabels map[string]string `koanf:"pod_labels"`
 	// DiscoveryPortName is the named container port for gossip bootstrap.
 	DiscoveryPortName string `koanf:"discovery_port_name"`
-	// RemotingPortName is the named container port for remoting.
+	// RemotingPortName is ignored.
+	//
+	// Deprecated: the discovery provider reads only DiscoveryPortName; peers
+	// learn the remoting port from cluster membership metadata. The field is
+	// kept so existing configurations still load and compile.
 	RemotingPortName string `koanf:"remoting_port_name"`
-	// PeersPortName is the named container port for the peers protocol.
+	// PeersPortName is ignored.
+	//
+	// Deprecated: the discovery provider reads only DiscoveryPortName; peers
+	// learn the peers port from cluster membership metadata. The field is
+	// kept so existing configurations still load and compile.
 	PeersPortName string `koanf:"peers_port_name"`
 }
 
@@ -450,8 +457,6 @@ func DefaultConfig() *Config {
 			PeersPort:     defaultPeersPort,
 			Kubernetes: KubernetesConfig{
 				DiscoveryPortName: defaultDiscoveryPortName,
-				RemotingPortName:  defaultRemotingPortName,
-				PeersPortName:     defaultPeersPortName,
 			},
 		},
 		Engine: EngineConfig{

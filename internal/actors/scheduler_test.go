@@ -38,7 +38,7 @@ type tellFailSystem struct {
 }
 
 // TellGrain fails deterministically so wakeQueue's best-effort tell branch runs.
-func (s tellFailSystem) TellGrain(context.Context, *goakt.GrainIdentity, any) error {
+func (s tellFailSystem) TellGrain(context.Context, *goakt.GrainIdentity, any, ...goakt.TellGrainOption) error {
 	return s.err
 }
 
