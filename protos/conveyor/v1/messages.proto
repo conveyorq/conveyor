@@ -42,6 +42,17 @@ message RegisterGateway {
   int32 weight = 5;
 }
 
+// UnregisterGateway tells a queue grain to forget a gateway that is shutting
+// down: a closed worker session or a deleted or paused webhook registration.
+// Without it the grain would keep the gateway until a dispatch to it failed,
+// leasing one task to a gateway that no longer exists.
+message UnregisterGateway {
+  // queue is the queue the gateway registered with.
+  string queue = 1;
+  // gateway_name is the gateway actor name the grain registered.
+  string gateway_name = 2;
+}
+
 // GatewayCredit grants dispatch credits from a gateway to a queue grain.
 message GatewayCredit {
   string queue = 1;

@@ -622,6 +622,14 @@ func overlay(row *taskRow) *conveyorv1.TaskEnvelope {
 	envelope.Retried = row.retried
 	envelope.LastError = row.lastError
 
+	// The due time moves on retry, run-now, and reschedule, so the enqueue-time
+	// option is stale; report the authoritative one.
+	if envelope.Options == nil {
+		envelope.Options = &conveyorv1.TaskOptions{}
+	}
+
+	envelope.Options.ProcessAt = timestamppb.New(row.processAt)
+
 	if !row.startedAt.IsZero() {
 		envelope.StartedAt = timestamppb.New(row.startedAt)
 	}

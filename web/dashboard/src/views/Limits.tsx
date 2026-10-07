@@ -6,14 +6,19 @@ import { useReadOnly } from "../api/readonly.tsx";
 import { QueryView } from "../components/QueryView.tsx";
 import { ConfirmButton } from "../components/ConfirmButton.tsx";
 import { Panel } from "../components/Panel.tsx";
+import { ActionAlert } from "../components/ActionAlert.tsx";
 import type { RateLimitInfo } from "../gen/conveyor/v1/service_pb.ts";
 
 const inputClass =
   "w-full rounded-md border border-[var(--border)] bg-[var(--input-bg)] px-2 py-1 text-sm text-[var(--text)] placeholder:text-[var(--muted)] focus:border-indigo-500/60 focus:outline-none";
 
-// emptyForm is the cleared limit-editor state. Burst defaults to 1, the
-// smallest valid bucket, matching the CLI default.
-const emptyForm = { queue: "", rate: "", burst: "1" };
+// emptyForm is the cleared limit-editor state. Burst starts empty rather than
+// pre-filled, so a typed value never appends to a hidden default.
+const emptyForm = { queue: "", rate: "", burst: "" };
+
+// defaultBurst is the burst an empty field saves: the smallest valid bucket,
+// matching the CLI default.
+const defaultBurst = 1;
 
 // Limits manages per-queue dispatch rate-limit overrides: a queue with an
 // override dispatches at most rate tasks/second with the given burst, instead
@@ -34,7 +39,7 @@ export function Limits() {
   function save() {
     const queue = form.queue.trim();
     const rate = Number(form.rate);
-    const burst = Number(form.burst);
+    const burst = form.burst.trim() === "" ? defaultBurst : Number(form.burst);
 
     // Validate before the round-trip so an empty queue, a non-positive rate, or
     // a sub-1/non-integer burst gives an immediate message instead of a server
@@ -52,11 +57,7 @@ export function Limits() {
 
   return (
     <div className="space-y-4">
-      {action.error !== undefined && (
-        <p role="alert" className="rounded-lg border border-rose-500/30 bg-rose-50 px-4 py-2.5 text-sm text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">
-          {action.error}
-        </p>
-      )}
+      <ActionAlert message={action.error} onDismiss={action.dismiss} />
 
       {!readOnly && (
         <Panel title="Rate-limit editor">
@@ -70,8 +71,8 @@ export function Limits() {
               <input className={inputClass} type="number" min="0" step="any" value={form.rate} onChange={(e) => setForm({ ...form, rate: e.target.value })} placeholder="50" />
             </label>
             <label className="text-xs text-[var(--muted)]">
-              Burst
-              <input className={inputClass} type="number" min="1" step="1" value={form.burst} onChange={(e) => setForm({ ...form, burst: e.target.value })} placeholder="10" />
+              Burst (default {defaultBurst})
+              <input className={inputClass} type="number" min="1" step="1" value={form.burst} onChange={(e) => setForm({ ...form, burst: e.target.value })} placeholder={String(defaultBurst)} />
             </label>
             <div className="col-span-2 flex gap-2 lg:col-span-3">
               <ConfirmButton label="Save limit" onConfirm={save} />

@@ -237,6 +237,10 @@ func (x *QueueGrain) OnReceive(ctx *goakt.GrainContext) {
 		x.maybeLease(ctx)
 		ctx.NoErr()
 
+	case *conveyorv1.UnregisterGateway:
+		x.removeGateway(message.GetGatewayName())
+		ctx.NoErr()
+
 	case *conveyorv1.GatewayCredit:
 		x.addCredits(message)
 		x.maybeLease(ctx)

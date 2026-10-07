@@ -1,8 +1,10 @@
 import { useState } from "react";
 
 // ConfirmButton runs an action on click. When confirm is set, the first click
-// reveals an inline Confirm/Cancel pair so a destructive action (cancel,
-// delete) is never a single misclick; a non-confirm button fires immediately.
+// reveals an inline pair, "Confirm <action>" and "Back", so a destructive
+// action (cancel, delete) is never a single misclick; a non-confirm button
+// fires immediately. The pair names the action and avoids the word "Cancel",
+// which would be ambiguous next to a "Cancel" task action.
 export function ConfirmButton({
   label,
   onConfirm,
@@ -37,7 +39,7 @@ export function ConfirmButton({
     return (
       <span className="inline-flex gap-1">
         <button type="button" disabled={busy} onClick={() => void run()} className={`${base} bg-rose-600 text-white hover:bg-rose-500`}>
-          Confirm
+          Confirm {label.toLowerCase()}
         </button>
         <button
           type="button"
@@ -45,7 +47,7 @@ export function ConfirmButton({
           onClick={() => setConfirming(false)}
           className={`${base} bg-[var(--btn-bg)] text-[var(--text-soft)] hover:bg-[var(--btn-hover)]`}
         >
-          Cancel
+          Back
         </button>
       </span>
     );

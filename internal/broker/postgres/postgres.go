@@ -1829,6 +1829,7 @@ func (b *Broker) GetTask(ctx context.Context, id string) (*conveyorv1.TaskEnvelo
 		state           int16
 		retried         int32
 		lastError       string
+		processAt       time.Time
 		startedAt       *time.Time
 		completedAt     *time.Time
 		progress        int16
@@ -1836,8 +1837,8 @@ func (b *Broker) GetTask(ctx context.Context, id string) (*conveyorv1.TaskEnvelo
 	)
 
 	err := b.pool.QueryRow(ctx,
-		"SELECT payload, state, retried, last_error, started_at, completed_at, progress, progress_message FROM conveyor_tasks WHERE id = $1", id,
-	).Scan(&payload, &state, &retried, &lastError, &startedAt, &completedAt, &progress, &progressMessage)
+		"SELECT payload, state, retried, last_error, process_at, started_at, completed_at, progress, progress_message FROM conveyor_tasks WHERE id = $1", id,
+	).Scan(&payload, &state, &retried, &lastError, &processAt, &startedAt, &completedAt, &progress, &progressMessage)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, conveyorv1.TaskState_TASK_STATE_UNSPECIFIED, broker.ErrTaskNotFound
 	}
@@ -1851,6 +1852,7 @@ func (b *Broker) GetTask(ctx context.Context, id string) (*conveyorv1.TaskEnvelo
 		return nil, conveyorv1.TaskState_TASK_STATE_UNSPECIFIED, err
 	}
 
+	stampProcessAt(envelope, processAt)
 	stampExecutionTimes(envelope, startedAt, completedAt)
 	stampProgress(envelope, progress, progressMessage)
 
@@ -1883,7 +1885,7 @@ func (b *Broker) ListTasks(ctx context.Context, query broker.TaskQuery) ([]broke
 		addCondition("id", "<", query.AfterID)
 	}
 
-	listTasks := "SELECT payload, retried, last_error, state, started_at, completed_at, progress, progress_message FROM conveyor_tasks"
+	listTasks := "SELECT payload, retried, last_error, state, process_at, started_at, completed_at, progress, progress_message FROM conveyor_tasks"
 	if len(conditions) > 0 {
 		listTasks += " WHERE " + strings.Join(conditions, " AND ")
 	}
@@ -1905,13 +1907,14 @@ func (b *Broker) ListTasks(ctx context.Context, query broker.TaskQuery) ([]broke
 			retried         int32
 			lastError       string
 			state           int16
+			processAt       time.Time
 			startedAt       *time.Time
 			completedAt     *time.Time
 			progress        int16
 			progressMessage string
 		)
 
-		if err = rows.Scan(&payload, &retried, &lastError, &state, &startedAt, &completedAt, &progress, &progressMessage); err != nil {
+		if err = rows.Scan(&payload, &retried, &lastError, &state, &processAt, &startedAt, &completedAt, &progress, &progressMessage); err != nil {
 			return nil, fmt.Errorf("postgres: scan task: %w", err)
 		}
 
@@ -1920,6 +1923,7 @@ func (b *Broker) ListTasks(ctx context.Context, query broker.TaskQuery) ([]broke
 			return nil, err
 		}
 
+		stampProcessAt(envelope, processAt)
 		stampExecutionTimes(envelope, startedAt, completedAt)
 		stampProgress(envelope, progress, progressMessage)
 
@@ -2750,6 +2754,17 @@ func unmarshalEnvelope(payload []byte, retried int32, lastError string) (*convey
 	envelope.LastError = lastError
 
 	return envelope, nil
+}
+
+// stampProcessAt overlays the authoritative due time onto an envelope read from
+// storage. The due time moves on retry, run-now, and reschedule, so the option
+// stored at enqueue is stale.
+func stampProcessAt(envelope *conveyorv1.TaskEnvelope, processAt time.Time) {
+	if envelope.Options == nil {
+		envelope.Options = &conveyorv1.TaskOptions{}
+	}
+
+	envelope.Options.ProcessAt = timestamppb.New(processAt)
 }
 
 // stampExecutionTimes overlays the authoritative lease and terminal instants

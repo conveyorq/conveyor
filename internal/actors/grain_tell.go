@@ -9,6 +9,8 @@ import (
 
 	goakt "github.com/tochemey/goakt/v4/actor"
 	"google.golang.org/protobuf/proto"
+
+	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 )
 
 // tellQueueGrain resolves the grain of queue and delivers message to it from
@@ -50,4 +52,27 @@ func tellQueueGrain(ctx context.Context, system goakt.ActorSystem, runtime *Runt
 			}
 		}
 	}()
+}
+
+// unregisterGateway tells each queue grain to forget the named gateway and
+// waits for every grain to run the message, so no new work is leased to the
+// gateway once it returns. It blocks on the grains and so must never run
+// inside an actor turn; the session handler and the webhook manager call it
+// off-turn while stopping a drained gateway. A failure is logged and the
+// grain falls back to dropping the gateway on its next failed dispatch.
+func unregisterGateway(ctx context.Context, system goakt.ActorSystem, runtime *Runtime, name string, queues []string) {
+	goCtx := context.WithoutCancel(ctx)
+	passivateAfter := runtime.Settings().PassivateAfter
+
+	for _, queue := range queues {
+		identity, err := goakt.GrainOf[*QueueGrain](goCtx, system, QueueGrainName(queue),
+			goakt.WithGrainDeactivateAfter(passivateAfter))
+		if err == nil {
+			err = system.TellGrain(goCtx, identity, &conveyorv1.UnregisterGateway{Queue: queue, GatewayName: name})
+		}
+
+		if err != nil {
+			runtime.Logger().Warn("unregistering gateway failed", "queue", queue, "gateway", name, "error", err)
+		}
+	}
 }

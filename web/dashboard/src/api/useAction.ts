@@ -4,8 +4,13 @@ import { errorMessage } from "../lib/errors.ts";
 // ActionState runs a one-shot mutation, surfacing its error and reloading the
 // underlying query on success.
 export interface ActionState {
+  // error is the last failed mutation's message, until the next run or a
+  // dismiss clears it.
   error?: string;
+  // run executes one mutation.
   run: (fn: () => Promise<unknown>) => Promise<void>;
+  // dismiss clears the shown error.
+  dismiss: () => void;
 }
 
 // useAction wraps a mutation call: on success it triggers reload so the view
@@ -27,5 +32,7 @@ export function useAction(reload: () => void): ActionState {
     [reload],
   );
 
-  return { error, run };
+  const dismiss = useCallback(() => setError(undefined), []);
+
+  return { error, run, dismiss };
 }

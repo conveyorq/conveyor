@@ -276,6 +276,40 @@ func mustState(t *testing.T, b broker.Broker, id string, want conveyorv1.TaskSta
 	}
 }
 
+// mustProcessAt asserts that both GetTask and ListTasks report the task's
+// current due time, not the one it was enqueued with.
+func mustProcessAt(t *testing.T, b broker.Broker, id string, want time.Time) {
+	t.Helper()
+
+	envelope, _, err := b.GetTask(context.Background(), id)
+	if err != nil {
+		t.Fatalf("GetTask(%s): %v", id, err)
+	}
+
+	if got := envelope.GetOptions().GetProcessAt().AsTime(); !got.Equal(want) {
+		t.Fatalf("GetTask(%s) process_at = %s, want %s", id, got, want)
+	}
+
+	records, err := b.ListTasks(context.Background(), broker.TaskQuery{})
+	if err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+
+	for _, record := range records {
+		if record.Envelope.GetId() != id {
+			continue
+		}
+
+		if got := record.Envelope.GetOptions().GetProcessAt().AsTime(); !got.Equal(want) {
+			t.Fatalf("ListTasks %s process_at = %s, want %s", id, got, want)
+		}
+
+		return
+	}
+
+	t.Fatalf("ListTasks: task %s not listed", id)
+}
+
 // mustAbsent asserts no task with the id exists.
 func mustAbsent(t *testing.T, b broker.Broker, id string) {
 	t.Helper()
@@ -1234,6 +1268,7 @@ func testRescheduleTask(t *testing.T, b broker.Broker, _ *clock.Fake) {
 	}
 
 	mustState(t, b, "task-002", conveyorv1.TaskState_TASK_STATE_SCHEDULED)
+	mustProcessAt(t, b, "task-002", start.Add(time.Hour))
 
 	if leased := mustLease(t, b, queueName, 1, "lease-2"); len(leased) != 0 {
 		t.Fatal("reschedule into the future must remove the task from the dispatch path")

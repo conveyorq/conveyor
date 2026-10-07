@@ -809,3 +809,96 @@ func TestConcurrencyKeyRedispatchAfterLeaseExpiry(t *testing.T) {
 	require.True(t, ok, "the limit-1 key must re-dispatch its task after a crash, not deadlock on its own slot")
 	require.Equal(t, "task-mutex", second.GetTask().GetId())
 }
+
+// TestQueueGrainForgetsClosedSessionGateway proves a closed worker session
+// unregisters from its queue: work enqueued after the close is not leased to
+// the departed gateway, so it stays untouched in pending.
+func TestQueueGrainForgetsClosedSessionGateway(t *testing.T) {
+	const queue = "closed-session"
+
+	ctx := context.Background()
+	taskLog := memory.New(clock.System())
+	engine := startEngine(t, taskLog)
+	recorder := newFrameRecorder()
+
+	handle, err := engine.SpawnGateway(ctx, GatewaySession{
+		SessionID:   "session-closed",
+		Queues:      []string{queue},
+		Concurrency: 4,
+	}, recorder)
+	require.NoError(t, err)
+
+	go func() {
+		for dispatch := range recorder.dispatched {
+			result := &conveyorv1.Result{
+				TaskId:  dispatch.GetTask().GetId(),
+				Outcome: conveyorv1.TaskOutcome_TASK_OUTCOME_SUCCESS,
+			}
+			_ = handle.Tell(context.Background(), result)
+		}
+	}()
+
+	// A completed task proves the gateway registered with the grain.
+	require.NoError(t, engine.Enqueue(ctx, newTask("task-before-close", queue, "test:closed", 4)))
+	requireTaskState(t, engine, "task-before-close", conveyorv1.TaskState_TASK_STATE_COMPLETED)
+
+	require.NoError(t, handle.Stop(ctx))
+	require.NoError(t, engine.Enqueue(ctx, newTask("task-after-close", queue, "test:closed", 4)))
+
+	time.Sleep(500 * time.Millisecond)
+
+	envelope, state, err := taskLog.GetTask(ctx, "task-after-close")
+	require.NoError(t, err)
+	require.Equal(t, conveyorv1.TaskState_TASK_STATE_PENDING, state)
+	require.Nil(t, envelope.GetStartedAt(), "a closed session must not be leased work")
+}
+
+// TestDrainingGatewaySkipsReRegistration proves a registerTick landing after
+// the drain cannot re-announce a closing session: once unregistered, the
+// gateway stays unregistered and new work is not leased to it.
+func TestDrainingGatewaySkipsReRegistration(t *testing.T) {
+	const queue = "draining-session"
+
+	ctx := context.Background()
+	taskLog := memory.New(clock.System())
+	engine := startEngine(t, taskLog)
+	recorder := newFrameRecorder()
+
+	handle, err := engine.SpawnGateway(ctx, GatewaySession{
+		SessionID:   "session-draining",
+		Queues:      []string{queue},
+		Concurrency: 4,
+	}, recorder)
+	require.NoError(t, err)
+
+	t.Cleanup(func() { _ = handle.Stop(ctx) })
+
+	go func() {
+		for dispatch := range recorder.dispatched {
+			result := &conveyorv1.Result{
+				TaskId:  dispatch.GetTask().GetId(),
+				Outcome: conveyorv1.TaskOutcome_TASK_OUTCOME_SUCCESS,
+			}
+			_ = handle.Tell(context.Background(), result)
+		}
+	}()
+
+	require.NoError(t, engine.Enqueue(ctx, newTask("task-registered", queue, "test:draining", 4)))
+	requireTaskState(t, engine, "task-registered", conveyorv1.TaskState_TASK_STATE_COMPLETED)
+
+	_, err = goakt.Ask(ctx, handle.pid, drainSession{}, drainTimeout)
+	require.NoError(t, err)
+	unregisterGateway(ctx, engine.system, engine.runtime, handle.pid.Name(), []string{queue})
+
+	// A late tick must not re-register; give a re-registration time to land.
+	require.NoError(t, goakt.Tell(ctx, handle.pid, registerTick{}))
+	time.Sleep(300 * time.Millisecond)
+
+	require.NoError(t, engine.Enqueue(ctx, newTask("task-after-drain", queue, "test:draining", 4)))
+	time.Sleep(500 * time.Millisecond)
+
+	envelope, state, err := taskLog.GetTask(ctx, "task-after-drain")
+	require.NoError(t, err)
+	require.Equal(t, conveyorv1.TaskState_TASK_STATE_PENDING, state)
+	require.Nil(t, envelope.GetStartedAt(), "a draining gateway must not re-register")
+}

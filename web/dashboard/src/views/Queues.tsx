@@ -5,6 +5,7 @@ import { useReadOnly } from "../api/readonly.tsx";
 import { QueryView } from "../components/QueryView.tsx";
 import { ConfirmButton } from "../components/ConfirmButton.tsx";
 import { Panel } from "../components/Panel.tsx";
+import { ActionAlert } from "../components/ActionAlert.tsx";
 import { Badge } from "../components/Badge.tsx";
 import { formatNumber } from "../lib/format.ts";
 
@@ -29,11 +30,7 @@ export function Queues() {
 
   return (
     <div className="space-y-4">
-      {action.error !== undefined && (
-        <p role="alert" className="rounded-lg border border-rose-500/30 bg-rose-50 px-4 py-2.5 text-sm text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">
-          {action.error}
-        </p>
-      )}
+      <ActionAlert message={action.error} onDismiss={action.dismiss} />
 
       <Panel title="Queues">
         <QueryView query={query}>

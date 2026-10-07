@@ -113,3 +113,17 @@ func TestActorsNeverWaitOnGrainsInsideTurns(t *testing.T) {
 		}
 	}
 }
+
+// TestUnregisterGatewayToleratesStoppedSystem proves a failed unregistration
+// is logged rather than fatal: the grain's failed-dispatch path still drops
+// the gateway later, so a session close must never fail over it.
+func TestUnregisterGatewayToleratesStoppedSystem(t *testing.T) {
+	ctx := context.Background()
+	engine := newNode(memory.New(clock.System()), testSettings, freePorts(t, 3), nil)
+	require.NoError(t, engine.Start(ctx))
+	require.NoError(t, engine.Stop(ctx))
+
+	require.NotPanics(t, func() {
+		unregisterGateway(ctx, engine.system, engine.runtime, "gateway-stopped", []string{"stopped"})
+	})
+}

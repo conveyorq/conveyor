@@ -638,6 +638,40 @@ func TestWebhookManagerPauseAndResume(t *testing.T) {
 	require.Eventually(t, completedReaches(taskLog, 2), 10*time.Second, 50*time.Millisecond)
 }
 
+// TestWebhookManagerDeleteUnregistersGateway proves a deleted registration's
+// gateway unregisters from its queue: work enqueued after the delete is not
+// leased to the departed gateway, so it stays untouched in pending.
+func TestWebhookManagerDeleteUnregistersGateway(t *testing.T) {
+	const queue = "hooks-delete"
+
+	ctx := context.Background()
+	taskLog := memory.New(clock.System())
+	endpoint := newRPCEndpoint(t, completedFor)
+
+	seedWebhookWorker(t, taskLog, testWebhookWorker(endpoint.server.URL, queue))
+	engine := startEngine(t, taskLog)
+
+	require.NoError(t, taskLog.Enqueue(ctx, newTask("delete-1", queue, "email:send", 4)))
+	require.Eventually(t, completedReaches(taskLog, 1), 10*time.Second, 50*time.Millisecond)
+
+	require.NoError(t, taskLog.DeleteWebhookWorker(ctx, "hooks"))
+	reconcileNow(t, engine)
+
+	probe := &conveyorv1.CancelActive{TaskId: "absent"}
+	require.Eventually(t, func() bool {
+		return engine.TellWebhookGateway(ctx, "hooks", probe) != nil
+	}, 10*time.Second, 50*time.Millisecond, "the deleted registration's gateway must stop")
+
+	require.NoError(t, engine.Enqueue(ctx, newTask("delete-2", queue, "email:send", 4)))
+
+	time.Sleep(500 * time.Millisecond)
+
+	envelope, state, err := taskLog.GetTask(ctx, "delete-2")
+	require.NoError(t, err)
+	require.Equal(t, conveyorv1.TaskState_TASK_STATE_PENDING, state)
+	require.Nil(t, envelope.GetStartedAt(), "a deleted registration must not be leased work")
+}
+
 // TestWebhookAdminCancelAsyncPushesNotification proves an admin cancel of an
 // accepted (asynchronous) delivery pushes a cancel notification to the still-
 // live endpoint so it stops the work the cancel revoked.
@@ -1709,4 +1743,41 @@ func TestWebhookGatewayResolveProbeReopensBreaker(t *testing.T) {
 	syncGateway(pid)
 
 	require.True(t, pid.IsRunning(), "a failed probe re-withholds capacity without crashing the gateway")
+}
+
+// TestDrainingWebhookGatewaySkipsReRegistration proves a registerTick landing
+// after the drain cannot re-announce a stopping registration: once
+// unregistered, the gateway stays unregistered and new work is not leased to
+// it.
+func TestDrainingWebhookGatewaySkipsReRegistration(t *testing.T) {
+	const queue = "hooks-draining"
+
+	ctx := context.Background()
+	taskLog := memory.New(clock.System())
+	endpoint := newRPCEndpoint(t, completedFor)
+
+	seedWebhookWorker(t, taskLog, testWebhookWorker(endpoint.server.URL, queue))
+	engine := startEngine(t, taskLog)
+
+	require.NoError(t, taskLog.Enqueue(ctx, newTask("draining-1", queue, "email:send", 4)))
+	require.Eventually(t, completedReaches(taskLog, 1), 10*time.Second, 50*time.Millisecond)
+
+	gateway, err := engine.system.ActorOf(ctx, webhookGatewayPrefix+"hooks")
+	require.NoError(t, err)
+
+	response, err := goakt.Ask(ctx, gateway, drainSession{}, drainTimeout)
+	require.NoError(t, err)
+	unregisterGateway(ctx, engine.system, engine.runtime, gateway.Name(), response.(sessionDrained).queues)
+
+	// A late tick must not re-register; give a re-registration time to land.
+	require.NoError(t, goakt.Tell(ctx, gateway, registerTick{}))
+	time.Sleep(300 * time.Millisecond)
+
+	require.NoError(t, engine.Enqueue(ctx, newTask("draining-2", queue, "email:send", 4)))
+	time.Sleep(500 * time.Millisecond)
+
+	envelope, state, err := taskLog.GetTask(ctx, "draining-2")
+	require.NoError(t, err)
+	require.Equal(t, conveyorv1.TaskState_TASK_STATE_PENDING, state)
+	require.Nil(t, envelope.GetStartedAt(), "a draining webhook gateway must not re-register")
 }

@@ -5,12 +5,15 @@ import { useRefreshTick } from "../api/refresh.ts";
 import { useReadOnly } from "../api/readonly.tsx";
 import { ConfirmButton } from "../components/ConfirmButton.tsx";
 import { Panel } from "../components/Panel.tsx";
+import { ActionAlert } from "../components/ActionAlert.tsx";
 import { Badge } from "../components/Badge.tsx";
 import { errorMessage } from "../lib/errors.ts";
+import { rememberTaskFilters, taskFilters } from "../lib/taskFilters.ts";
 import { decodePayload, formatDuration, formatTime, orDash, taskStateLabel, taskStateTone } from "../lib/format.ts";
 import { TaskState } from "../gen/conveyor/v1/task_pb.ts";
 import type { TaskInfo } from "../gen/conveyor/v1/service_pb.ts";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
+import { Code, ConnectError } from "@connectrpc/connect";
 
 // stateOptions are the task-state filter choices; UNSPECIFIED means all states.
 const stateOptions: { value: TaskState; label: string }[] = [
@@ -19,6 +22,8 @@ const stateOptions: { value: TaskState; label: string }[] = [
   { value: TaskState.ACTIVE, label: "Active" },
   { value: TaskState.SCHEDULED, label: "Scheduled" },
   { value: TaskState.RETRY, label: "Retry" },
+  { value: TaskState.BLOCKED, label: "Blocked" },
+  { value: TaskState.AGGREGATING, label: "Aggregating" },
   { value: TaskState.COMPLETED, label: "Completed" },
   { value: TaskState.ARCHIVED, label: "Archived" },
   { value: TaskState.CANCELED, label: "Canceled" },
@@ -27,6 +32,32 @@ const stateOptions: { value: TaskState; label: string }[] = [
 // pageSize is how many tasks one page shows.
 const pageSize = 20;
 
+// queueFilterDelayMs is how long typing in the queue filter must pause before
+// it applies, so a typed queue name costs one fetch, not one per keystroke.
+const queueFilterDelayMs = 300;
+
+// maxNamedFailures caps how many failed tasks a batch error message names.
+const maxNamedFailures = 3;
+
+// BatchResult is one task's outcome in a batch action; an empty error means
+// the action succeeded for that task.
+interface BatchResult {
+  id: string;
+  error: string;
+}
+
+// batchFailureMessage summarizes a partly failed batch, naming the first few
+// failed tasks and why, so the operator knows which ones to look at.
+function batchFailureMessage(failed: BatchResult[], total: number): string {
+  const named = failed
+    .slice(0, maxNamedFailures)
+    .map((result) => `${result.id} (${result.error})`)
+    .join(", ");
+  const more = failed.length > maxNamedFailures ? ` and ${failed.length - maxNamedFailures} more` : "";
+
+  return `${failed.length} of ${total} failed: ${named}${more}. The failed tasks stay selected.`;
+}
+
 const inputClass =
   "rounded-md border border-[var(--border)] bg-[var(--input-bg)] px-2 py-1 text-xs text-[var(--text)] placeholder:text-[var(--muted)] focus:border-indigo-500/60 focus:outline-none";
 
@@ -34,8 +65,11 @@ const inputClass =
 // per-task detail panel.
 export function Tasks() {
   const api = useApi();
-  const [queue, setQueue] = useState("");
-  const [state, setState] = useState<TaskState>(TaskState.UNSPECIFIED);
+  // queueInput is what the operator has typed; queue is the applied filter,
+  // which follows once typing pauses.
+  const [queueInput, setQueueInput] = useState(() => taskFilters().queue);
+  const [queue, setQueue] = useState(() => taskFilters().queue);
+  const [state, setState] = useState<TaskState>(() => taskFilters().state);
   const [tasks, setTasks] = useState<TaskInfo[]>([]);
   // pageStack holds the page_token at the start of each visited page; its last
   // entry is the current page, and its length is the page number.
@@ -43,7 +77,11 @@ export function Tasks() {
   const [nextToken, setNextToken] = useState("");
   const [error, setError] = useState<string | undefined>(undefined);
   const [loading, setLoading] = useState(true);
-  const [selected, setSelected] = useState<TaskInfo | undefined>(undefined);
+  // selectedId is the task shown in the detail panel; detail is its latest
+  // record, refetched after every action and refresh so the panel stays open
+  // and current.
+  const [selectedId, setSelectedId] = useState<string | undefined>(undefined);
+  const [detail, setDetail] = useState<TaskInfo | undefined>(undefined);
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [refresh, setRefresh] = useState(0);
   const action = useAction(() => setRefresh((n) => n + 1));
@@ -67,21 +105,31 @@ export function Tasks() {
     setChecked((current) => (current.size === tasks.length ? new Set() : new Set(tasks.map((task) => task.id))));
   }
 
-  // runBatch applies a batch RPC to the selection, surfacing partial failures,
-  // then clears the selection.
-  function runBatch(call: (ids: string[]) => Promise<{ results: { id: string; error: string }[] }>) {
+  // closeDetail hides the detail panel.
+  function closeDetail() {
+    setSelectedId(undefined);
+    setDetail(undefined);
+  }
+
+  // runBatch applies a batch RPC to the selection. Succeeded tasks leave the
+  // selection; failed ones stay selected and are named in the error, so they
+  // can be inspected or retried.
+  function runBatch(call: (ids: string[]) => Promise<{ results: BatchResult[] }>) {
     const ids = Array.from(checked);
 
-    return action
-      .run(async () => {
-        const { results } = await call(ids);
-        const failed = results.filter((result) => result.error !== "");
+    return action.run(async () => {
+      const { results } = await call(ids);
+      const failed = results.filter((result) => result.error !== "");
 
-        if (failed.length > 0) {
-          throw new Error(`${failed.length} of ${results.length} failed: ${failed[0].error}`);
-        }
-      })
-      .then(() => setChecked(new Set()));
+      setChecked(new Set(failed.map((result) => result.id)));
+
+      if (failed.length > 0) {
+        // The rest of the batch committed, so reload before reporting the
+        // failures; the action only reloads on full success.
+        setRefresh((n) => n + 1);
+        throw new Error(batchFailureMessage(failed, results.length));
+      }
+    });
   }
 
   useEffect(() => {
@@ -94,6 +142,14 @@ export function Tasks() {
       .then((resp) => {
         if (active) {
           setTasks(resp.tasks);
+          // A selected task can leave the page (deleted, or moved out of the
+          // filtered state); drop it so the batch bar only counts visible rows.
+          const visible = new Set(resp.tasks.map((task) => task.id));
+          setChecked((current) => {
+            const kept = [...current].filter((id) => visible.has(id));
+
+            return kept.length === current.size ? current : new Set(kept);
+          });
           setNextToken(resp.nextPageToken);
           setError(undefined);
           setLoading(false);
@@ -111,21 +167,66 @@ export function Tasks() {
     };
   }, [api, queue, state, pageToken, refresh, tick]);
 
-  // resetTo applies a filter change and returns to the first page.
+  // Refetch the selected task whenever the list reloads, so the panel shows
+  // the result of an action (and auto-refresh) without being reopened. A task
+  // that no longer exists (deleted) closes the panel; any other failure keeps
+  // the last known record on screen.
+  useEffect(() => {
+    if (selectedId === undefined) {
+      return;
+    }
+
+    let active = true;
+
+    api.tasks
+      .getTask({ id: selectedId })
+      .then((resp) => {
+        if (active) {
+          setDetail(resp.task);
+        }
+      })
+      .catch((err: unknown) => {
+        if (active && ConnectError.from(err).code === Code.NotFound) {
+          closeDetail();
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [api, selectedId, refresh, tick]);
+
+  useEffect(() => {
+    rememberTaskFilters({ queue, state });
+  }, [queue, state]);
+
+  // resetTo applies a filter change and returns to the first page. A filter
+  // change starts a new search, so the last action's error no longer applies.
   function resetTo(change: () => void) {
     change();
     setPageStack([""]);
-    setSelected(undefined);
+    closeDetail();
     setChecked(new Set());
+    action.dismiss();
   }
+
+  useEffect(() => {
+    if (queueInput === queue) {
+      return;
+    }
+
+    const timer = setTimeout(() => resetTo(() => setQueue(queueInput)), queueFilterDelayMs);
+
+    return () => clearTimeout(timer);
+  }, [queueInput, queue]);
 
   const filters = (
     <>
       <input
         aria-label="Queue filter"
         placeholder="All queues"
-        value={queue}
-        onChange={(event) => resetTo(() => setQueue(event.target.value))}
+        value={queueInput}
+        onChange={(event) => setQueueInput(event.target.value)}
         className={`w-32 ${inputClass}`}
       />
       <select
@@ -145,11 +246,7 @@ export function Tasks() {
 
   return (
     <div className="space-y-4">
-      {action.error !== undefined && (
-        <p role="alert" className="rounded-lg border border-rose-500/30 bg-rose-50 px-4 py-2.5 text-sm text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">
-          {action.error}
-        </p>
-      )}
+      <ActionAlert message={action.error} onDismiss={action.dismiss} />
 
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
         <div className="min-w-0 flex-1">
@@ -206,10 +303,13 @@ export function Tasks() {
                   {tasks.map((task) => (
                     <tr
                       key={task.id}
-                      onClick={() => setSelected(task)}
+                      onClick={() => {
+                        setSelectedId(task.id);
+                        setDetail(task);
+                      }}
                       className={
                         "cursor-pointer border-t border-[var(--border)] hover:bg-[var(--row-hover)] " +
-                        (selected?.id === task.id ? "bg-indigo-50 dark:bg-indigo-500/10" : "")
+                        (selectedId === task.id ? "bg-indigo-50 dark:bg-indigo-500/10" : "")
                       }
                     >
                       {!readOnly && (
@@ -243,7 +343,7 @@ export function Tasks() {
                     disabled={pageStack.length === 1}
                     onClick={() => {
                       setPageStack((stack) => stack.slice(0, -1));
-                      setSelected(undefined);
+                      closeDetail();
                       setChecked(new Set());
                     }}
                     className="rounded-md bg-[var(--btn-bg)] px-3 py-1 text-[var(--text-soft)] hover:bg-[var(--btn-hover)] disabled:opacity-40"
@@ -255,7 +355,7 @@ export function Tasks() {
                     disabled={nextToken === ""}
                     onClick={() => {
                       setPageStack((stack) => [...stack, nextToken]);
-                      setSelected(undefined);
+                      closeDetail();
                       setChecked(new Set());
                     }}
                     className="rounded-md bg-[var(--btn-bg)] px-3 py-1 text-[var(--text-soft)] hover:bg-[var(--btn-hover)] disabled:opacity-40"
@@ -268,10 +368,10 @@ export function Tasks() {
           </Panel>
         </div>
 
-        {selected !== undefined && (
+        {detail !== undefined && (
           <aside className="lg:w-80">
             <Panel title="Task detail">
-              <TaskDetail task={selected} api={api} action={action} readOnly={readOnly} onActed={() => setSelected(undefined)} />
+              <TaskDetail key={detail.id} task={detail} api={api} action={action} readOnly={readOnly} />
             </Panel>
           </aside>
         )}
@@ -281,21 +381,21 @@ export function Tasks() {
 }
 
 // TaskDetail shows the full record for the selected task and the actions that
-// apply to it: run-now, cancel, and delete (the latter two confirmed).
+// apply to it: run-now, cancel, and delete (the latter two confirmed). A
+// successful action reloads the view, which refetches this task, so the panel
+// stays open and shows the result.
 function TaskDetail({
   task,
   api,
   action,
   readOnly,
-  onActed,
 }: {
   task: TaskInfo;
   api: Api;
   action: ActionState;
   readOnly: boolean;
-  onActed: () => void;
 }) {
-  const act = (fn: () => Promise<unknown>) => action.run(fn).then(onActed);
+  const act = (fn: () => Promise<unknown>) => action.run(fn);
 
   // Only offer actions the task's state allows, matching the broker's rules,
   // so the dashboard never sends an operation that fails as invalid-state.
@@ -327,7 +427,9 @@ function TaskDetail({
     ["Process at", formatTime(task.processAt)],
     ["Started", formatTime(task.startedAt)],
     ["Completed", formatTime(task.completedAt)],
-    ["Duration", formatDuration(task.startedAt, task.completedAt)],
+    // A waiting task keeps its last attempt's start time, so only an active or
+    // finished task has a meaningful duration.
+    ["Duration", state === TaskState.ACTIVE || task.completedAt ? formatDuration(task.startedAt, task.completedAt) : orDash("")],
     [
       "Progress",
       task.progress > 0 || task.progressMessage !== ""

@@ -240,8 +240,20 @@ YAML
     forward_target="pod/${RELEASE}-0"
   fi
 
+  # A port-forward dies with its pod, so a restarted or deleted server node
+  # would otherwise end the demo (and the EXIT trap would delete the cluster).
+  # Re-establish it until the demo is stopped; the TERM trap stops the current
+  # kubectl when cleanup kills the loop, so no forward is left behind.
   log "opening the live dashboard"
-  kubectl -n "${NAMESPACE}" port-forward "${forward_target}" 8080:8080 >/dev/null 2>&1 &
+  (
+    trap 'kill "${kubectl_pid:-}" >/dev/null 2>&1; exit 0' TERM
+    while true; do
+      kubectl -n "${NAMESPACE}" port-forward "${forward_target}" 8080:8080 >/dev/null 2>&1 &
+      kubectl_pid=$!
+      wait "${kubectl_pid}" || true
+      sleep 1
+    done
+  ) &
   forward_pid=$!
   sleep 3
   if command -v open >/dev/null 2>&1; then open "${dashboard_url}"; elif command -v xdg-open >/dev/null 2>&1; then xdg-open "${dashboard_url}"; fi

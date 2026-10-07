@@ -257,13 +257,22 @@ func (m *WebhookManager) stopChild(ctx *goakt.ReceiveContext, name string, child
 	m.stopping[name] = true
 
 	logger := m.runtime.Logger()
+	runtime := m.runtime
+	system := ctx.ActorSystem()
 
 	ctx.PipeTo(ctx.Self(), func() (any, error) {
 		background := context.Background()
 
 		if child.IsRunning() {
-			if _, err := goakt.Ask(background, child, drainSession{}, drainTimeout); err != nil {
+			response, err := goakt.Ask(background, child, drainSession{}, drainTimeout)
+			if err != nil {
 				logger.Warn("webhook gateway drain failed; lease expiry will recover", "registration", name, "error", err)
+			}
+
+			// Unregister before shutting down, so a deleted or paused
+			// registration is never leased another task.
+			if drained, ok := response.(sessionDrained); ok {
+				unregisterGateway(background, system, runtime, child.Name(), drained.queues)
 			}
 
 			if err := child.Shutdown(background); err != nil {
@@ -329,6 +338,10 @@ type WebhookGateway struct {
 	// gateway announced a single slot so exactly one delivery at a time tests
 	// the endpoint, instead of restoring full capacity onto a still-dead one.
 	probing bool
+	// draining records that the registration is being stopped, so a tick or
+	// registration update that lands after the drain cannot re-announce
+	// capacity to a grain the gateway is about to be unregistered from.
+	draining bool
 	// typeBreakers holds the per-task-type circuit breakers, mirroring the
 	// stream gateway's completion throttling for failing task types.
 	typeBreakers map[string]*breaker.CircuitBreaker
@@ -367,6 +380,7 @@ func (w *WebhookGateway) PreStart(ctx *goakt.Context) error {
 	w.async = make(map[string]time.Time)
 	w.withholding = false
 	w.probing = false
+	w.draining = false
 	w.typeBreakers = make(map[string]*breaker.CircuitBreaker)
 
 	w.breakerOpenTimeout = runtime.Settings().WebhookBreakerOpenTimeout
@@ -403,7 +417,7 @@ func (w *WebhookGateway) Receive(ctx *goakt.ReceiveContext) {
 
 	case drainSession:
 		w.drain(ctx)
-		ctx.Response(sessionDrained{})
+		ctx.Response(sessionDrained{queues: slices.Collect(maps.Keys(w.registration.Queues))})
 
 	case *conveyorv1.ExecuteTask:
 		w.deliver(ctx, message)
@@ -475,6 +489,10 @@ func armTick(ctx *goakt.ReceiveContext, message any, reference string) error {
 // register announces this gateway and its capacity to every served queue
 // grain, exactly like a stream gateway announces its session.
 func (w *WebhookGateway) register(ctx *goakt.ReceiveContext) {
+	if w.draining {
+		return
+	}
+
 	for queue, weight := range w.registration.Queues {
 		registration := &conveyorv1.RegisterGateway{
 			Queue:       queue,
@@ -1192,6 +1210,7 @@ func (w *WebhookGateway) drain(ctx *goakt.ReceiveContext) {
 	w.batchStates = make(map[string]*webhookBatch)
 	w.aborts = make(map[string]context.CancelFunc)
 	w.async = make(map[string]time.Time)
+	w.draining = true
 	w.runtime.Logger().Debug("webhook gateway drained", "gateway", w.name)
 }
 

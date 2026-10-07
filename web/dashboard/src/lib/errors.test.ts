@@ -2,10 +2,14 @@ import { expect, test } from "vitest";
 import { ConnectError, Code } from "@connectrpc/connect";
 import { errorMessage } from "./errors.ts";
 
-test("extracts the message from a plain error", () => {
-  expect(errorMessage(new Error("boom"))).toContain("boom");
+test("shows a plain error's message as written", () => {
+  expect(errorMessage(new Error("boom"))).toBe("boom");
 });
 
-test("extracts the message from a ConnectError", () => {
-  expect(errorMessage(new ConnectError("denied", Code.Unauthenticated))).toContain("denied");
+test("keeps the code prefix on a ConnectError", () => {
+  expect(errorMessage(new ConnectError("denied", Code.Unauthenticated))).toBe("[unauthenticated] denied");
+});
+
+test("normalizes a non-Error throw", () => {
+  expect(errorMessage("boom")).toContain("boom");
 });

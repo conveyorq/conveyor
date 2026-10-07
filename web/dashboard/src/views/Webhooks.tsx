@@ -6,6 +6,7 @@ import { useReadOnly } from "../api/readonly.tsx";
 import { QueryView } from "../components/QueryView.tsx";
 import { ConfirmButton } from "../components/ConfirmButton.tsx";
 import { Panel } from "../components/Panel.tsx";
+import { ActionAlert } from "../components/ActionAlert.tsx";
 import { Badge } from "../components/Badge.tsx";
 import type { WebhookWorker } from "../gen/conveyor/v1/service_pb.ts";
 
@@ -14,7 +15,13 @@ const inputClass =
 
 // emptyForm is the cleared registration-editor state. Queues are entered as
 // "name=weight" pairs and secrets one per line; both parse on save.
-const emptyForm = { name: "", url: "", queues: "", concurrency: "4", secrets: "" };
+// Concurrency starts empty rather than pre-filled, so a typed value never
+// appends to a hidden default.
+const emptyForm = { name: "", url: "", queues: "", concurrency: "", secrets: "" };
+
+// defaultConcurrency is the concurrency an empty field saves, matching the CLI
+// default.
+const defaultConcurrency = 1;
 
 // parseQueues turns comma-separated "name" or "name=weight" pairs into the
 // wire map; a bare name weighs one.
@@ -81,7 +88,7 @@ export function Webhooks() {
             name,
             url,
             queues,
-            concurrency: Number(form.concurrency) || 1,
+            concurrency: Number(form.concurrency) || defaultConcurrency,
             secrets,
           },
         }),
@@ -91,11 +98,7 @@ export function Webhooks() {
 
   return (
     <div className="space-y-4">
-      {action.error !== undefined && (
-        <p role="alert" className="rounded-lg border border-rose-500/30 bg-rose-50 px-4 py-2.5 text-sm text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">
-          {action.error}
-        </p>
-      )}
+      <ActionAlert message={action.error} onDismiss={action.dismiss} />
 
       {!readOnly && (
         <Panel title="Registration editor">
@@ -113,8 +116,8 @@ export function Webhooks() {
               <input className={inputClass} value={form.queues} onChange={(e) => setForm({ ...form, queues: e.target.value })} placeholder="billing=3, default=1" />
             </label>
             <label className="text-xs text-[var(--muted)]">
-              Concurrency
-              <input className={inputClass} type="number" min="1" value={form.concurrency} onChange={(e) => setForm({ ...form, concurrency: e.target.value })} />
+              Concurrency (default {defaultConcurrency})
+              <input className={inputClass} type="number" min="1" value={form.concurrency} onChange={(e) => setForm({ ...form, concurrency: e.target.value })} placeholder={String(defaultConcurrency)} />
             </label>
             <label className="col-span-2 text-xs text-[var(--muted)]">
               Secrets (one per line, newest first; re-enter when editing)

@@ -79,6 +79,8 @@ test("creates a registration from the editor form", async () => {
   expect(worker.name).toBe("hooks");
   expect(worker.queues).toEqual({ billing: 3, default: 1 });
   expect(worker.secrets).toEqual(["s3cret"]);
+  // An empty concurrency field saves the default rather than a hidden value.
+  expect(worker.concurrency).toBe(1);
 });
 
 test("pauses and deletes a registration after confirmation", async () => {
@@ -108,7 +110,7 @@ test("pauses and deletes a registration after confirmation", async () => {
   await userEvent.click(await screen.findByRole("button", { name: "Delete" }));
   expect(deleteWebhookWorker).not.toHaveBeenCalled();
 
-  await userEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+  await userEvent.click(await screen.findByRole("button", { name: "Confirm delete" }));
   expect(deleteWebhookWorker).toHaveBeenCalledOnce();
   expect(deleteWebhookWorker.mock.calls[0][0].name).toBe("hooks");
 });

@@ -6,6 +6,7 @@ import { useReadOnly } from "../api/readonly.tsx";
 import { QueryView } from "../components/QueryView.tsx";
 import { ConfirmButton } from "../components/ConfirmButton.tsx";
 import { Panel } from "../components/Panel.tsx";
+import { ActionAlert } from "../components/ActionAlert.tsx";
 import { Badge } from "../components/Badge.tsx";
 import { formatTime } from "../lib/format.ts";
 import type { CronEntry } from "../gen/conveyor/v1/service_pb.ts";
@@ -69,11 +70,7 @@ export function Cron() {
 
   return (
     <div className="space-y-4">
-      {action.error !== undefined && (
-        <p role="alert" className="rounded-lg border border-rose-500/30 bg-rose-50 px-4 py-2.5 text-sm text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">
-          {action.error}
-        </p>
-      )}
+      <ActionAlert message={action.error} onDismiss={action.dismiss} />
 
       {!readOnly && (
         <Panel title="Schedule editor">
@@ -83,7 +80,7 @@ export function Cron() {
               <input className={inputClass} value={form.id} onChange={(e) => setForm({ ...form, id: e.target.value })} placeholder="hourly-report" />
             </label>
             <label className="text-xs text-[var(--muted)]">
-              Schedule (6-field cron)
+              Schedule (6-field cron, UTC)
               <input className={inputClass} value={form.spec} onChange={(e) => setForm({ ...form, spec: e.target.value })} placeholder="0 0 * * * *" />
             </label>
             <label className="text-xs text-[var(--muted)]">
@@ -122,10 +119,10 @@ export function Cron() {
                 <thead>
                   <tr className="text-left text-xs font-medium uppercase tracking-wider text-[var(--muted)]">
                     <th className="px-5 py-2.5">ID</th>
-                    <th className="px-5 py-2.5">Schedule</th>
+                    <th className="px-5 py-2.5">Schedule (UTC)</th>
                     <th className="px-5 py-2.5">Type</th>
                     <th className="px-5 py-2.5">Queue</th>
-                    <th className="px-5 py-2.5">Next run</th>
+                    <th className="px-5 py-2.5">Next run (local time)</th>
                     <th className="px-5 py-2.5">State</th>
                     {!readOnly && <th className="px-5 py-2.5 text-right">Actions</th>}
                   </tr>

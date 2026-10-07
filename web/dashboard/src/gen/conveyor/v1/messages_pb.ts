@@ -16,7 +16,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file conveyor/v1/messages.proto.
  */
 export const file_conveyor_v1_messages: GenFile = /*@__PURE__*/
-  fileDesc("Chpjb252ZXlvci92MS9tZXNzYWdlcy5wcm90bxILY29udmV5b3IudjEiHQoMVGFza0VucXVldWVkEg0KBXF1ZXVlGAEgASgJIi0KDlRhc2tzQXZhaWxhYmxlEg0KBXF1ZXVlGAEgASgJEgwKBGhpbnQYAiABKAMibQoPUmVnaXN0ZXJHYXRld2F5Eg0KBXF1ZXVlGAEgASgJEhQKDGdhdGV3YXlfbmFtZRgCIAEoCRIQCghjYXBhY2l0eRgDIAEoBRITCgtiYXRjaF90eXBlcxgEIAMoCRIOCgZ3ZWlnaHQYBSABKAUiRQoNR2F0ZXdheUNyZWRpdBINCgVxdWV1ZRgBIAEoCRIUCgxnYXRld2F5X25hbWUYAiABKAkSDwoHY3JlZGl0cxgDIAEoBSJ+CgtFeGVjdXRlVGFzaxInCgR0YXNrGAEgASgLMhkuY29udmV5b3IudjEuVGFza0VudmVsb3BlEhAKCGxlYXNlX2lkGAIgASgJEjQKEGxlYXNlX2V4cGlyZXNfYXQYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIo8BCgxFeGVjdXRlQmF0Y2gSKAoFdGFza3MYASADKAsyGS5jb252ZXlvci52MS5UYXNrRW52ZWxvcGUSEAoIbGVhc2VfaWQYAiABKAkSNAoQbGVhc2VfZXhwaXJlc19hdBgDIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDQoFZ3JvdXAYBCABKAkiRgoJRmlyZUdyb3VwEg0KBXF1ZXVlGAEgASgJEg0KBWdyb3VwGAIgASgJEgwKBHR5cGUYAyABKAkSDQoFbGltaXQYBCABKAUiswEKE0dyb3VwTGVhc2VDb21wbGV0ZWQSKAoFdGFza3MYASADKAsyGS5jb252ZXlvci52MS5UYXNrRW52ZWxvcGUSEAoIbGVhc2VfaWQYAiABKAkSNAoQbGVhc2VfZXhwaXJlc19hdBgDIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDQoFZ3JvdXAYBCABKAkSDAoEdHlwZRgFIAEoCRINCgVlcnJvchgGIAEoCSJWCg1UYXNrQ29tcGxldGVkEg8KB3Rhc2tfaWQYASABKAkSDQoFcXVldWUYAiABKAkSDwoHc3VjY2VzcxgDIAEoCBIUCgxnYXRld2F5X25hbWUYBCABKAkiVwoOQmF0Y2hDb21wbGV0ZWQSDQoFcXVldWUYASABKAkSFAoMZ2F0ZXdheV9uYW1lGAIgASgJEg0KBXRvdGFsGAMgASgFEhEKCXN1Y2NlZWRlZBgEIAEoBSIbCgpEcmFpblF1ZXVlEg0KBXF1ZXVlGAEgASgJIhwKC1Jlc3VtZVF1ZXVlEg0KBXF1ZXVlGAEgASgJIh8KDENhbmNlbEFjdGl2ZRIPCgd0YXNrX2lkGAEgASgJIkYKEFJhdGVMaW1pdENoYW5nZWQSDQoFcXVldWUYASABKAkSFAoMcmF0ZV9wZXJfc2VjGAIgASgBEg0KBWJ1cnN0GAMgASgFIjwKF0NvbmN1cnJlbmN5TGltaXRDaGFuZ2VkEg0KBXF1ZXVlGAEgASgJEhIKCm1heF9hY3RpdmUYAiABKAUiHAoIRmlyZUNyb24SEAoIZW50cnlfaWQYASABKAkiFAoSQ3JvbkVudHJpZXNDaGFuZ2VkIpYBChNMZWFzZUN5Y2xlQ29tcGxldGVkEigKBXRhc2tzGAEgAygLMhkuY29udmV5b3IudjEuVGFza0VudmVsb3BlEhAKCGxlYXNlX2lkGAIgASgJEjQKEGxlYXNlX2V4cGlyZXNfYXQYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEg0KBWVycm9yGAQgASgJIjcKE0xlYXNlZFRhc2tzUmVsZWFzZWQSEAoIcmVsZWFzZWQYASABKAUSDgoGZmFpbGVkGAIgASgFIg0KC1Byb21vdGVUaWNrIgoKCFJlYXBUaWNrIhAKDkdyb3VwU3dlZXBUaWNrIiQKEVJlc29sdmVEZXBlbmRlbnRzEg8KB3Rhc2tfaWQYASABKAkiOgoVV2ViaG9va0xlYXNlSGVhcnRiZWF0Eg8KB3Rhc2tfaWQYASABKAkSEAoIbGVhc2VfaWQYAiABKAkihQEKEldlYmhvb2tMZWFzZVJlc3VsdBIPCgd0YXNrX2lkGAEgASgJEhAKCGxlYXNlX2lkGAIgASgJEikKB291dGNvbWUYAyABKA4yGC5jb252ZXlvci52MS5UYXNrT3V0Y29tZRIRCgllcnJvcl9tc2cYBCABKAkSDgoGcmVzdWx0GAUgASgMIhIKEFdlYmhvb2tSZWNvbmNpbGViBnByb3RvMw", [file_conveyor_v1_service, file_conveyor_v1_task, file_google_protobuf_timestamp]);
+  fileDesc("Chpjb252ZXlvci92MS9tZXNzYWdlcy5wcm90bxILY29udmV5b3IudjEiHQoMVGFza0VucXVldWVkEg0KBXF1ZXVlGAEgASgJIi0KDlRhc2tzQXZhaWxhYmxlEg0KBXF1ZXVlGAEgASgJEgwKBGhpbnQYAiABKAMibQoPUmVnaXN0ZXJHYXRld2F5Eg0KBXF1ZXVlGAEgASgJEhQKDGdhdGV3YXlfbmFtZRgCIAEoCRIQCghjYXBhY2l0eRgDIAEoBRITCgtiYXRjaF90eXBlcxgEIAMoCRIOCgZ3ZWlnaHQYBSABKAUiOAoRVW5yZWdpc3RlckdhdGV3YXkSDQoFcXVldWUYASABKAkSFAoMZ2F0ZXdheV9uYW1lGAIgASgJIkUKDUdhdGV3YXlDcmVkaXQSDQoFcXVldWUYASABKAkSFAoMZ2F0ZXdheV9uYW1lGAIgASgJEg8KB2NyZWRpdHMYAyABKAUifgoLRXhlY3V0ZVRhc2sSJwoEdGFzaxgBIAEoCzIZLmNvbnZleW9yLnYxLlRhc2tFbnZlbG9wZRIQCghsZWFzZV9pZBgCIAEoCRI0ChBsZWFzZV9leHBpcmVzX2F0GAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCKPAQoMRXhlY3V0ZUJhdGNoEigKBXRhc2tzGAEgAygLMhkuY29udmV5b3IudjEuVGFza0VudmVsb3BlEhAKCGxlYXNlX2lkGAIgASgJEjQKEGxlYXNlX2V4cGlyZXNfYXQYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEg0KBWdyb3VwGAQgASgJIkYKCUZpcmVHcm91cBINCgVxdWV1ZRgBIAEoCRINCgVncm91cBgCIAEoCRIMCgR0eXBlGAMgASgJEg0KBWxpbWl0GAQgASgFIrMBChNHcm91cExlYXNlQ29tcGxldGVkEigKBXRhc2tzGAEgAygLMhkuY29udmV5b3IudjEuVGFza0VudmVsb3BlEhAKCGxlYXNlX2lkGAIgASgJEjQKEGxlYXNlX2V4cGlyZXNfYXQYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEg0KBWdyb3VwGAQgASgJEgwKBHR5cGUYBSABKAkSDQoFZXJyb3IYBiABKAkiVgoNVGFza0NvbXBsZXRlZBIPCgd0YXNrX2lkGAEgASgJEg0KBXF1ZXVlGAIgASgJEg8KB3N1Y2Nlc3MYAyABKAgSFAoMZ2F0ZXdheV9uYW1lGAQgASgJIlcKDkJhdGNoQ29tcGxldGVkEg0KBXF1ZXVlGAEgASgJEhQKDGdhdGV3YXlfbmFtZRgCIAEoCRINCgV0b3RhbBgDIAEoBRIRCglzdWNjZWVkZWQYBCABKAUiGwoKRHJhaW5RdWV1ZRINCgVxdWV1ZRgBIAEoCSIcCgtSZXN1bWVRdWV1ZRINCgVxdWV1ZRgBIAEoCSIfCgxDYW5jZWxBY3RpdmUSDwoHdGFza19pZBgBIAEoCSJGChBSYXRlTGltaXRDaGFuZ2VkEg0KBXF1ZXVlGAEgASgJEhQKDHJhdGVfcGVyX3NlYxgCIAEoARINCgVidXJzdBgDIAEoBSI8ChdDb25jdXJyZW5jeUxpbWl0Q2hhbmdlZBINCgVxdWV1ZRgBIAEoCRISCgptYXhfYWN0aXZlGAIgASgFIhwKCEZpcmVDcm9uEhAKCGVudHJ5X2lkGAEgASgJIhQKEkNyb25FbnRyaWVzQ2hhbmdlZCKWAQoTTGVhc2VDeWNsZUNvbXBsZXRlZBIoCgV0YXNrcxgBIAMoCzIZLmNvbnZleW9yLnYxLlRhc2tFbnZlbG9wZRIQCghsZWFzZV9pZBgCIAEoCRI0ChBsZWFzZV9leHBpcmVzX2F0GAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBINCgVlcnJvchgEIAEoCSI3ChNMZWFzZWRUYXNrc1JlbGVhc2VkEhAKCHJlbGVhc2VkGAEgASgFEg4KBmZhaWxlZBgCIAEoBSINCgtQcm9tb3RlVGljayIKCghSZWFwVGljayIQCg5Hcm91cFN3ZWVwVGljayIkChFSZXNvbHZlRGVwZW5kZW50cxIPCgd0YXNrX2lkGAEgASgJIjoKFVdlYmhvb2tMZWFzZUhlYXJ0YmVhdBIPCgd0YXNrX2lkGAEgASgJEhAKCGxlYXNlX2lkGAIgASgJIoUBChJXZWJob29rTGVhc2VSZXN1bHQSDwoHdGFza19pZBgBIAEoCRIQCghsZWFzZV9pZBgCIAEoCRIpCgdvdXRjb21lGAMgASgOMhguY29udmV5b3IudjEuVGFza091dGNvbWUSEQoJZXJyb3JfbXNnGAQgASgJEg4KBnJlc3VsdBgFIAEoDCISChBXZWJob29rUmVjb25jaWxlYgZwcm90bzM", [file_conveyor_v1_service, file_conveyor_v1_task, file_google_protobuf_timestamp]);
 
 /**
  * TaskEnqueued tells a queue grain that one new task was committed.
@@ -116,6 +116,37 @@ export const RegisterGatewaySchema: GenMessage<RegisterGateway> = /*@__PURE__*/
   messageDesc(file_conveyor_v1_messages, 2);
 
 /**
+ * UnregisterGateway tells a queue grain to forget a gateway that is shutting
+ * down: a closed worker session or a deleted or paused webhook registration.
+ * Without it the grain would keep the gateway until a dispatch to it failed,
+ * leasing one task to a gateway that no longer exists.
+ *
+ * @generated from message conveyor.v1.UnregisterGateway
+ */
+export type UnregisterGateway = Message<"conveyor.v1.UnregisterGateway"> & {
+  /**
+   * queue is the queue the gateway registered with.
+   *
+   * @generated from field: string queue = 1;
+   */
+  queue: string;
+
+  /**
+   * gateway_name is the gateway actor name the grain registered.
+   *
+   * @generated from field: string gateway_name = 2;
+   */
+  gatewayName: string;
+};
+
+/**
+ * Describes the message conveyor.v1.UnregisterGateway.
+ * Use `create(UnregisterGatewaySchema)` to create a new message.
+ */
+export const UnregisterGatewaySchema: GenMessage<UnregisterGateway> = /*@__PURE__*/
+  messageDesc(file_conveyor_v1_messages, 3);
+
+/**
  * GatewayCredit grants dispatch credits from a gateway to a queue grain.
  *
  * @generated from message conveyor.v1.GatewayCredit
@@ -142,7 +173,7 @@ export type GatewayCredit = Message<"conveyor.v1.GatewayCredit"> & {
  * Use `create(GatewayCreditSchema)` to create a new message.
  */
 export const GatewayCreditSchema: GenMessage<GatewayCredit> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_messages, 3);
+  messageDesc(file_conveyor_v1_messages, 4);
 
 /**
  * ExecuteTask carries one durably leased task from a queue grain to a
@@ -172,7 +203,7 @@ export type ExecuteTask = Message<"conveyor.v1.ExecuteTask"> & {
  * Use `create(ExecuteTaskSchema)` to create a new message.
  */
 export const ExecuteTaskSchema: GenMessage<ExecuteTask> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_messages, 4);
+  messageDesc(file_conveyor_v1_messages, 5);
 
 /**
  * ExecuteBatch carries one durably leased aggregation group from a queue grain
@@ -208,7 +239,7 @@ export type ExecuteBatch = Message<"conveyor.v1.ExecuteBatch"> & {
  * Use `create(ExecuteBatchSchema)` to create a new message.
  */
 export const ExecuteBatchSchema: GenMessage<ExecuteBatch> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_messages, 5);
+  messageDesc(file_conveyor_v1_messages, 6);
 
 /**
  * FireGroup tells a queue grain that an aggregation group is due: the grain
@@ -253,7 +284,7 @@ export type FireGroup = Message<"conveyor.v1.FireGroup"> & {
  * Use `create(FireGroupSchema)` to create a new message.
  */
 export const FireGroupSchema: GenMessage<FireGroup> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_messages, 6);
+  messageDesc(file_conveyor_v1_messages, 7);
 
 /**
  * GroupLeaseCompleted delivers the outcome of an asynchronous group lease back
@@ -305,7 +336,7 @@ export type GroupLeaseCompleted = Message<"conveyor.v1.GroupLeaseCompleted"> & {
  * Use `create(GroupLeaseCompletedSchema)` to create a new message.
  */
 export const GroupLeaseCompletedSchema: GenMessage<GroupLeaseCompleted> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_messages, 7);
+  messageDesc(file_conveyor_v1_messages, 8);
 
 /**
  * TaskCompleted signals a finished execution back to the queue grain. It
@@ -341,7 +372,7 @@ export type TaskCompleted = Message<"conveyor.v1.TaskCompleted"> & {
  * Use `create(TaskCompletedSchema)` to create a new message.
  */
 export const TaskCompletedSchema: GenMessage<TaskCompleted> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_messages, 8);
+  messageDesc(file_conveyor_v1_messages, 9);
 
 /**
  * BatchCompleted signals a finished batch execution back to the queue grain.
@@ -381,7 +412,7 @@ export type BatchCompleted = Message<"conveyor.v1.BatchCompleted"> & {
  * Use `create(BatchCompletedSchema)` to create a new message.
  */
 export const BatchCompletedSchema: GenMessage<BatchCompleted> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_messages, 9);
+  messageDesc(file_conveyor_v1_messages, 10);
 
 /**
  * DrainQueue pauses dispatch for a queue (persisted via the broker).
@@ -400,7 +431,7 @@ export type DrainQueue = Message<"conveyor.v1.DrainQueue"> & {
  * Use `create(DrainQueueSchema)` to create a new message.
  */
 export const DrainQueueSchema: GenMessage<DrainQueue> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_messages, 10);
+  messageDesc(file_conveyor_v1_messages, 11);
 
 /**
  * ResumeQueue resumes dispatch for a paused queue.
@@ -419,7 +450,7 @@ export type ResumeQueue = Message<"conveyor.v1.ResumeQueue"> & {
  * Use `create(ResumeQueueSchema)` to create a new message.
  */
 export const ResumeQueueSchema: GenMessage<ResumeQueue> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_messages, 11);
+  messageDesc(file_conveyor_v1_messages, 12);
 
 /**
  * CancelActive asks the gateway executing a task to send a Cancel frame to
@@ -439,7 +470,7 @@ export type CancelActive = Message<"conveyor.v1.CancelActive"> & {
  * Use `create(CancelActiveSchema)` to create a new message.
  */
 export const CancelActiveSchema: GenMessage<CancelActive> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_messages, 12);
+  messageDesc(file_conveyor_v1_messages, 13);
 
 /**
  * RateLimitChanged tells a queue grain that its dispatch-rate override changed
@@ -471,7 +502,7 @@ export type RateLimitChanged = Message<"conveyor.v1.RateLimitChanged"> & {
  * Use `create(RateLimitChangedSchema)` to create a new message.
  */
 export const RateLimitChangedSchema: GenMessage<RateLimitChanged> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_messages, 13);
+  messageDesc(file_conveyor_v1_messages, 14);
 
 /**
  * ConcurrencyLimitChanged tells a queue grain that its per-key concurrency limit
@@ -498,7 +529,7 @@ export type ConcurrencyLimitChanged = Message<"conveyor.v1.ConcurrencyLimitChang
  * Use `create(ConcurrencyLimitChangedSchema)` to create a new message.
  */
 export const ConcurrencyLimitChangedSchema: GenMessage<ConcurrencyLimitChanged> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_messages, 14);
+  messageDesc(file_conveyor_v1_messages, 15);
 
 /**
  * FireCron tells the scheduler singleton that a cron entry is due.
@@ -517,7 +548,7 @@ export type FireCron = Message<"conveyor.v1.FireCron"> & {
  * Use `create(FireCronSchema)` to create a new message.
  */
 export const FireCronSchema: GenMessage<FireCron> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_messages, 15);
+  messageDesc(file_conveyor_v1_messages, 16);
 
 /**
  * CronEntriesChanged tells the scheduler singleton to reload cron entries
@@ -533,7 +564,7 @@ export type CronEntriesChanged = Message<"conveyor.v1.CronEntriesChanged"> & {
  * Use `create(CronEntriesChangedSchema)` to create a new message.
  */
 export const CronEntriesChangedSchema: GenMessage<CronEntriesChanged> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_messages, 16);
+  messageDesc(file_conveyor_v1_messages, 17);
 
 /**
  * LeaseCycleCompleted delivers the outcome of an asynchronous lease cycle
@@ -571,7 +602,7 @@ export type LeaseCycleCompleted = Message<"conveyor.v1.LeaseCycleCompleted"> & {
  * Use `create(LeaseCycleCompletedSchema)` to create a new message.
  */
 export const LeaseCycleCompletedSchema: GenMessage<LeaseCycleCompleted> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_messages, 17);
+  messageDesc(file_conveyor_v1_messages, 18);
 
 /**
  * LeasedTasksReleased delivers the outcome of an asynchronous release back
@@ -605,7 +636,7 @@ export type LeasedTasksReleased = Message<"conveyor.v1.LeasedTasksReleased"> & {
  * Use `create(LeasedTasksReleasedSchema)` to create a new message.
  */
 export const LeasedTasksReleasedSchema: GenMessage<LeasedTasksReleased> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_messages, 18);
+  messageDesc(file_conveyor_v1_messages, 19);
 
 /**
  * PromoteTick triggers one scheduled-task promotion pass on the scheduler.
@@ -620,7 +651,7 @@ export type PromoteTick = Message<"conveyor.v1.PromoteTick"> & {
  * Use `create(PromoteTickSchema)` to create a new message.
  */
 export const PromoteTickSchema: GenMessage<PromoteTick> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_messages, 19);
+  messageDesc(file_conveyor_v1_messages, 20);
 
 /**
  * ReapTick triggers one maintenance pass on the reaper.
@@ -635,7 +666,7 @@ export type ReapTick = Message<"conveyor.v1.ReapTick"> & {
  * Use `create(ReapTickSchema)` to create a new message.
  */
 export const ReapTickSchema: GenMessage<ReapTick> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_messages, 20);
+  messageDesc(file_conveyor_v1_messages, 21);
 
 /**
  * GroupSweepTick triggers one firing pass on the group-aggregation sweeper.
@@ -650,7 +681,7 @@ export type GroupSweepTick = Message<"conveyor.v1.GroupSweepTick"> & {
  * Use `create(GroupSweepTickSchema)` to create a new message.
  */
 export const GroupSweepTickSchema: GenMessage<GroupSweepTick> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_messages, 21);
+  messageDesc(file_conveyor_v1_messages, 22);
 
 /**
  * ResolveDependents asks a dependency resolver to reconcile the tasks waiting on
@@ -674,7 +705,7 @@ export type ResolveDependents = Message<"conveyor.v1.ResolveDependents"> & {
  * Use `create(ResolveDependentsSchema)` to create a new message.
  */
 export const ResolveDependentsSchema: GenMessage<ResolveDependents> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_messages, 22);
+  messageDesc(file_conveyor_v1_messages, 23);
 
 /**
  * WebhookLeaseHeartbeat extends one asynchronously completing webhook
@@ -706,7 +737,7 @@ export type WebhookLeaseHeartbeat = Message<"conveyor.v1.WebhookLeaseHeartbeat">
  * Use `create(WebhookLeaseHeartbeatSchema)` to create a new message.
  */
 export const WebhookLeaseHeartbeatSchema: GenMessage<WebhookLeaseHeartbeat> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_messages, 23);
+  messageDesc(file_conveyor_v1_messages, 24);
 
 /**
  * WebhookLeaseResult reports the final outcome of one asynchronously
@@ -756,7 +787,7 @@ export type WebhookLeaseResult = Message<"conveyor.v1.WebhookLeaseResult"> & {
  * Use `create(WebhookLeaseResultSchema)` to create a new message.
  */
 export const WebhookLeaseResultSchema: GenMessage<WebhookLeaseResult> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_messages, 24);
+  messageDesc(file_conveyor_v1_messages, 25);
 
 /**
  * WebhookReconcile asks the webhook manager to reconcile its gateways
@@ -773,5 +804,5 @@ export type WebhookReconcile = Message<"conveyor.v1.WebhookReconcile"> & {
  * Use `create(WebhookReconcileSchema)` to create a new message.
  */
 export const WebhookReconcileSchema: GenMessage<WebhookReconcile> = /*@__PURE__*/
-  messageDesc(file_conveyor_v1_messages, 25);
+  messageDesc(file_conveyor_v1_messages, 26);
 

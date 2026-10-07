@@ -25,3 +25,15 @@ test("captures the error and does not reload on failure", async () => {
   expect(reload).not.toHaveBeenCalled();
   await waitFor(() => expect(result.current.error).toContain("denied"));
 });
+
+test("dismiss clears the shown error", async () => {
+  const { result } = renderHook(() => useAction(vi.fn()));
+
+  await act(async () => {
+    await result.current.run(() => Promise.reject(new Error("denied")));
+  });
+  await waitFor(() => expect(result.current.error).toContain("denied"));
+
+  act(() => result.current.dismiss());
+  expect(result.current.error).toBeUndefined();
+});

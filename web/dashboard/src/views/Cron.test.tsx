@@ -25,6 +25,10 @@ test("renders cron entries", async () => {
 
   expect(await screen.findByText("nightly")).toBeInTheDocument();
   expect(screen.getByText("report:daily")).toBeInTheDocument();
+
+  // Specs fire in UTC while the next run renders in local time; both say so.
+  expect(screen.getByText("Schedule (UTC)")).toBeInTheDocument();
+  expect(screen.getByText("Next run (local time)")).toBeInTheDocument();
 });
 
 test("renders an empty state with no entries", async () => {
@@ -88,6 +92,6 @@ test("deletes a cron entry after confirmation", async () => {
   await userEvent.click(await screen.findByRole("button", { name: "Delete" }));
   expect(deleteCron).not.toHaveBeenCalled();
 
-  await userEvent.click(screen.getByRole("button", { name: "Confirm" }));
+  await userEvent.click(screen.getByRole("button", { name: "Confirm delete" }));
   expect(deleteCron).toHaveBeenCalledOnce();
 });

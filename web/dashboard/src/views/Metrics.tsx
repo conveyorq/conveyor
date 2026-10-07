@@ -66,6 +66,8 @@ export function Metrics() {
     [samples],
   );
 
+  const times = useMemo(() => samples.map((s) => s.time), [samples]);
+
   const outcomes = useMemo<Series[]>(
     () => [
       { label: "Completed", color: "#10b981", values: samples.map((s) => s.completed) },
@@ -84,13 +86,13 @@ export function Metrics() {
 
       <Panel title="Backlog over time">
         <div className="px-5 py-4">
-          <LineChart series={backlog} ariaLabel="Backlog over time" />
+          <LineChart series={backlog} times={times} ariaLabel="Backlog over time" />
         </div>
       </Panel>
 
       <Panel title="Outcomes over time">
         <div className="px-5 py-4">
-          <LineChart series={outcomes} ariaLabel="Outcomes over time" />
+          <LineChart series={outcomes} times={times} ariaLabel="Outcomes over time" />
         </div>
       </Panel>
     </div>

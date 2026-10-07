@@ -116,7 +116,7 @@ test("removes an override", async () => {
 
   // Remove is a confirm+danger button: the first click arms an inline Confirm.
   await userEvent.click(await screen.findByRole("button", { name: "Remove" }));
-  await userEvent.click(screen.getByRole("button", { name: "Confirm" }));
+  await userEvent.click(screen.getByRole("button", { name: "Confirm remove" }));
 
   expect(deleteGroupConfig).toHaveBeenCalledOnce();
   expect(deleteGroupConfig.mock.calls[0][0].queue).toBe("email");

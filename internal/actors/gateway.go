@@ -80,7 +80,11 @@ type registerTick struct{}
 type drainSession struct{}
 
 // sessionDrained acknowledges a drainSession request.
-type sessionDrained struct{}
+type sessionDrained struct {
+	// queues are the queues the gateway was registered with, which the caller
+	// unregisters it from before shutting it down.
+	queues []string
+}
 
 // drainTimeout bounds how long a session close waits for the drain turn.
 const drainTimeout = 10 * time.Second
@@ -172,6 +176,10 @@ type Gateway struct {
 	batches map[string][]string
 	// breakers holds the per-task-type circuit breakers.
 	breakers map[string]*breaker.CircuitBreaker
+	// draining records that the session is closing, so a registerTick that
+	// lands after the drain cannot re-announce capacity to a grain the
+	// gateway is about to be unregistered from.
+	draining bool
 }
 
 // enforce interface compliance at compile time.
@@ -203,6 +211,7 @@ func (g *Gateway) PreStart(ctx *goakt.Context) error {
 	g.inflight = make(map[string]*inflightTask)
 	g.batches = make(map[string][]string)
 	g.breakers = make(map[string]*breaker.CircuitBreaker)
+	g.draining = false
 
 	return nil
 }
@@ -303,7 +312,7 @@ func (g *Gateway) Receive(ctx *goakt.ReceiveContext) {
 
 	case drainSession:
 		g.drain(ctx)
-		ctx.Response(sessionDrained{})
+		ctx.Response(sessionDrained{queues: g.session.Queues})
 
 	case *conveyorv1.ExecuteTask:
 		g.dispatch(message)
@@ -366,6 +375,7 @@ func (g *Gateway) drain(ctx *goakt.ReceiveContext) {
 
 	g.inflight = make(map[string]*inflightTask)
 	g.batches = make(map[string][]string)
+	g.draining = true
 	g.runtime.Logger().Debug("gateway drained", "gateway", g.name, "session_id", g.session.SessionID)
 }
 
@@ -373,6 +383,10 @@ func (g *Gateway) drain(ctx *goakt.ReceiveContext) {
 // grain. It runs at start and on every registerTick; re-registration only
 // refreshes capacity on the grain side, so credits are never double-granted.
 func (g *Gateway) register(ctx *goakt.ReceiveContext) {
+	if g.draining {
+		return
+	}
+
 	for _, queue := range g.session.Queues {
 		registration := &conveyorv1.RegisterGateway{
 			Queue:       queue,
@@ -859,6 +873,10 @@ func (g *Gateway) reportCompletion(ctx *goakt.ReceiveContext, queue, taskID stri
 type GatewayHandle struct {
 	// pid is the gateway actor.
 	pid *goakt.PID
+	// system resolves the queue grains the gateway unregisters from on close.
+	system goakt.ActorSystem
+	// runtime supplies the grain passivation setting and the logger.
+	runtime *Runtime
 	// logger reports drain failures on session close.
 	logger *slog.Logger
 }
@@ -869,12 +887,18 @@ func (h *GatewayHandle) Tell(ctx context.Context, message any) error {
 }
 
 // Stop drains the gateway — releasing every in-flight task for immediate
-// redelivery — and shuts it down. The drain runs as a mailbox turn so it
-// serializes with dispatches and results; a drain failure is logged and
-// the shutdown proceeds, with lease expiry as the recovery backstop.
+// redelivery — unregisters it from its queue grains so no new work is leased
+// to it, and shuts it down. The drain runs as a mailbox turn so it serializes
+// with dispatches and results; a drain failure is logged and the shutdown
+// proceeds, with lease expiry as the recovery backstop.
 func (h *GatewayHandle) Stop(ctx context.Context) error {
-	if _, err := goakt.Ask(ctx, h.pid, drainSession{}, drainTimeout); err != nil {
+	response, err := goakt.Ask(ctx, h.pid, drainSession{}, drainTimeout)
+	if err != nil {
 		h.logger.Warn("gateway drain failed; lease expiry will recover", "gateway", h.pid.Name(), "error", err)
+	}
+
+	if drained, ok := response.(sessionDrained); ok {
+		unregisterGateway(ctx, h.system, h.runtime, h.pid.Name(), drained.queues)
 	}
 
 	return h.pid.Shutdown(ctx)
@@ -899,5 +923,5 @@ func (e *Engine) SpawnGateway(ctx context.Context, session GatewaySession, sende
 		return nil, fmt.Errorf("scheduling gateway registration heartbeat: %w", err)
 	}
 
-	return &GatewayHandle{pid: pid, logger: e.runtime.Logger()}, nil
+	return &GatewayHandle{pid: pid, system: e.system, runtime: e.runtime, logger: e.runtime.Logger()}, nil
 }

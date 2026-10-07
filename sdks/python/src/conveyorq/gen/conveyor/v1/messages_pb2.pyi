@@ -43,6 +43,16 @@ class RegisterGateway(_message.Message):
     def __init__(self, queue: _Optional[str]=..., gateway_name: _Optional[str]=..., capacity: _Optional[int]=..., batch_types: _Optional[_Iterable[str]]=..., weight: _Optional[int]=...) -> None:
         ...
 
+class UnregisterGateway(_message.Message):
+    __slots__ = ('queue', 'gateway_name')
+    QUEUE_FIELD_NUMBER: _ClassVar[int]
+    GATEWAY_NAME_FIELD_NUMBER: _ClassVar[int]
+    queue: str
+    gateway_name: str
+
+    def __init__(self, queue: _Optional[str]=..., gateway_name: _Optional[str]=...) -> None:
+        ...
+
 class GatewayCredit(_message.Message):
     __slots__ = ('queue', 'gateway_name', 'credits')
     QUEUE_FIELD_NUMBER: _ClassVar[int]
