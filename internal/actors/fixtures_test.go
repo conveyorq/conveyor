@@ -371,8 +371,6 @@ type mockGateway struct {
 	handler func(task *conveyorv1.TaskEnvelope) error
 	// log optionally records dispatch order.
 	log *dispatchLog
-	// identity is the queue grain identity, resolved at start.
-	identity *goakt.GrainIdentity
 	// name is this gateway's actor name; empty derives gateway-<queue>.
 	name string
 }
@@ -410,35 +408,24 @@ func (m *mockGateway) PostStop(_ *goakt.Context) error {
 	return nil
 }
 
-// register announces this gateway and its capacity to the queue grain.
-// Failures are logged, never escalated through ctx.Err: under the default
-// Stop directive an escalation would stop the gateway permanently on a
-// transient resolution error (e.g. a stale grain record mid-failover), while
-// the next reRegisterTick retries anyway. The real Gateway treats
-// registration failures the same way.
+// register announces this gateway and its capacity to the queue grain. The
+// send runs off the turn through tellQueueGrain, like the real Gateway: a
+// TellGrain inside a turn holds a dispatcher worker while waiting on the
+// grain, and with as many gateways as workers no worker is left to run the
+// grain, so the node stalls on a small CPU count. Failures are logged, never
+// escalated through ctx.Err: under the default Stop directive an escalation
+// would stop the gateway permanently on a transient resolution error (e.g. a
+// stale grain record mid-failover), while the next reRegisterTick retries
+// anyway.
 func (m *mockGateway) register(ctx *goakt.ReceiveContext) {
-	background := context.Background()
-	system := ctx.ActorSystem()
-
-	identity, err := goakt.GrainOf[*QueueGrain](background, system, QueueGrainName(m.queue),
-		goakt.WithGrainDeactivateAfter(m.runtime.Settings().PassivateAfter))
-	if err != nil {
-		m.runtime.Logger().Warn("mock gateway: resolving queue grain failed; next tick retries", "queue", m.queue, "error", err)
-
-		return
-	}
-
-	m.identity = identity
-
-	err = system.TellGrain(background, identity, &conveyorv1.RegisterGateway{
+	registration := &conveyorv1.RegisterGateway{
 		Queue:       m.queue,
 		GatewayName: m.name,
 		Capacity:    m.capacity,
 		Weight:      m.weight,
-	})
-	if err != nil {
-		m.runtime.Logger().Warn("mock gateway: registration failed; next tick retries", "queue", m.queue, "error", err)
 	}
+
+	tellQueueGrain(ctx.Context(), ctx.ActorSystem(), m.runtime, m.queue, registration, "mock gateway: registration failed; next tick retries", nil)
 }
 
 // execute runs the handler and records the durable outcome, then reports
@@ -474,9 +461,7 @@ func (m *mockGateway) execute(ctx *goakt.ReceiveContext, message *conveyorv1.Exe
 		Success:     handlerErr == nil,
 		GatewayName: m.name,
 	}
-	if err = ctx.ActorSystem().TellGrain(background, m.identity, completed); err != nil {
-		m.runtime.Logger().Warn("completion report failed", "task_id", task.GetId(), "error", err)
-	}
+	tellQueueGrain(ctx.Context(), ctx.ActorSystem(), m.runtime, m.queue, completed, "completion report failed", nil, "task_id", task.GetId())
 }
 
 // spawnGateway starts a mock gateway actor and its heartbeat. A non-empty
