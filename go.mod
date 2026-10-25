@@ -3,7 +3,8 @@ module github.com/conveyorq/conveyor
 go 1.27.0
 
 require (
-	connectrpc.com/connect v1.21.0
+	connectrpc.com/connect v1.21.1
+	connectrpc.com/connect/v2 v2.0.2
 	github.com/go-viper/mapstructure/v2 v2.5.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/knadh/koanf/parsers/yaml v1.1.1
