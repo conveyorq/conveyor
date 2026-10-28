@@ -154,7 +154,7 @@ jobs:
       - uses: actions/setup-node@v7
         name: Setup Node
         with:
-          node-version: "24"
+          node-version: "26"
       - name: Build dashboard
         # dist/ is not committed; build it so the embedded UI is real for the
         # lint typecheck and the dashboard tests.
@@ -206,7 +206,7 @@ jobs:
       - uses: actions/setup-node@v7
         name: Setup Node
         with:
-          node-version: "24"
+          node-version: "26"
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         name: Setup uv
         with:
@@ -247,7 +247,7 @@ jobs:
       - uses: actions/setup-node@v7
         name: Setup Node
         with:
-          node-version: "24"
+          node-version: "26"
       - name: Build docs (vitepress)
         run: make docs
 
@@ -284,7 +284,7 @@ jobs:
       - uses: actions/setup-node@v7
         name: Setup Node
         with:
-          node-version: "24"
+          node-version: "26"
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         name: Setup uv
         with:
