@@ -444,7 +444,7 @@ type dependencyEdge struct {
 }
 
 // pgxPool is the subset of *pgxpool.Pool the broker uses to run statements.
-// Both *pgxpool.Pool and a pgxmock pool satisfy it, so tests can drive every
+// Both *pgxpool.Pool and the tests' fake pool satisfy it, so tests can drive every
 // query and error path without a live database.
 type pgxPool interface {
 	// Begin starts a transaction.

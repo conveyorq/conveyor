@@ -23,7 +23,7 @@ import (
 
 // collectorImage pins the OpenTelemetry Collector used to receive exported
 // spans over OTLP.
-const collectorImage = "otel/opentelemetry-collector:0.114.0"
+const collectorImage = "otel/opentelemetry-collector:0.164.0"
 
 // collectorOTLPPort is the collector's OTLP/gRPC receiver port.
 const collectorOTLPPort = "4317/tcp"

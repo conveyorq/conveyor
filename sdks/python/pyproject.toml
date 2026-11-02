@@ -25,14 +25,14 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-  "grpcio>=1.84",
+  "grpcio>=1.85",
   "protobuf>=7.36.2,<8",
   "cryptography>=50",
 ]
 
 [project.optional-dependencies]
 dev = [
-  "grpcio-tools>=1.84,<1.85",
+  "grpcio-tools>=1.85,<1.86",
   "pytest>=9",
   "pytest-asyncio>=1.4",
   "mypy>=2.3",

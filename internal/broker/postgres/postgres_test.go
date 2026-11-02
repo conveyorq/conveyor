@@ -10,12 +10,13 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"reflect"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/pashagolub/pgxmock/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -32,29 +33,329 @@ var errBoom = errors.New("boom")
 // mockStart is the fixed wall clock the mocked broker reads from.
 var mockStart = time.Unix(1_700_000_000, 0).UTC()
 
-// newMockBroker returns a broker backed by a pgxmock pool, letting tests drive
-// the query and error paths the live-database conformance suite cannot reach.
-func newMockBroker(t *testing.T) (*Broker, pgxmock.PgxPoolIface) {
+// newMockBroker returns a broker backed by a scripted fake pool, letting tests
+// drive the query and error paths the live-database conformance suite cannot
+// reach.
+func newMockBroker(t *testing.T) (*Broker, *fakePool) {
 	t.Helper()
 
-	mock, err := pgxmock.NewPool()
-	require.NoError(t, err)
-
-	t.Cleanup(mock.Close)
+	mock := newFakePool()
 
 	return &Broker{pool: mock, clock: clock.NewFake(mockStart)}, mock
 }
 
-// anyArgs returns n argument matchers, since pgxmock validates the bind-argument
-// count of every expected statement.
-func anyArgs(n int) []any {
-	args := make([]any, n)
+// callKind names the pool or transaction method an expectation scripts.
+type callKind string
 
-	for i := range args {
-		args[i] = pgxmock.AnyArg()
+const (
+	// callBegin is a Begin on the pool.
+	callBegin callKind = "Begin"
+	// callCommit is a Commit on a transaction.
+	callCommit callKind = "Commit"
+	// callRollback is a Rollback on a transaction.
+	callRollback callKind = "Rollback"
+	// callExec is an Exec on the pool or a transaction.
+	callExec callKind = "Exec"
+	// callQuery is a Query or QueryRow on the pool or a transaction.
+	callQuery callKind = "Query"
+)
+
+// expectation is one scripted call on a fakePool and the outcome it returns.
+type expectation struct {
+	// kind is the method the call must be.
+	kind callKind
+	// argCount is the number of bind arguments the call must pass.
+	argCount int
+	// tag is the command tag an Exec returns.
+	tag pgconn.CommandTag
+	// rows is the result set a Query returns.
+	rows *fakeRows
+	// err is the error the call returns instead of a result.
+	err error
+}
+
+// WithArgCount requires the call to pass exactly count bind arguments.
+func (e *expectation) WithArgCount(count int) *expectation {
+	e.argCount = count
+
+	return e
+}
+
+// WillReturnError makes the call fail with err.
+func (e *expectation) WillReturnError(err error) *expectation {
+	e.err = err
+
+	return e
+}
+
+// WillReturnResult makes an Exec call report tag.
+func (e *expectation) WillReturnResult(tag pgconn.CommandTag) *expectation {
+	e.tag = tag
+
+	return e
+}
+
+// WillReturnRows makes a Query call return rows.
+func (e *expectation) WillReturnRows(rows *fakeRows) *expectation {
+	e.rows = rows
+
+	return e
+}
+
+// fakePool is a scripted stand-in for the broker's pgx pool. Every call must
+// match the next expectation in order, so tests can drive each query and error
+// path without a live database. Begin hands back the pool itself as the
+// transaction, keeping pool and transaction calls on one script. Methods of
+// pgx.Tx the broker never calls are left to the nil embedded interface.
+type fakePool struct {
+	pgx.Tx
+	// expectations is the ordered script of calls.
+	expectations []*expectation
+	// next is the index of the next expectation to match.
+	next int
+}
+
+// newFakePool returns a fakePool with an empty script.
+func newFakePool() *fakePool {
+	return &fakePool{}
+}
+
+// expect appends an expectation for a call of kind with no bind arguments.
+func (p *fakePool) expect(kind callKind) *expectation {
+	scripted := &expectation{kind: kind}
+	p.expectations = append(p.expectations, scripted)
+
+	return scripted
+}
+
+// ExpectBegin scripts a Begin call.
+func (p *fakePool) ExpectBegin() *expectation { return p.expect(callBegin) }
+
+// ExpectCommit scripts a Commit call.
+func (p *fakePool) ExpectCommit() *expectation { return p.expect(callCommit) }
+
+// ExpectRollback scripts a Rollback call.
+func (p *fakePool) ExpectRollback() *expectation { return p.expect(callRollback) }
+
+// ExpectExec scripts an Exec call.
+func (p *fakePool) ExpectExec() *expectation { return p.expect(callExec) }
+
+// ExpectQuery scripts a Query or QueryRow call.
+func (p *fakePool) ExpectQuery() *expectation { return p.expect(callQuery) }
+
+// ExpectationsWereMet reports an error when part of the script never ran.
+func (p *fakePool) ExpectationsWereMet() error {
+	if p.next < len(p.expectations) {
+		return fmt.Errorf("%d expectations not met, next is %s", len(p.expectations)-p.next, p.expectations[p.next].kind)
 	}
 
-	return args
+	return nil
+}
+
+// match consumes the next expectation, failing when the call does not fit it.
+func (p *fakePool) match(kind callKind, args []any) (*expectation, error) {
+	if p.next == len(p.expectations) {
+		return nil, fmt.Errorf("unexpected %s call", kind)
+	}
+
+	scripted := p.expectations[p.next]
+	if scripted.kind != kind {
+		return nil, fmt.Errorf("unexpected %s call, expected %s", kind, scripted.kind)
+	}
+
+	if len(args) != scripted.argCount {
+		return nil, fmt.Errorf("%s called with %d arguments, expected %d", kind, len(args), scripted.argCount)
+	}
+
+	p.next++
+
+	return scripted, nil
+}
+
+// Begin matches a scripted Begin and returns the pool as the transaction.
+func (p *fakePool) Begin(context.Context) (pgx.Tx, error) {
+	scripted, err := p.match(callBegin, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if scripted.err != nil {
+		return nil, scripted.err
+	}
+
+	return p, nil
+}
+
+// Commit matches a scripted Commit.
+func (p *fakePool) Commit(context.Context) error {
+	scripted, err := p.match(callCommit, nil)
+	if err != nil {
+		return err
+	}
+
+	return scripted.err
+}
+
+// Rollback matches a scripted Rollback.
+func (p *fakePool) Rollback(context.Context) error {
+	scripted, err := p.match(callRollback, nil)
+	if err != nil {
+		return err
+	}
+
+	return scripted.err
+}
+
+// Exec matches a scripted Exec and returns its command tag.
+func (p *fakePool) Exec(_ context.Context, _ string, args ...any) (pgconn.CommandTag, error) {
+	scripted, err := p.match(callExec, args)
+	if err != nil {
+		return pgconn.CommandTag{}, err
+	}
+
+	return scripted.tag, scripted.err
+}
+
+// Query matches a scripted Query and returns its rows.
+func (p *fakePool) Query(_ context.Context, _ string, args ...any) (pgx.Rows, error) {
+	scripted, err := p.match(callQuery, args)
+	if err != nil {
+		return nil, err
+	}
+
+	if scripted.err != nil {
+		return nil, scripted.err
+	}
+
+	return scripted.rows, nil
+}
+
+// QueryRow matches a scripted Query and returns its first row.
+func (p *fakePool) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
+	rows, err := p.Query(ctx, sql, args...)
+
+	return &fakeRow{rows: rows, err: err}
+}
+
+// Stat reports empty pool counters.
+func (p *fakePool) Stat() *pgxpool.Stat { return new(pgxpool.Stat) }
+
+// Close is a no-op: the fake holds no connections.
+func (p *fakePool) Close() {}
+
+// fakeRow is the single-row view QueryRow returns, matching pgx: an empty
+// result scans as pgx.ErrNoRows unless the rows carry an error.
+type fakeRow struct {
+	// rows is the scripted result set.
+	rows pgx.Rows
+	// err is the query error, reported by Scan.
+	err error
+}
+
+// Scan reads the first row into dest.
+func (r *fakeRow) Scan(dest ...any) error {
+	if r.err != nil {
+		return r.err
+	}
+
+	defer r.rows.Close()
+
+	if !r.rows.Next() {
+		if err := r.rows.Err(); err != nil {
+			return err
+		}
+
+		return pgx.ErrNoRows
+	}
+
+	return r.rows.Scan(dest...)
+}
+
+// fakeRows is a scripted result set. Methods of pgx.Rows the broker never
+// calls are left to the nil embedded interface.
+type fakeRows struct {
+	pgx.Rows
+	// columns names the result columns; Scan requires one destination each.
+	columns []string
+	// values holds each row's column values in order.
+	values [][]any
+	// closeErr is the error Err reports once iteration ends.
+	closeErr error
+	// position is the 1-based index of the current row; 0 before Next.
+	position int
+	// closed reports whether iteration ended or Close ran.
+	closed bool
+}
+
+// newRows returns an empty result set with the given columns.
+func newRows(columns []string) *fakeRows {
+	return &fakeRows{columns: columns}
+}
+
+// AddRow appends a row of column values.
+func (r *fakeRows) AddRow(values ...any) *fakeRows {
+	r.values = append(r.values, values)
+
+	return r
+}
+
+// CloseError makes Err report err once iteration ends.
+func (r *fakeRows) CloseError(err error) *fakeRows {
+	r.closeErr = err
+
+	return r
+}
+
+// Next advances to the next row, ending iteration after the last one.
+func (r *fakeRows) Next() bool {
+	if r.position == len(r.values) {
+		r.closed = true
+
+		return false
+	}
+
+	r.position++
+
+	return true
+}
+
+// Err reports the scripted close error once iteration has ended.
+func (r *fakeRows) Err() error {
+	if !r.closed {
+		return nil
+	}
+
+	return r.closeErr
+}
+
+// Close ends iteration.
+func (r *fakeRows) Close() { r.closed = true }
+
+// Scan copies the current row into dest. A nil value zeroes its destination,
+// and every other value must be assignable to its destination's type.
+func (r *fakeRows) Scan(dest ...any) error {
+	if len(dest) != len(r.columns) {
+		return fmt.Errorf("scan into %d destinations, result has %d columns", len(dest), len(r.columns))
+	}
+
+	for index, value := range r.values[r.position-1] {
+		target := reflect.ValueOf(dest[index]).Elem()
+
+		if value == nil {
+			target.SetZero()
+
+			continue
+		}
+
+		source := reflect.ValueOf(value)
+		if !source.Type().AssignableTo(target.Type()) {
+			return fmt.Errorf("column %s: cannot scan %s into %s", r.columns[index], source.Type(), target.Type())
+		}
+
+		target.Set(source)
+	}
+
+	return nil
 }
 
 // postgresImage pins the database version under test.
@@ -196,9 +497,9 @@ func TestPoolErrorPropagation(t *testing.T) {
 			b, mock := newMockBroker(t)
 
 			if tc.exec {
-				mock.ExpectExec("").WithArgs(anyArgs(tc.args)...).WillReturnError(errBoom)
+				mock.ExpectExec().WithArgCount(tc.args).WillReturnError(errBoom)
 			} else {
-				mock.ExpectQuery("").WithArgs(anyArgs(tc.args)...).WillReturnError(errBoom)
+				mock.ExpectQuery().WithArgCount(tc.args).WillReturnError(errBoom)
 			}
 
 			require.ErrorIs(t, tc.call(b), errBoom)
@@ -227,7 +528,7 @@ func TestLeaseLostOnMissingRow(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			b, mock := newMockBroker(t)
-			mock.ExpectQuery("").WithArgs(anyArgs(tc.args)...).WillReturnError(pgx.ErrNoRows)
+			mock.ExpectQuery().WithArgCount(tc.args).WillReturnError(pgx.ErrNoRows)
 
 			require.ErrorIs(t, tc.call(b), broker.ErrLeaseLost)
 			require.NoError(t, mock.ExpectationsWereMet())
@@ -261,7 +562,7 @@ func TestRowIterationErrors(t *testing.T) {
 		t.Run(tc.name+"/scan", func(t *testing.T) {
 			b, mock := newMockBroker(t)
 			// A single-column row cannot satisfy the multi-column Scan.
-			mock.ExpectQuery("").WithArgs(anyArgs(tc.args)...).WillReturnRows(pgxmock.NewRows([]string{"only"}).AddRow("x"))
+			mock.ExpectQuery().WithArgCount(tc.args).WillReturnRows(newRows([]string{"only"}).AddRow("x"))
 
 			require.Error(t, tc.call(b))
 			require.NoError(t, mock.ExpectationsWereMet())
@@ -271,7 +572,7 @@ func TestRowIterationErrors(t *testing.T) {
 			b, mock := newMockBroker(t)
 			// An empty result whose close surfaces an error reaches the
 			// post-loop rows.Err() guard without first tripping a scan.
-			mock.ExpectQuery("").WithArgs(anyArgs(tc.args)...).WillReturnRows(pgxmock.NewRows([]string{"only"}).CloseError(errBoom))
+			mock.ExpectQuery().WithArgCount(tc.args).WillReturnRows(newRows([]string{"only"}).CloseError(errBoom))
 
 			require.ErrorIs(t, tc.call(b), errBoom)
 			require.NoError(t, mock.ExpectationsWereMet())
@@ -288,7 +589,7 @@ var taskRowColumns = []string{"payload", "state", "retried", "last_error", "star
 
 func TestExtendLeaseLostWhenNoRowUpdated(t *testing.T) {
 	b, mock := newMockBroker(t)
-	mock.ExpectExec("").WithArgs(anyArgs(4)...).WillReturnResult(pgxmock.NewResult("UPDATE", 0))
+	mock.ExpectExec().WithArgCount(4).WillReturnResult(pgconn.NewCommandTag("UPDATE 0"))
 
 	require.ErrorIs(t, b.ExtendLease(context.Background(), "t", "L", time.Second), broker.ErrLeaseLost)
 	require.NoError(t, mock.ExpectationsWereMet())
@@ -305,7 +606,7 @@ func TestWebhookWorkerNotFoundPaths(t *testing.T) {
 		b, mock := newMockBroker(t)
 		// An empty (but well-formed) result set means the registration is
 		// absent, which maps to ErrTaskNotFound.
-		mock.ExpectQuery("").WithArgs(anyArgs(1)...).WillReturnRows(pgxmock.NewRows(webhookColumns))
+		mock.ExpectQuery().WithArgCount(1).WillReturnRows(newRows(webhookColumns))
 
 		_, err := b.GetWebhookWorker(ctx, "hooks")
 		require.ErrorIs(t, err, broker.ErrTaskNotFound)
@@ -315,7 +616,7 @@ func TestWebhookWorkerNotFoundPaths(t *testing.T) {
 	t.Run("SetWebhookWorkerPaused missing", func(t *testing.T) {
 		b, mock := newMockBroker(t)
 		// No row updated: the registration does not exist.
-		mock.ExpectExec("").WithArgs(anyArgs(3)...).WillReturnResult(pgxmock.NewResult("UPDATE", 0))
+		mock.ExpectExec().WithArgCount(3).WillReturnResult(pgconn.NewCommandTag("UPDATE 0"))
 
 		require.ErrorIs(t, b.SetWebhookWorkerPaused(ctx, "hooks", true), broker.ErrTaskNotFound)
 		require.NoError(t, mock.ExpectationsWereMet())
@@ -330,7 +631,7 @@ func TestExplainMissOutcomes(t *testing.T) {
 
 	t.Run("primary query error", func(t *testing.T) {
 		b, mock := newMockBroker(t)
-		mock.ExpectQuery("").WithArgs(anyArgs(2)...).WillReturnError(errBoom)
+		mock.ExpectQuery().WithArgCount(2).WillReturnError(errBoom)
 
 		require.ErrorIs(t, b.CancelTask(ctx, "t"), errBoom)
 		require.NoError(t, mock.ExpectationsWereMet())
@@ -338,8 +639,8 @@ func TestExplainMissOutcomes(t *testing.T) {
 
 	t.Run("task not found", func(t *testing.T) {
 		b, mock := newMockBroker(t)
-		mock.ExpectQuery("").WithArgs(anyArgs(2)...).WillReturnError(pgx.ErrNoRows)
-		mock.ExpectQuery("").WithArgs(anyArgs(1)...).WillReturnError(pgx.ErrNoRows)
+		mock.ExpectQuery().WithArgCount(2).WillReturnError(pgx.ErrNoRows)
+		mock.ExpectQuery().WithArgCount(1).WillReturnError(pgx.ErrNoRows)
 
 		require.ErrorIs(t, b.CancelTask(ctx, "t"), broker.ErrTaskNotFound)
 		require.NoError(t, mock.ExpectationsWereMet())
@@ -347,8 +648,8 @@ func TestExplainMissOutcomes(t *testing.T) {
 
 	t.Run("lookup error", func(t *testing.T) {
 		b, mock := newMockBroker(t)
-		mock.ExpectQuery("").WithArgs(anyArgs(2)...).WillReturnError(pgx.ErrNoRows)
-		mock.ExpectQuery("").WithArgs(anyArgs(1)...).WillReturnError(errBoom)
+		mock.ExpectQuery().WithArgCount(2).WillReturnError(pgx.ErrNoRows)
+		mock.ExpectQuery().WithArgCount(1).WillReturnError(errBoom)
 
 		require.ErrorIs(t, b.CancelTask(ctx, "t"), errBoom)
 		require.NoError(t, mock.ExpectationsWereMet())
@@ -356,8 +657,8 @@ func TestExplainMissOutcomes(t *testing.T) {
 
 	t.Run("invalid state", func(t *testing.T) {
 		b, mock := newMockBroker(t)
-		mock.ExpectQuery("").WithArgs(anyArgs(2)...).WillReturnError(pgx.ErrNoRows)
-		mock.ExpectQuery("").WithArgs(anyArgs(1)...).WillReturnRows(pgxmock.NewRows([]string{"state"}).AddRow(int16(5)))
+		mock.ExpectQuery().WithArgCount(2).WillReturnError(pgx.ErrNoRows)
+		mock.ExpectQuery().WithArgCount(1).WillReturnRows(newRows([]string{"state"}).AddRow(int16(5)))
 
 		require.ErrorIs(t, b.CancelTask(ctx, "t"), broker.ErrInvalidState)
 		require.NoError(t, mock.ExpectationsWereMet())
@@ -382,8 +683,8 @@ func TestWaitingMutationsExplainMiss(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			b, mock := newMockBroker(t)
-			mock.ExpectQuery("").WithArgs(anyArgs(tc.args)...).WillReturnError(pgx.ErrNoRows)
-			mock.ExpectQuery("").WithArgs(anyArgs(1)...).WillReturnError(pgx.ErrNoRows)
+			mock.ExpectQuery().WithArgCount(tc.args).WillReturnError(pgx.ErrNoRows)
+			mock.ExpectQuery().WithArgCount(1).WillReturnError(pgx.ErrNoRows)
 
 			require.ErrorIs(t, tc.call(b), broker.ErrTaskNotFound)
 			require.NoError(t, mock.ExpectationsWereMet())
@@ -396,13 +697,13 @@ func TestDeleteTaskPaths(t *testing.T) {
 
 	// noDependents is the has-dependents pre-check answering "no dependents", so
 	// the delete proceeds. It runs before every delete path below.
-	noDependents := func() *pgxmock.Rows {
-		return pgxmock.NewRows([]string{"exists"}).AddRow(false)
+	noDependents := func() *fakeRows {
+		return newRows([]string{"exists"}).AddRow(false)
 	}
 
 	t.Run("check dependents error", func(t *testing.T) {
 		b, mock := newMockBroker(t)
-		mock.ExpectQuery("").WithArgs(anyArgs(1)...).WillReturnError(errBoom)
+		mock.ExpectQuery().WithArgCount(1).WillReturnError(errBoom)
 
 		require.ErrorIs(t, b.DeleteTask(ctx, "t"), errBoom)
 		require.NoError(t, mock.ExpectationsWereMet())
@@ -410,8 +711,8 @@ func TestDeleteTaskPaths(t *testing.T) {
 
 	t.Run("has dependents", func(t *testing.T) {
 		b, mock := newMockBroker(t)
-		mock.ExpectQuery("").WithArgs(anyArgs(1)...).WillReturnRows(
-			pgxmock.NewRows([]string{"exists"}).AddRow(true))
+		mock.ExpectQuery().WithArgCount(1).WillReturnRows(
+			newRows([]string{"exists"}).AddRow(true))
 
 		require.ErrorIs(t, b.DeleteTask(ctx, "t"), broker.ErrTaskHasDependents)
 		require.NoError(t, mock.ExpectationsWereMet())
@@ -419,8 +720,8 @@ func TestDeleteTaskPaths(t *testing.T) {
 
 	t.Run("exec error", func(t *testing.T) {
 		b, mock := newMockBroker(t)
-		mock.ExpectQuery("").WithArgs(anyArgs(1)...).WillReturnRows(noDependents())
-		mock.ExpectExec("").WithArgs(anyArgs(1)...).WillReturnError(errBoom)
+		mock.ExpectQuery().WithArgCount(1).WillReturnRows(noDependents())
+		mock.ExpectExec().WithArgCount(1).WillReturnError(errBoom)
 
 		require.ErrorIs(t, b.DeleteTask(ctx, "t"), errBoom)
 		require.NoError(t, mock.ExpectationsWereMet())
@@ -428,9 +729,9 @@ func TestDeleteTaskPaths(t *testing.T) {
 
 	t.Run("missing task", func(t *testing.T) {
 		b, mock := newMockBroker(t)
-		mock.ExpectQuery("").WithArgs(anyArgs(1)...).WillReturnRows(noDependents())
-		mock.ExpectExec("").WithArgs(anyArgs(1)...).WillReturnResult(pgxmock.NewResult("DELETE", 0))
-		mock.ExpectQuery("").WithArgs(anyArgs(1)...).WillReturnError(pgx.ErrNoRows)
+		mock.ExpectQuery().WithArgCount(1).WillReturnRows(noDependents())
+		mock.ExpectExec().WithArgCount(1).WillReturnResult(pgconn.NewCommandTag("DELETE 0"))
+		mock.ExpectQuery().WithArgCount(1).WillReturnError(pgx.ErrNoRows)
 
 		require.ErrorIs(t, b.DeleteTask(ctx, "t"), broker.ErrTaskNotFound)
 		require.NoError(t, mock.ExpectationsWereMet())
@@ -438,9 +739,9 @@ func TestDeleteTaskPaths(t *testing.T) {
 
 	t.Run("drop edges error", func(t *testing.T) {
 		b, mock := newMockBroker(t)
-		mock.ExpectQuery("").WithArgs(anyArgs(1)...).WillReturnRows(noDependents())
-		mock.ExpectExec("").WithArgs(anyArgs(1)...).WillReturnResult(pgxmock.NewResult("DELETE", 1))
-		mock.ExpectExec("").WithArgs(anyArgs(1)...).WillReturnError(errBoom)
+		mock.ExpectQuery().WithArgCount(1).WillReturnRows(noDependents())
+		mock.ExpectExec().WithArgCount(1).WillReturnResult(pgconn.NewCommandTag("DELETE 1"))
+		mock.ExpectExec().WithArgCount(1).WillReturnError(errBoom)
 
 		require.ErrorIs(t, b.DeleteTask(ctx, "t"), errBoom)
 		require.NoError(t, mock.ExpectationsWereMet())
@@ -452,7 +753,7 @@ func TestGetTaskPaths(t *testing.T) {
 
 	t.Run("query error", func(t *testing.T) {
 		b, mock := newMockBroker(t)
-		mock.ExpectQuery("").WithArgs(anyArgs(1)...).WillReturnError(errBoom)
+		mock.ExpectQuery().WithArgCount(1).WillReturnError(errBoom)
 
 		_, _, err := b.GetTask(ctx, "t")
 		require.ErrorIs(t, err, errBoom)
@@ -461,7 +762,7 @@ func TestGetTaskPaths(t *testing.T) {
 
 	t.Run("not found", func(t *testing.T) {
 		b, mock := newMockBroker(t)
-		mock.ExpectQuery("").WithArgs(anyArgs(1)...).WillReturnError(pgx.ErrNoRows)
+		mock.ExpectQuery().WithArgCount(1).WillReturnError(pgx.ErrNoRows)
 
 		_, _, err := b.GetTask(ctx, "t")
 		require.ErrorIs(t, err, broker.ErrTaskNotFound)
@@ -470,8 +771,8 @@ func TestGetTaskPaths(t *testing.T) {
 
 	t.Run("unmarshal error", func(t *testing.T) {
 		b, mock := newMockBroker(t)
-		mock.ExpectQuery("").WithArgs(anyArgs(1)...).WillReturnRows(
-			pgxmock.NewRows(taskRowColumns).AddRow(badPayload, int16(1), int32(0), "", nil, nil))
+		mock.ExpectQuery().WithArgCount(1).WillReturnRows(
+			newRows(taskRowColumns).AddRow(badPayload, int16(1), int32(0), "", nil, nil))
 
 		_, _, err := b.GetTask(ctx, "t")
 		require.Error(t, err)
@@ -484,7 +785,7 @@ func TestListTasksPaths(t *testing.T) {
 
 	t.Run("query error", func(t *testing.T) {
 		b, mock := newMockBroker(t)
-		mock.ExpectQuery("").WithArgs(anyArgs(1)...).WillReturnError(errBoom)
+		mock.ExpectQuery().WithArgCount(1).WillReturnError(errBoom)
 
 		_, err := b.ListTasks(ctx, broker.TaskQuery{})
 		require.ErrorIs(t, err, errBoom)
@@ -493,7 +794,7 @@ func TestListTasksPaths(t *testing.T) {
 
 	t.Run("scan error", func(t *testing.T) {
 		b, mock := newMockBroker(t)
-		mock.ExpectQuery("").WithArgs(anyArgs(1)...).WillReturnRows(pgxmock.NewRows([]string{"only"}).AddRow("x"))
+		mock.ExpectQuery().WithArgCount(1).WillReturnRows(newRows([]string{"only"}).AddRow("x"))
 
 		_, err := b.ListTasks(ctx, broker.TaskQuery{})
 		require.Error(t, err)
@@ -502,8 +803,8 @@ func TestListTasksPaths(t *testing.T) {
 
 	t.Run("unmarshal error", func(t *testing.T) {
 		b, mock := newMockBroker(t)
-		mock.ExpectQuery("").WithArgs(anyArgs(1)...).WillReturnRows(
-			pgxmock.NewRows([]string{"payload", "retried", "last_error", "state", "started_at", "completed_at"}).
+		mock.ExpectQuery().WithArgCount(1).WillReturnRows(
+			newRows([]string{"payload", "retried", "last_error", "state", "started_at", "completed_at"}).
 				AddRow(badPayload, int32(0), "", int16(1), nil, nil))
 
 		_, err := b.ListTasks(ctx, broker.TaskQuery{})
@@ -513,7 +814,7 @@ func TestListTasksPaths(t *testing.T) {
 
 	t.Run("rows error", func(t *testing.T) {
 		b, mock := newMockBroker(t)
-		mock.ExpectQuery("").WithArgs(anyArgs(1)...).WillReturnRows(pgxmock.NewRows([]string{"only"}).CloseError(errBoom))
+		mock.ExpectQuery().WithArgCount(1).WillReturnRows(newRows([]string{"only"}).CloseError(errBoom))
 
 		_, err := b.ListTasks(ctx, broker.TaskQuery{})
 		require.ErrorIs(t, err, errBoom)
@@ -526,7 +827,7 @@ func TestCronExecPaths(t *testing.T) {
 
 	t.Run("upsert error", func(t *testing.T) {
 		b, mock := newMockBroker(t)
-		mock.ExpectExec("").WithArgs(anyArgs(10)...).WillReturnError(errBoom)
+		mock.ExpectExec().WithArgCount(10).WillReturnError(errBoom)
 
 		require.ErrorIs(t, b.UpsertCronEntry(ctx, &broker.CronEntry{ID: "c"}), errBoom)
 		require.NoError(t, mock.ExpectationsWereMet())
@@ -534,7 +835,7 @@ func TestCronExecPaths(t *testing.T) {
 
 	t.Run("update next run error", func(t *testing.T) {
 		b, mock := newMockBroker(t)
-		mock.ExpectExec("").WithArgs(anyArgs(3)...).WillReturnError(errBoom)
+		mock.ExpectExec().WithArgCount(3).WillReturnError(errBoom)
 
 		require.ErrorIs(t, b.UpdateCronNextRun(ctx, "c", time.Time{}, mockStart), errBoom)
 		require.NoError(t, mock.ExpectationsWereMet())
@@ -542,7 +843,7 @@ func TestCronExecPaths(t *testing.T) {
 
 	t.Run("set paused error", func(t *testing.T) {
 		b, mock := newMockBroker(t)
-		mock.ExpectExec("").WithArgs(anyArgs(3)...).WillReturnError(errBoom)
+		mock.ExpectExec().WithArgCount(3).WillReturnError(errBoom)
 
 		require.ErrorIs(t, b.SetCronPaused(ctx, "c", true), errBoom)
 		require.NoError(t, mock.ExpectationsWereMet())
@@ -550,7 +851,7 @@ func TestCronExecPaths(t *testing.T) {
 
 	t.Run("set paused missing", func(t *testing.T) {
 		b, mock := newMockBroker(t)
-		mock.ExpectExec("").WithArgs(anyArgs(3)...).WillReturnResult(pgxmock.NewResult("UPDATE", 0))
+		mock.ExpectExec().WithArgCount(3).WillReturnResult(pgconn.NewCommandTag("UPDATE 0"))
 
 		require.ErrorIs(t, b.SetCronPaused(ctx, "c", true), broker.ErrTaskNotFound)
 		require.NoError(t, mock.ExpectationsWereMet())
@@ -558,7 +859,7 @@ func TestCronExecPaths(t *testing.T) {
 
 	t.Run("delete error", func(t *testing.T) {
 		b, mock := newMockBroker(t)
-		mock.ExpectExec("").WithArgs(anyArgs(1)...).WillReturnError(errBoom)
+		mock.ExpectExec().WithArgCount(1).WillReturnError(errBoom)
 
 		require.ErrorIs(t, b.DeleteCronEntry(ctx, "c"), errBoom)
 		require.NoError(t, mock.ExpectationsWereMet())
@@ -570,7 +871,7 @@ func TestCronListPaths(t *testing.T) {
 
 	t.Run("list query error", func(t *testing.T) {
 		b, mock := newMockBroker(t)
-		mock.ExpectQuery("").WillReturnError(errBoom)
+		mock.ExpectQuery().WillReturnError(errBoom)
 
 		_, err := b.ListCronEntries(ctx)
 		require.ErrorIs(t, err, errBoom)
@@ -579,7 +880,7 @@ func TestCronListPaths(t *testing.T) {
 
 	t.Run("list scan error", func(t *testing.T) {
 		b, mock := newMockBroker(t)
-		mock.ExpectQuery("").WillReturnRows(pgxmock.NewRows([]string{"only"}).AddRow("x"))
+		mock.ExpectQuery().WillReturnRows(newRows([]string{"only"}).AddRow("x"))
 
 		_, err := b.ListCronEntries(ctx)
 		require.Error(t, err)
@@ -588,7 +889,7 @@ func TestCronListPaths(t *testing.T) {
 
 	t.Run("list rows error", func(t *testing.T) {
 		b, mock := newMockBroker(t)
-		mock.ExpectQuery("").WillReturnRows(pgxmock.NewRows([]string{"only"}).CloseError(errBoom))
+		mock.ExpectQuery().WillReturnRows(newRows([]string{"only"}).CloseError(errBoom))
 
 		_, err := b.ListCronEntries(ctx)
 		require.ErrorIs(t, err, errBoom)
@@ -597,7 +898,7 @@ func TestCronListPaths(t *testing.T) {
 
 	t.Run("due query error", func(t *testing.T) {
 		b, mock := newMockBroker(t)
-		mock.ExpectQuery("").WithArgs(anyArgs(1)...).WillReturnError(errBoom)
+		mock.ExpectQuery().WithArgCount(1).WillReturnError(errBoom)
 
 		_, err := b.ListDueCronEntries(ctx, mockStart)
 		require.ErrorIs(t, err, errBoom)
@@ -632,7 +933,7 @@ func TestTransactionBeginErrors(t *testing.T) {
 
 	t.Run("resolve dependents", func(t *testing.T) {
 		b, mock := newMockBroker(t)
-		mock.ExpectQuery("").WithArgs(anyArgs(1)...).WillReturnRows(pgxmock.NewRows([]string{"exists"}).AddRow(true))
+		mock.ExpectQuery().WithArgCount(1).WillReturnRows(newRows([]string{"exists"}).AddRow(true))
 		mock.ExpectBegin().WillReturnError(errBoom)
 
 		_, err := b.ResolveDependents(ctx, "t")
@@ -649,8 +950,8 @@ func TestEnqueueCommitUniqueViolation(t *testing.T) {
 	task := &conveyorv1.TaskEnvelope{Id: "t", Queue: "q", Type: "demo", Options: &conveyorv1.TaskOptions{UniqueKey: "k"}}
 
 	mock.ExpectBegin()
-	mock.ExpectExec("").WithArgs(anyArgs(2)...).WillReturnResult(pgxmock.NewResult("UPDATE", 0))
-	mock.ExpectExec("").WithArgs(anyArgs(18)...).WillReturnResult(pgxmock.NewResult("INSERT", 1))
+	mock.ExpectExec().WithArgCount(2).WillReturnResult(pgconn.NewCommandTag("UPDATE 0"))
+	mock.ExpectExec().WithArgCount(18).WillReturnResult(pgconn.NewCommandTag("INSERT 1"))
 	mock.ExpectCommit().WillReturnError(&pgconn.PgError{Code: uniqueViolationCode, ConstraintName: uniqueIndexName})
 	mock.ExpectRollback()
 
@@ -701,7 +1002,7 @@ func TestEnqueueBatchMock(t *testing.T) {
 	t.Run("insert error rolls back the whole batch", func(t *testing.T) {
 		b, mock := newMockBroker(t)
 		mock.ExpectBegin()
-		mock.ExpectExec("").WithArgs(anyArgs(18)...).WillReturnError(errBoom)
+		mock.ExpectExec().WithArgCount(18).WillReturnError(errBoom)
 		mock.ExpectRollback()
 
 		err := b.EnqueueBatch(ctx, []*conveyorv1.TaskEnvelope{simple("a"), simple("b")})
@@ -716,7 +1017,7 @@ func TestEnqueueBatchMock(t *testing.T) {
 	t.Run("commit error", func(t *testing.T) {
 		b, mock := newMockBroker(t)
 		mock.ExpectBegin()
-		mock.ExpectExec("").WithArgs(anyArgs(18)...).WillReturnResult(pgxmock.NewResult("INSERT", 1))
+		mock.ExpectExec().WithArgCount(18).WillReturnResult(pgconn.NewCommandTag("INSERT 1"))
 		mock.ExpectCommit().WillReturnError(errBoom)
 		mock.ExpectRollback()
 
@@ -734,7 +1035,7 @@ func TestEnqueueBatchMock(t *testing.T) {
 	t.Run("release lapsed unique claim error", func(t *testing.T) {
 		b, mock := newMockBroker(t)
 		mock.ExpectBegin()
-		mock.ExpectExec("").WithArgs(anyArgs(2)...).WillReturnError(errBoom)
+		mock.ExpectExec().WithArgCount(2).WillReturnError(errBoom)
 		mock.ExpectRollback()
 
 		require.ErrorIs(t, b.EnqueueBatch(ctx, []*conveyorv1.TaskEnvelope{unique("a")}), errBoom)
@@ -744,8 +1045,8 @@ func TestEnqueueBatchMock(t *testing.T) {
 	t.Run("unique violation maps to duplicate", func(t *testing.T) {
 		b, mock := newMockBroker(t)
 		mock.ExpectBegin()
-		mock.ExpectExec("").WithArgs(anyArgs(2)...).WillReturnResult(pgxmock.NewResult("UPDATE", 0))
-		mock.ExpectExec("").WithArgs(anyArgs(18)...).WillReturnError(
+		mock.ExpectExec().WithArgCount(2).WillReturnResult(pgconn.NewCommandTag("UPDATE 0"))
+		mock.ExpectExec().WithArgCount(18).WillReturnError(
 			&pgconn.PgError{Code: uniqueViolationCode, ConstraintName: uniqueIndexName})
 		mock.ExpectRollback()
 
@@ -763,9 +1064,9 @@ func TestEnqueueBatchMock(t *testing.T) {
 		mock.ExpectBegin()
 		// Unknown dependency: the states query returns no rows, so the task is
 		// committed blocked and an edge is recorded.
-		mock.ExpectQuery("").WithArgs(anyArgs(1)...).WillReturnRows(pgxmock.NewRows([]string{"id", "state"}))
-		mock.ExpectExec("").WithArgs(anyArgs(18)...).WillReturnResult(pgxmock.NewResult("INSERT", 1))
-		mock.ExpectExec("").WithArgs(anyArgs(3)...).WillReturnError(errBoom)
+		mock.ExpectQuery().WithArgCount(1).WillReturnRows(newRows([]string{"id", "state"}))
+		mock.ExpectExec().WithArgCount(18).WillReturnResult(pgconn.NewCommandTag("INSERT 1"))
+		mock.ExpectExec().WithArgCount(3).WillReturnError(errBoom)
 		mock.ExpectRollback()
 
 		require.ErrorIs(t, b.EnqueueBatch(ctx, []*conveyorv1.TaskEnvelope{task}), errBoom)
@@ -855,7 +1156,7 @@ func TestPurgeTerminalPaths(t *testing.T) {
 
 	t.Run("release claims error", func(t *testing.T) {
 		b, mock := newMockBroker(t)
-		mock.ExpectExec("").WithArgs(anyArgs(1)...).WillReturnError(errBoom)
+		mock.ExpectExec().WithArgCount(1).WillReturnError(errBoom)
 
 		_, err := b.PurgeTerminal(ctx, time.Hour, 10)
 		require.ErrorIs(t, err, errBoom)
@@ -864,8 +1165,8 @@ func TestPurgeTerminalPaths(t *testing.T) {
 
 	t.Run("drop stale edges error", func(t *testing.T) {
 		b, mock := newMockBroker(t)
-		mock.ExpectExec("").WithArgs(anyArgs(1)...).WillReturnResult(pgxmock.NewResult("UPDATE", 0))
-		mock.ExpectExec("").WillReturnError(errBoom)
+		mock.ExpectExec().WithArgCount(1).WillReturnResult(pgconn.NewCommandTag("UPDATE 0"))
+		mock.ExpectExec().WillReturnError(errBoom)
 
 		_, err := b.PurgeTerminal(ctx, time.Hour, 10)
 		require.ErrorIs(t, err, errBoom)
@@ -874,9 +1175,9 @@ func TestPurgeTerminalPaths(t *testing.T) {
 
 	t.Run("purge completed error", func(t *testing.T) {
 		b, mock := newMockBroker(t)
-		mock.ExpectExec("").WithArgs(anyArgs(1)...).WillReturnResult(pgxmock.NewResult("UPDATE", 0))
-		mock.ExpectExec("").WillReturnResult(pgxmock.NewResult("DELETE", 0))
-		mock.ExpectExec("").WithArgs(anyArgs(2)...).WillReturnError(errBoom)
+		mock.ExpectExec().WithArgCount(1).WillReturnResult(pgconn.NewCommandTag("UPDATE 0"))
+		mock.ExpectExec().WillReturnResult(pgconn.NewCommandTag("DELETE 0"))
+		mock.ExpectExec().WithArgCount(2).WillReturnError(errBoom)
 
 		_, err := b.PurgeTerminal(ctx, time.Hour, 10)
 		require.ErrorIs(t, err, errBoom)
@@ -885,9 +1186,9 @@ func TestPurgeTerminalPaths(t *testing.T) {
 
 	t.Run("zero archive retention skips the archive purge", func(t *testing.T) {
 		b, mock := newMockBroker(t)
-		mock.ExpectExec("").WithArgs(anyArgs(1)...).WillReturnResult(pgxmock.NewResult("UPDATE", 0))
-		mock.ExpectExec("").WillReturnResult(pgxmock.NewResult("DELETE", 1))
-		mock.ExpectExec("").WithArgs(anyArgs(2)...).WillReturnResult(pgxmock.NewResult("DELETE", 4))
+		mock.ExpectExec().WithArgCount(1).WillReturnResult(pgconn.NewCommandTag("UPDATE 0"))
+		mock.ExpectExec().WillReturnResult(pgconn.NewCommandTag("DELETE 1"))
+		mock.ExpectExec().WithArgCount(2).WillReturnResult(pgconn.NewCommandTag("DELETE 4"))
 
 		purged, err := b.PurgeTerminal(ctx, 0, 10)
 		require.NoError(t, err)
@@ -897,10 +1198,10 @@ func TestPurgeTerminalPaths(t *testing.T) {
 
 	t.Run("purge archived error", func(t *testing.T) {
 		b, mock := newMockBroker(t)
-		mock.ExpectExec("").WithArgs(anyArgs(1)...).WillReturnResult(pgxmock.NewResult("UPDATE", 0))
-		mock.ExpectExec("").WillReturnResult(pgxmock.NewResult("DELETE", 0))
-		mock.ExpectExec("").WithArgs(anyArgs(2)...).WillReturnResult(pgxmock.NewResult("DELETE", 1))
-		mock.ExpectExec("").WithArgs(anyArgs(2)...).WillReturnError(errBoom)
+		mock.ExpectExec().WithArgCount(1).WillReturnResult(pgconn.NewCommandTag("UPDATE 0"))
+		mock.ExpectExec().WillReturnResult(pgconn.NewCommandTag("DELETE 0"))
+		mock.ExpectExec().WithArgCount(2).WillReturnResult(pgconn.NewCommandTag("DELETE 1"))
+		mock.ExpectExec().WithArgCount(2).WillReturnError(errBoom)
 
 		_, err := b.PurgeTerminal(ctx, time.Hour, 10)
 		require.ErrorIs(t, err, errBoom)
@@ -909,10 +1210,10 @@ func TestPurgeTerminalPaths(t *testing.T) {
 
 	t.Run("sums completed and archived rows", func(t *testing.T) {
 		b, mock := newMockBroker(t)
-		mock.ExpectExec("").WithArgs(anyArgs(1)...).WillReturnResult(pgxmock.NewResult("UPDATE", 0))
-		mock.ExpectExec("").WillReturnResult(pgxmock.NewResult("DELETE", 0))
-		mock.ExpectExec("").WithArgs(anyArgs(2)...).WillReturnResult(pgxmock.NewResult("DELETE", 4))
-		mock.ExpectExec("").WithArgs(anyArgs(2)...).WillReturnResult(pgxmock.NewResult("DELETE", 3))
+		mock.ExpectExec().WithArgCount(1).WillReturnResult(pgconn.NewCommandTag("UPDATE 0"))
+		mock.ExpectExec().WillReturnResult(pgconn.NewCommandTag("DELETE 0"))
+		mock.ExpectExec().WithArgCount(2).WillReturnResult(pgconn.NewCommandTag("DELETE 4"))
+		mock.ExpectExec().WithArgCount(2).WillReturnResult(pgconn.NewCommandTag("DELETE 3"))
 
 		purged, err := b.PurgeTerminal(ctx, time.Hour, 10)
 		require.NoError(t, err)
@@ -923,7 +1224,7 @@ func TestPurgeTerminalPaths(t *testing.T) {
 
 func TestAckBatchQueryError(t *testing.T) {
 	b, mock := newMockBroker(t)
-	mock.ExpectQuery("").WithArgs(anyArgs(4)...).WillReturnError(errBoom)
+	mock.ExpectQuery().WithArgCount(4).WillReturnError(errBoom)
 
 	_, err := b.AckBatch(context.Background(), []broker.AckItem{{TaskID: "t", LeaseID: "l"}})
 	require.ErrorIs(t, err, errBoom)
