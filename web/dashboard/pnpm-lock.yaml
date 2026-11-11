@@ -168,13 +168,13 @@ importers:
     dependencies:
       '@bufbuild/protobuf':
         specifier: ^2.16.0
-        version: 2.16.0
+        version: 2.17.0
       '@connectrpc/connect':
         specifier: ^2.3.0
-        version: 2.3.0(@bufbuild/protobuf@2.16.0)
+        version: 2.3.0(@bufbuild/protobuf@2.17.0)
       '@connectrpc/connect-web':
         specifier: ^2.3.0
-        version: 2.3.0(@bufbuild/protobuf@2.16.0)(@connectrpc/connect@2.3.0(@bufbuild/protobuf@2.16.0))
+        version: 2.3.0(@bufbuild/protobuf@2.17.0)(@connectrpc/connect@2.3.0(@bufbuild/protobuf@2.17.0))
       react:
         specifier: ^19.3.1
         version: 19.3.1
@@ -184,7 +184,7 @@ importers:
     devDependencies:
       '@bufbuild/protoc-gen-es':
         specifier: ^2.16.0
-        version: 2.16.0(@bufbuild/protobuf@2.16.0)
+        version: 2.16.0(@bufbuild/protobuf@2.17.0)
       '@tailwindcss/vite':
         specifier: ^4.3.3
         version: 4.3.4(vite@8.3.5(jiti@2.7.0))
@@ -253,6 +253,9 @@ packages:
 
   '@bufbuild/protobuf@2.16.0':
     resolution: {integrity: sha512-FWa0sPlqYGJgpTs6OxBRcL/AW4JT0OIO+W1ajerluoTVh8CV0B7XM1qsNCRgnkSCkRCgOICKHRQlY17jrsm0+Q==}
+
+  '@bufbuild/protobuf@2.17.0':
+    resolution: {integrity: sha512-hcPkSz6D7MiTU/5VBBhK+kxaYDoOdQ6yJRFJ3kS8Nydp+VZXfg1vrpABKPNod8bXMufsVCmiUJVIKFzCzta4uw==}
 
   '@bufbuild/protoc-gen-es@2.16.0':
     resolution: {integrity: sha512-LbPrEaGd7bOxKbJHllTR5439+PZjqd6fM7xyDZkDVtZ+Efzr7TMdMqShG9Qkf/nYVyiNS/SK5r9JhRaBTFkfZw==}
@@ -1236,11 +1239,13 @@ snapshots:
 
   '@bufbuild/protobuf@2.16.0': {}
 
-  '@bufbuild/protoc-gen-es@2.16.0(@bufbuild/protobuf@2.16.0)':
+  '@bufbuild/protobuf@2.17.0': {}
+
+  '@bufbuild/protoc-gen-es@2.16.0(@bufbuild/protobuf@2.17.0)':
     dependencies:
       '@bufbuild/protoplugin': 2.16.0
     optionalDependencies:
-      '@bufbuild/protobuf': 2.16.0
+      '@bufbuild/protobuf': 2.17.0
     transitivePeerDependencies:
       - supports-color
 
@@ -1252,14 +1257,14 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@connectrpc/connect-web@2.3.0(@bufbuild/protobuf@2.16.0)(@connectrpc/connect@2.3.0(@bufbuild/protobuf@2.16.0))':
+  '@connectrpc/connect-web@2.3.0(@bufbuild/protobuf@2.17.0)(@connectrpc/connect@2.3.0(@bufbuild/protobuf@2.17.0))':
     dependencies:
-      '@bufbuild/protobuf': 2.16.0
-      '@connectrpc/connect': 2.3.0(@bufbuild/protobuf@2.16.0)
+      '@bufbuild/protobuf': 2.17.0
+      '@connectrpc/connect': 2.3.0(@bufbuild/protobuf@2.17.0)
 
-  '@connectrpc/connect@2.3.0(@bufbuild/protobuf@2.16.0)':
+  '@connectrpc/connect@2.3.0(@bufbuild/protobuf@2.17.0)':
     dependencies:
-      '@bufbuild/protobuf': 2.16.0
+      '@bufbuild/protobuf': 2.17.0
 
   '@csstools/color-helpers@6.1.2': {}
 
