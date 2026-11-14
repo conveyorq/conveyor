@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import { TaskState } from "../gen/conveyor/v1/task_pb.ts";
-import { decodePayload, formatDuration, formatNumber, formatTime, orDash, relativeTime, taskStateLabel } from "./format.ts";
+import { decodePayload, formatBytes, formatDuration, formatNumber, formatTime, orDash, relativeTime, taskStateLabel } from "./format.ts";
 
 test("labels every task state", () => {
   expect(taskStateLabel(TaskState.PENDING)).toBe("pending");
@@ -60,4 +60,13 @@ test("decodePayload pretty-prints JSON and handles binary", () => {
 
   expect(decodePayload(new Uint8Array(), "application/json")).toBe("—");
   expect(decodePayload(new Uint8Array([0xff, 0xfe]), "application/octet-stream")).toBe("2 bytes (binary)");
+});
+
+test("formatBytes picks the largest fitting binary unit", () => {
+  expect(formatBytes(0)).toBe("0 B");
+  expect(formatBytes(512)).toBe("512 B");
+  expect(formatBytes(1536)).toBe("1.5 KiB");
+  expect(formatBytes(3n * 1024n * 1024n)).toBe("3.0 MiB");
+  expect(formatBytes(2 * 1024 * 1024 * 1024)).toBe("2.0 GiB");
+  expect(formatBytes(4096 * 1024 * 1024 * 1024)).toBe("4096.0 GiB");
 });
