@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Awaitable, Callable, Dict, List, Mapping, Optional, Sequence, Union
+from typing import Awaitable, Callable, Dict, List, Mapping, Optional, Sequence, Set, Union
 
 from .errors import ConveyorError
 from .task import Task
@@ -87,12 +87,14 @@ class Mux:
     """Routes a task to the handler registered for its type.
 
     Register single-task handlers with :meth:`handle` (or the :meth:`handler`
-    decorator) and batch handlers for aggregation groups with
-    :meth:`handle_batch`; decorate them with :meth:`use` / :meth:`use_batch`.
+    decorator), streaming handlers for large payloads with :meth:`handle_stream`,
+    and batch handlers for aggregation groups with :meth:`handle_batch`; decorate
+    them with :meth:`use` / :meth:`use_batch`.
     """
 
     def __init__(self) -> None:
         self._handlers: Dict[str, Handler] = {}
+        self._stream_types: Set[str] = set()
         self._batch_handlers: Dict[str, BatchHandler] = {}
         self._middleware: List[Middleware] = []
         self._batch_middleware: List[BatchMiddleware] = []
@@ -103,6 +105,7 @@ class Mux:
             raise ConveyorError("conveyor: handler type is required")
 
         self._handlers[type] = handler
+        self._stream_types.discard(type)
 
         return self
 
@@ -119,6 +122,36 @@ class Mux:
             return fn
 
         return register
+
+    def handle_stream(self, type: str, handler: Handler) -> "Mux":
+        """Register a streaming handler for a task type and return self.
+
+        The handler receives a chunked payload as it arrives instead of after it
+        is reassembled: it starts at once and reads :attr:`Task.payload_stream`,
+        while :attr:`Task.payload` is empty. Use it for payloads too large to
+        hold in memory. The server sends the chunks only as fast as the handler
+        takes them, so a slow reader holds back only its own payload. Tasks
+        with an inline payload reach the handler as usual, readable through
+        :attr:`Task.payload_stream` too.
+        """
+        self.handle(type, handler)
+        self._stream_types.add(type)
+
+        return self
+
+    def stream_handler(self, type: str) -> Callable[[Handler], Handler]:
+        """Decorator form of :meth:`handle_stream`."""
+
+        def register(fn: Handler) -> Handler:
+            self.handle_stream(type, fn)
+
+            return fn
+
+        return register
+
+    def streams(self, type: str) -> bool:
+        """Whether the task type was registered with :meth:`handle_stream`."""
+        return type in self._stream_types
 
     def handle_batch(self, type: str, handler: BatchHandler) -> "Mux":
         """Register a batch handler for an aggregation-group task type and return self."""

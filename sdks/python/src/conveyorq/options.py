@@ -100,6 +100,10 @@ class TaskInfo:
     progress: int = 0
     #: Latest status reported alongside progress; empty when none.
     progress_message: str = ""
+    #: Stored payload size in bytes (ciphertext when encrypted).
+    payload_size: int = 0
+    #: Whether the payload is stored in chunks, as a streamed or larger-than-inline payload is.
+    payload_chunked: bool = False
 
 
 @dataclass

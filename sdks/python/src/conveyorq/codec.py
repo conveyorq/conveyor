@@ -13,9 +13,10 @@ from __future__ import annotations
 
 import json as _json
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Optional
 
 from .errors import ConveyorError
+from .streaming import PayloadSource, is_payload_source
 
 
 class ContentType:
@@ -39,8 +40,10 @@ class Payload:
 
     #: The content type, e.g. :attr:`ContentType.JSON`.
     content_type: str
-    #: The encoded bytes.
+    #: The encoded bytes; empty for a streamed payload.
     data: bytes
+    #: Supplies a streamed payload (see :func:`stream`); ``None`` for in-memory bytes.
+    source: Optional[PayloadSource] = None
 
 
 def json(value: Any) -> Payload:
@@ -56,6 +59,23 @@ def json(value: Any) -> Payload:
 def binary(data: bytes) -> Payload:
     """Wrap raw bytes as an opaque binary payload, stored and delivered verbatim."""
     return Payload(ContentType.OCTET_STREAM, data)
+
+
+def stream(source: PayloadSource, content_type: str = ContentType.OCTET_STREAM) -> Payload:
+    """Supply a payload from ``source`` for one too large to hold in memory.
+
+    ``source`` is an async iterable of byte chunks of any size, or a binary
+    file-like object such as ``open(path, "rb")``, read on a background thread.
+    :meth:`Client.enqueue` uploads it in chunks through the server's streaming
+    enqueue, reading it to its end, and a streaming handler receives it as it
+    arrives (see :meth:`Mux.handle_stream`). A streamed payload cannot be
+    enqueued with :meth:`Client.enqueue_tx`, and ``unique`` needs an explicit
+    ``unique_key`` since the payload is never held whole to hash.
+    """
+    if not is_payload_source(source):
+        raise ConveyorError("conveyor: stream needs an async iterable of bytes or a binary file-like object")
+
+    return Payload(content_type, b"", source)
 
 
 def text(value: str) -> Payload:

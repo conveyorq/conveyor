@@ -28,9 +28,11 @@ ChannelOption = Tuple[str, object]
 _DEFAULT_HTTP_PORT = 80
 _DEFAULT_HTTPS_PORT = 443
 
-# A BatchDispatch may carry several tasks, each with a payload the server caps at
-# 1 MiB, so the worker's receive limit must comfortably exceed gRPC's 4 MiB
-# default. 64 MiB holds a large batch with headroom.
+# A BatchDispatch may carry several tasks, each with a payload up to the
+# server's configured cap (1 MiB by default), so the worker's receive limit must
+# comfortably exceed gRPC's 4 MiB default. 64 MiB holds a large batch with
+# headroom at the default cap; a server configured for larger payloads needs a
+# larger limit.
 WORKER_MESSAGE_LIMIT = 64 * 1024 * 1024
 
 
@@ -63,6 +65,14 @@ def worker_channel_options() -> List[ChannelOption]:
     return [
         ("grpc.max_receive_message_length", WORKER_MESSAGE_LIMIT),
         ("grpc.max_send_message_length", WORKER_MESSAGE_LIMIT),
+    ]
+
+
+def client_channel_options() -> List[ChannelOption]:
+    """Channel options for a client: a receive limit that admits task info carrying
+    a payload, or a batch of them, beyond gRPC's 4 MiB default."""
+    return [
+        ("grpc.max_receive_message_length", WORKER_MESSAGE_LIMIT),
     ]
 
 

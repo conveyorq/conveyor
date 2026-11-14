@@ -71,3 +71,31 @@ def test_middleware_wraps_outermost_first():
     asyncio.run(resolved(_task("a"), None))
 
     assert order == ["outer", "inner", "base"]
+
+
+def test_handle_stream_registers_a_streaming_handler():
+    mux = Mux()
+    mux.handle_stream("blob", lambda task, ctx: None)
+    mux.handle("plain", lambda task, ctx: None)
+
+    assert mux.resolve("blob") is not None
+    assert mux.streams("blob")
+    assert not mux.streams("plain")
+
+
+def test_stream_handler_decorator_registers():
+    mux = Mux()
+
+    @mux.stream_handler("blob")
+    async def handle(task, ctx):
+        pass
+
+    assert mux.streams("blob")
+
+
+def test_handle_replaces_a_streaming_registration():
+    mux = Mux()
+    mux.handle_stream("blob", lambda task, ctx: None)
+    mux.handle("blob", lambda task, ctx: None)
+
+    assert not mux.streams("blob")

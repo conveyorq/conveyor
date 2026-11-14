@@ -10,11 +10,21 @@ from typing import List
 import grpc
 import pytest
 
-from conveyorq import _time
+from conveyorq import Key, _time, new_aes_gcm
+from conveyorq.encryption import ENCRYPTION_MARKER_KEY, ENCRYPTION_MARKER_VALUE, ChunkSealer
 from conveyorq.errors import ConveyorError
 from conveyorq.gen.conveyor.v1 import service_pb2, task_pb2
 from conveyorq.mux import Mux
-from conveyorq.worker import _FATAL_CODES, Worker, _full_jitter, _hello, _Session, _SessionConfig
+from conveyorq.streaming import DEFAULT_PAYLOAD_CHUNK_WINDOW
+from conveyorq.worker import (
+    _FATAL_CODES,
+    Worker,
+    _chunk_window,
+    _full_jitter,
+    _hello,
+    _Session,
+    _SessionConfig,
+)
 
 
 # The worker validates its session contract at construction, so a Hello the
@@ -88,6 +98,7 @@ def test_hello_carries_the_declared_shape():
     assert hello.sdk_version == "conveyor-py/test"
     assert hello.min_server_version == "v1.2.0"
     assert list(hello.batch_types) == ["digest"]
+    assert hello.payload_streaming
 
 
 def _envelope(task_id: str = "t1", task_type: str = "demo") -> "task_pb2.TaskEnvelope":
@@ -247,3 +258,498 @@ def test_unset_timestamp_is_none():
     from google.protobuf.timestamp_pb2 import Timestamp
 
     assert _time.datetime_from_timestamp(Timestamp()) is None
+
+
+# How long a test waits for something that must happen promptly.
+_PROMPT_SECONDS = 5
+
+
+def _chunked_envelope(task_id: str = "t1", task_type: str = "demo", encrypted: bool = False):
+    envelope = task_pb2.TaskEnvelope(
+        id=task_id,
+        type=task_type,
+        queue="default",
+        content_type="application/octet-stream",
+        payload_chunked=True,
+    )
+
+    if encrypted:
+        envelope.metadata[ENCRYPTION_MARKER_KEY] = ENCRYPTION_MARKER_VALUE
+
+    return envelope
+
+
+def _dispatch_message(envelope) -> "service_pb2.ServerMessage":
+    return service_pb2.ServerMessage(dispatch=service_pb2.Dispatch(task=envelope))
+
+
+def _batch_message(*envelopes) -> "service_pb2.ServerMessage":
+    return service_pb2.ServerMessage(batch_dispatch=service_pb2.BatchDispatch(tasks=envelopes, group="g"))
+
+
+def _chunk(task_id: str, data: bytes = b"", last: bool = False, error: str = "") -> service_pb2.PayloadChunk:
+    return service_pb2.PayloadChunk(task_id=task_id, data=data, last=last, error=error)
+
+
+def _encrypted_session(mux: Mux) -> _Session:
+    config = _SessionConfig(
+        queues={"default": 1}, concurrency=4, sdk_version="test", min_server_version="", metadata=()
+    )
+    return _Session(None, config, mux, _codec(), ThreadPoolExecutor(max_workers=4))
+
+
+def _codec():
+    return new_aes_gcm("k1", Key("k1", bytes([1]) * 32))
+
+
+def _results(session: _Session) -> List["service_pb2.Result"]:
+    results = []
+    while not session._outbound.empty():
+        message = session._outbound.get_nowait()
+        if message is not None and message.WhichOneof("frame") == "result":
+            results.append(message.result)
+
+    return results
+
+
+async def _settle(session: _Session) -> None:
+    """Wait for every task the session spawned, including ones spawned meanwhile."""
+    while session._tasks:
+        await asyncio.wait_for(asyncio.gather(*list(session._tasks)), _PROMPT_SECONDS)
+
+
+async def test_chunked_dispatch_runs_the_handler_once_the_payload_arrives():
+    received = []
+
+    async def handle(task, ctx):
+        received.append(task.payload)
+
+    session = _session(Mux().handle("demo", handle))
+    session._handle(_dispatch_message(_chunked_envelope()))
+
+    # The task stays heartbeated while its payload arrives.
+    assert session._active_task_ids() == ["t1"]
+
+    session._receive_chunk(_chunk("t1", b"ab"))
+    session._receive_chunk(_chunk("t1", b"cd"))
+    await asyncio.sleep(0)
+    assert received == []
+
+    session._receive_chunk(_chunk("t1", last=True))
+    await _settle(session)
+
+    assert received == [b"abcd"]
+    assert _result_outcomes(session) == [service_pb2.TASK_OUTCOME_SUCCESS]
+    assert session._payloads == {}
+    assert session._inflight == {}
+
+
+async def test_streaming_handler_starts_before_the_payload_arrives():
+    started = asyncio.Event()
+    received = []
+
+    async def handle(task, ctx):
+        started.set()
+        received.append((task.payload, await task.payload_stream.read()))
+
+    session = _session(Mux().handle_stream("demo", handle))
+    session._handle(_dispatch_message(_chunked_envelope()))
+    await asyncio.wait_for(started.wait(), _PROMPT_SECONDS)
+
+    session._receive_chunk(_chunk("t1", b"streamed "))
+    session._receive_chunk(_chunk("t1", b"payload"))
+    session._receive_chunk(_chunk("t1", last=True))
+    await _settle(session)
+
+    assert received == [(b"", b"streamed payload")]
+    assert _result_outcomes(session) == [service_pb2.TASK_OUTCOME_SUCCESS]
+
+
+async def test_sync_streaming_handler_reads_on_its_thread():
+    received = []
+
+    def handle(task, ctx):
+        received.append(b"".join(task.payload_stream))
+
+    session = _session(Mux().handle_stream("demo", handle))
+    session._handle(_dispatch_message(_chunked_envelope()))
+
+    session._receive_chunk(_chunk("t1", b"sync "))
+    session._receive_chunk(_chunk("t1", b"read"))
+    session._receive_chunk(_chunk("t1", last=True))
+    await _settle(session)
+
+    assert received == [b"sync read"]
+
+
+async def test_streaming_handler_that_returns_early_never_stalls_the_session():
+    async def handle(task, ctx):
+        pass
+
+    session = _session(Mux().handle_stream("demo", handle))
+    session._handle(_dispatch_message(_chunked_envelope()))
+    await _settle(session)
+
+    for _ in range(4 * DEFAULT_PAYLOAD_CHUNK_WINDOW):
+        session._receive_chunk(_chunk("t1", b"unread"))
+
+    session._receive_chunk(_chunk("t1", last=True))
+
+    assert _result_outcomes(session) == [service_pb2.TASK_OUTCOME_SUCCESS]
+    assert session._payloads == {}
+
+
+async def test_encrypted_chunked_payload_is_opened_per_chunk():
+    received = []
+    sealer = ChunkSealer(_codec())
+
+    async def handle(task, ctx):
+        received.append((task.payload, dict(task.metadata)))
+
+    session = _encrypted_session(Mux().handle("demo", handle))
+    session._handle(_dispatch_message(_chunked_envelope(encrypted=True)))
+
+    session._receive_chunk(_chunk("t1", sealer.seal(b"secret ", last=False)))
+    session._receive_chunk(_chunk("t1", sealer.seal(b"payload", last=True)))
+    session._receive_chunk(_chunk("t1", last=True))
+    await _settle(session)
+
+    assert received == [(b"secret payload", {})]
+
+
+async def test_encrypted_chunked_payload_without_an_encryptor_retries():
+    session = _session(Mux().handle("demo", lambda task, ctx: None))
+    session._handle(_dispatch_message(_chunked_envelope(encrypted=True)))
+
+    [result] = _results(session)
+    assert result.outcome == service_pb2.TASK_OUTCOME_RETRY
+    assert "no encryptor" in result.error_msg
+    assert session._payloads == {}
+
+    session._receive_chunk(_chunk("t1", b"dropped"))
+
+
+async def test_payload_the_server_could_not_read_retries():
+    session = _session(Mux().handle("demo", lambda task, ctx: None))
+    session._handle(_dispatch_message(_chunked_envelope()))
+
+    session._receive_chunk(_chunk("t1", last=True, error="store down"))
+
+    [result] = _results(session)
+    assert result.outcome == service_pb2.TASK_OUTCOME_RETRY
+    assert "store down" in result.error_msg
+    assert session._inflight == {}
+
+
+async def test_batch_starts_once_every_chunked_member_arrived():
+    received = []
+
+    async def handle(tasks, ctx):
+        received.append({task.id: task.payload for task in tasks})
+
+    session = _session(Mux().handle_batch("demo", handle))
+    session._handle(_batch_message(_chunked_envelope("t1"), _envelope("t2"), _chunked_envelope("t3")))
+
+    assert sorted(session._active_task_ids()) == ["t1", "t2", "t3"]
+
+    session._receive_chunk(_chunk("t1", b"one"))
+    session._receive_chunk(_chunk("t3", b"three"))
+    session._receive_chunk(_chunk("t1", last=True))
+    await asyncio.sleep(0)
+    assert received == []
+
+    session._receive_chunk(_chunk("t3", last=True))
+    await _settle(session)
+
+    assert received == [{"t1": b"one", "t2": b"{}", "t3": b"three"}]
+    assert _result_outcomes(session) == [service_pb2.TASK_OUTCOME_SUCCESS] * 3
+
+
+async def test_batch_member_failure_retries_the_whole_batch():
+    ran = []
+    session = _session(Mux().handle_batch("demo", lambda tasks, ctx: ran.append(tasks)))
+    session._handle(_batch_message(_chunked_envelope("t1"), _chunked_envelope("t2")))
+
+    session._receive_chunk(_chunk("t1", last=True, error="store down"))
+    session._receive_chunk(_chunk("t2", b"dropped"))
+    session._receive_chunk(_chunk("t2", last=True))
+    await _settle(session)
+
+    assert ran == []
+    assert _result_outcomes(session) == [service_pb2.TASK_OUTCOME_RETRY] * 2
+    assert session._payloads == {}
+    assert session._inflight == {}
+
+
+async def test_batch_with_an_encrypted_member_and_no_encryptor_retries():
+    session = _session(Mux().handle_batch("demo", lambda tasks, ctx: None))
+    session._handle(_batch_message(_chunked_envelope("t1", encrypted=True), _envelope("t2")))
+
+    assert _result_outcomes(session) == [service_pb2.TASK_OUTCOME_RETRY] * 2
+    assert session._payloads == {}
+
+
+async def test_session_end_fails_every_payload_still_arriving():
+    failures = []
+
+    async def stream_handle(task, ctx):
+        try:
+            await task.payload_stream.read()
+        except ConveyorError as error:
+            failures.append(str(error))
+            raise
+
+    mux = Mux().handle("buffered", lambda task, ctx: None).handle_stream("streamed", stream_handle)
+    session = _session(mux)
+    session._handle(_dispatch_message(_chunked_envelope("t1", "buffered")))
+    session._handle(_dispatch_message(_chunked_envelope("t2", "streamed")))
+    session._receive_chunk(_chunk("t2", b"partial"))
+
+    session._abort_payloads()
+    await _settle(session)
+
+    assert session._payloads == {}
+    assert failures and "session ended" in failures[0]
+    assert sorted(result.task_id for result in _results(session)) == ["t1", "t2"]
+
+
+class _ScriptedCall:
+    """A worker stream that delivers a fixed script, then stays open until
+    ``release`` is set, recording what the session writes."""
+
+    def __init__(self, messages, release: asyncio.Event) -> None:
+        self._messages = messages
+        self._release = release
+        self.written: list = []
+
+    def __aiter__(self):
+        return self._iterate()
+
+    async def _iterate(self):
+        for message in self._messages:
+            yield message
+
+        await self._release.wait()
+
+    async def write(self, message):
+        self.written.append(message)
+
+    async def done_writing(self):
+        pass
+
+    def cancel(self):
+        pass
+
+
+class _ScriptedStub:
+    def __init__(self, call: _ScriptedCall) -> None:
+        self._call = call
+
+    def Session(self, metadata=()):  # noqa: N802 - gRPC method name
+        return self._call
+
+
+async def test_run_routes_payload_chunks_to_their_task():
+    done = asyncio.Event()
+    received = []
+
+    async def handle(task, ctx):
+        received.append(await task.payload_stream.read())
+        done.set()
+
+    script = [
+        _dispatch_message(_chunked_envelope()),
+        service_pb2.ServerMessage(payload_chunk=_chunk("t1", b"over the wire")),
+        service_pb2.ServerMessage(payload_chunk=_chunk("t1", last=True)),
+    ]
+    call = _ScriptedCall(script, done)
+    config = _SessionConfig(
+        queues={"default": 1}, concurrency=4, sdk_version="test", min_server_version="", metadata=()
+    )
+    mux = Mux().handle_stream("demo", handle)
+    session = _Session(_ScriptedStub(call), config, mux, None, ThreadPoolExecutor(max_workers=4))
+
+    await asyncio.wait_for(session.run(asyncio.Event()), _PROMPT_SECONDS)
+
+    assert received == [b"over the wire"]
+    assert call.written[0].hello.payload_streaming
+
+
+async def test_inline_dispatches_start_at_once():
+    ran = []
+    mux = Mux().handle("demo", lambda task, ctx: ran.append(task.id))
+    mux.handle_batch("group", lambda tasks, ctx: ran.extend(task.id for task in tasks))
+    session = _session(mux)
+
+    session._handle(_dispatch_message(_envelope("t1")))
+    session._handle(_batch_message(_envelope("t2", "group"), _envelope("t3", "group")))
+    await _settle(session)
+
+    assert sorted(ran) == ["t1", "t2", "t3"]
+    assert session._payloads == {}
+
+
+def _acks(session: _Session) -> List[str]:
+    """Drain the outbound queue and return the task id of every PayloadAck, one per chunk."""
+    acked = []
+    while not session._outbound.empty():
+        message = session._outbound.get_nowait()
+        if message is not None and message.WhichOneof("frame") == "payload_ack":
+            acked.extend([message.payload_ack.task_id] * message.payload_ack.chunks)
+
+    return acked
+
+
+def test_chunk_window_falls_back_when_unadvertised():
+    assert _chunk_window(service_pb2.Welcome()) == DEFAULT_PAYLOAD_CHUNK_WINDOW
+    assert _chunk_window(service_pb2.Welcome(payload_chunk_window=4)) == 4
+
+
+async def test_welcome_sets_the_session_chunk_window():
+    session = _session(Mux())
+    session._on_welcome(service_pb2.Welcome(payload_chunk_window=3))
+    session._stop_heartbeat()
+
+    assert session._chunk_window == 3
+
+
+async def test_buffered_chunks_are_acked_on_receipt():
+    session = _session(Mux().handle("demo", lambda task, ctx: None))
+    session._handle(_dispatch_message(_chunked_envelope()))
+
+    session._receive_chunk(_chunk("t1", b"ab"))
+    session._receive_chunk(_chunk("t1", b"cd"))
+
+    assert _acks(session) == ["t1", "t1"]
+
+    session._receive_chunk(_chunk("t1", last=True))
+    await _settle(session)
+
+
+async def test_batch_member_chunks_are_acked_on_receipt():
+    session = _session(Mux().handle_batch("demo", lambda tasks, ctx: None))
+    session._handle(_batch_message(_chunked_envelope("t1"), _chunked_envelope("t2")))
+
+    session._receive_chunk(_chunk("t1", b"one"))
+    session._receive_chunk(_chunk("t2", b"two"))
+
+    assert _acks(session) == ["t1", "t2"]
+
+    session._receive_chunk(_chunk("t1", last=True))
+    session._receive_chunk(_chunk("t2", last=True))
+    await _settle(session)
+
+
+async def test_streamed_chunks_are_acked_as_the_handler_reads_them():
+    release = asyncio.Event()
+
+    async def handle(task, ctx):
+        await release.wait()
+        await task.payload_stream.read()
+
+    session = _session(Mux().handle_stream("demo", handle))
+    session._handle(_dispatch_message(_chunked_envelope()))
+
+    session._receive_chunk(_chunk("t1", b"a"))
+    session._receive_chunk(_chunk("t1", b"b"))
+    session._receive_chunk(_chunk("t1", last=True))
+    await asyncio.sleep(0)
+    assert _acks(session) == []
+
+    release.set()
+    await _settle(session)
+
+    assert _acks(session) == ["t1", "t1"]
+
+
+async def test_streaming_payload_over_the_window_fails_its_task():
+    release = asyncio.Event()
+
+    async def handle(task, ctx):
+        await release.wait()
+        await task.payload_stream.read()
+
+    session = _session(Mux().handle_stream("demo", handle))
+    session._chunk_window = 2
+    session._handle(_dispatch_message(_chunked_envelope()))
+
+    for data in (b"one", b"two", b"over the window"):
+        session._receive_chunk(_chunk("t1", data))
+
+    assert session._payloads == {}
+
+    release.set()
+    await _settle(session)
+
+    [result] = _results(session)
+    assert result.outcome == service_pb2.TASK_OUTCOME_RETRY
+    assert "chunk window" in result.error_msg
+
+
+class _FlowControlledCall:
+    """A fake server that streams one task's chunks under a chunk window,
+    sending more only as PayloadAck credit comes back."""
+
+    def __init__(self, window: int, chunks: List[bytes], release: asyncio.Event) -> None:
+        self._window = window
+        self._chunks = chunks
+        self._release = release
+        self._credit = window
+        self._credited = asyncio.Event()
+        self.acked = 0
+
+    def __aiter__(self):
+        return self._iterate()
+
+    async def _iterate(self):
+        yield service_pb2.ServerMessage(welcome=service_pb2.Welcome(payload_chunk_window=self._window))
+        yield _dispatch_message(_chunked_envelope())
+
+        for data in self._chunks:
+            while self._credit == 0:
+                self._credited.clear()
+                await self._credited.wait()
+
+            self._credit -= 1
+            yield service_pb2.ServerMessage(payload_chunk=_chunk("t1", data))
+
+        yield service_pb2.ServerMessage(payload_chunk=_chunk("t1", last=True))
+        await self._release.wait()
+
+    async def write(self, message):
+        if message.WhichOneof("frame") == "payload_ack":
+            self._credit += message.payload_ack.chunks
+            self.acked += message.payload_ack.chunks
+            self._credited.set()
+
+    async def done_writing(self):
+        pass
+
+    def cancel(self):
+        pass
+
+
+async def test_slow_streaming_handler_reads_a_payload_larger_than_the_window():
+    window = 2
+    chunks = [bytes([index]) * 8 for index in range(3 * window)]
+    done = asyncio.Event()
+    received = []
+
+    async def handle(task, ctx):
+        async for chunk in task.payload_stream:
+            await asyncio.sleep(0.01)
+            received.append(chunk)
+
+        done.set()
+
+    call = _FlowControlledCall(window, chunks, done)
+    config = _SessionConfig(
+        queues={"default": 1}, concurrency=4, sdk_version="test", min_server_version="", metadata=()
+    )
+    mux = Mux().handle_stream("demo", handle)
+    session = _Session(_ScriptedStub(call), config, mux, None, ThreadPoolExecutor(max_workers=4))
+
+    await asyncio.wait_for(session.run(asyncio.Event()), _PROMPT_SECONDS)
+
+    assert received == chunks
+    assert call.acked == len(chunks)

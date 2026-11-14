@@ -6,14 +6,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from dataclasses import dataclass, field
-from typing import Mapping, Optional, Sequence
+from typing import AsyncGenerator, Mapping, Optional, Sequence
 
 import grpc
 
 from . import _time
-from ._transport import auth_metadata, create_channel
+from ._transport import auth_metadata, client_channel_options, create_channel
 from .encryption import ENCRYPTION_MARKER_KEY, ENCRYPTION_MARKER_VALUE, Encryptor
 from .errors import ConveyorError, DuplicateTaskError
 from .gen.conveyor.v1 import service_pb2, service_pb2_grpc, task_pb2
@@ -27,6 +28,7 @@ from .options import (
     TaskInfo,
     TaskState,
 )
+from .streaming import upload_chunks
 from .task import Task
 
 _STATE_NAMES = {
@@ -117,7 +119,7 @@ class Client:
         on a different loop, or none).
         """
         if self._stub is None:
-            self._channel = create_channel(self._base_url)
+            self._channel = create_channel(self._base_url, client_channel_options())
             self._stub = service_pb2_grpc.TaskServiceStub(self._channel)
 
         return self._stub
@@ -129,6 +131,10 @@ class Client:
         e.g. ``queue="critical"``, ``max_retry=5``, ``unique=timedelta(hours=1)``.
         Raises :class:`DuplicateTaskError` when a unique task with the same key
         is still incomplete.
+
+        A payload larger than the server's 1 MiB inline limit, or one built with
+        :func:`stream`, is uploaded in chunks through the streaming enqueue; the
+        task is committed only once the whole payload is uploaded.
         """
         options = EnqueueOptions(**kwargs)  # type: ignore[arg-type]
         unique_key = _resolve_unique_key(task, options)
@@ -151,7 +157,8 @@ class Client:
 
         Unlike :meth:`enqueue`, it does not run the enqueue middleware: the
         middleware decorates a single-task commit, which the all-or-nothing path
-        does not model.
+        does not model. It carries inline payloads only, so a streamed or
+        larger-than-inline payload is rejected; enqueue such a task alone.
         """
         if not tasks:
             raise ConveyorError("conveyor: at least one task is required")
@@ -159,7 +166,13 @@ class Client:
         stub = self._connect()
         requests = []
 
-        for item in tasks:
+        for index, item in enumerate(tasks):
+            if item.task._streamed():
+                raise ConveyorError(
+                    f"conveyor: task {index} has a streamed or larger-than-inline payload, "
+                    "which enqueue_tx cannot carry; use enqueue"
+                )
+
             options = EnqueueOptions(**item.options)  # type: ignore[arg-type]
             unique_key = _resolve_unique_key(item.task, options)
             requests.append(self._build_request(item.task, options, unique_key))
@@ -189,11 +202,35 @@ class Client:
         return _task_info_from_proto(response.task)
 
     async def _commit(self, task: "Task", options: EnqueueOptions, unique_key: str) -> TaskInfo:
+        if task._streamed():
+            return await self._enqueue_stream(task, options, unique_key)
+
         stub = self._connect()
         request = self._build_request(task, options, unique_key)
 
         try:
             response = await stub.Enqueue(request, metadata=self._metadata)
+        except grpc.aio.AioRpcError as error:
+            raise _map_client_error(error) from error
+
+        return _task_info_from_proto(response.task)
+
+    async def _enqueue_stream(self, task: "Task", options: EnqueueOptions, unique_key: str) -> TaskInfo:
+        """Upload a task whose payload is a stream or exceeds the inline limit
+        through the streaming enqueue. With encryption configured each chunk is
+        sealed on its own, so the payload is never held whole."""
+        header_task = Task(type=task.type, content_type=task.content_type, data=b"", metadata=task.metadata)
+        header = self._build_request(header_task, options, unique_key)
+
+        if self._encryptor is not None:
+            header.metadata[ENCRYPTION_MARKER_KEY] = ENCRYPTION_MARKER_VALUE
+
+        chunks = upload_chunks(task.payload, task._source, self._encryptor)
+        call = self._connect().EnqueueStream(metadata=self._metadata)
+
+        try:
+            await _send_upload(call, header, chunks)
+            response = await call
         except grpc.aio.AioRpcError as error:
             raise _map_client_error(error) from error
 
@@ -282,10 +319,46 @@ def _resolve_unique_key(task: "Task", options: EnqueueOptions) -> str:
         raise ConveyorError("conveyor: expires_at and expires_in are mutually exclusive")
 
     unique_key = options.unique_key or ""
-    if unique_key == "" and options.unique is not None:
-        unique_key = _derived_unique_key(task.type, task.payload)
+    if unique_key != "" or options.unique is None:
+        return unique_key
 
-    return unique_key
+    if task._source is not None:
+        raise ConveyorError("conveyor: unique on a streamed payload needs an explicit unique_key")
+
+    return _derived_unique_key(task.type, task.payload)
+
+
+async def _send_upload(
+    call: "grpc.aio.StreamUnaryCall",
+    header: "service_pb2.EnqueueRequest",
+    chunks: AsyncGenerator[bytes, None],
+) -> None:
+    """Send the header, every chunk, then the commit stating their total size,
+    and half-close the upload.
+
+    The server commits the task only on a commit whose size matches what it
+    received, so the commit is sent only once the source is exhausted. A
+    failing chunk source cancels the call instead, and its error propagates.
+    When the server ends the upload early (an idempotent retry, or a rejection)
+    the remaining chunks are not read, and awaiting the call yields its answer.
+    """
+    try:
+        await call.write(service_pb2.EnqueueStreamRequest(header=header))
+        size = 0
+
+        async for data in chunks:
+            await call.write(service_pb2.EnqueueStreamRequest(chunk=data))
+            size += len(data)
+
+        await call.write(service_pb2.EnqueueStreamRequest(commit=service_pb2.PayloadCommit(size=size)))
+        await call.done_writing()
+    except (asyncio.InvalidStateError, grpc.aio.AioRpcError):
+        return
+    except BaseException:
+        call.cancel()
+        raise
+    finally:
+        await chunks.aclose()
 
 
 def _derived_unique_key(task_type: str, payload: bytes) -> str:
@@ -325,4 +398,6 @@ def _task_info_from_proto(info: "service_pb2.TaskInfo") -> TaskInfo:
         started_at=_time.datetime_from_timestamp(info.started_at),
         progress=info.progress,
         progress_message=info.progress_message,
+        payload_size=info.payload_size,
+        payload_chunked=info.payload_chunked,
     )

@@ -108,7 +108,7 @@ class TaskDependency(_message.Message):
         ...
 
 class TaskEnvelope(_message.Message):
-    __slots__ = ('id', 'queue', 'type', 'payload', 'content_type', 'metadata', 'options', 'retried', 'last_error', 'enqueued_at', 'started_at', 'completed_at', 'progress', 'progress_message')
+    __slots__ = ('id', 'queue', 'type', 'payload', 'content_type', 'metadata', 'options', 'retried', 'last_error', 'enqueued_at', 'started_at', 'completed_at', 'progress', 'progress_message', 'payload_chunked', 'payload_size', 'payload_chunks')
 
     class MetadataEntry(_message.Message):
         __slots__ = ('key', 'value')
@@ -133,6 +133,9 @@ class TaskEnvelope(_message.Message):
     COMPLETED_AT_FIELD_NUMBER: _ClassVar[int]
     PROGRESS_FIELD_NUMBER: _ClassVar[int]
     PROGRESS_MESSAGE_FIELD_NUMBER: _ClassVar[int]
+    PAYLOAD_CHUNKED_FIELD_NUMBER: _ClassVar[int]
+    PAYLOAD_SIZE_FIELD_NUMBER: _ClassVar[int]
+    PAYLOAD_CHUNKS_FIELD_NUMBER: _ClassVar[int]
     id: str
     queue: str
     type: str
@@ -147,8 +150,11 @@ class TaskEnvelope(_message.Message):
     completed_at: _timestamp_pb2.Timestamp
     progress: int
     progress_message: str
+    payload_chunked: bool
+    payload_size: int
+    payload_chunks: int
 
-    def __init__(self, id: _Optional[str]=..., queue: _Optional[str]=..., type: _Optional[str]=..., payload: _Optional[bytes]=..., content_type: _Optional[str]=..., metadata: _Optional[_Mapping[str, str]]=..., options: _Optional[_Union[TaskOptions, _Mapping]]=..., retried: _Optional[int]=..., last_error: _Optional[str]=..., enqueued_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]]=..., started_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]]=..., completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]]=..., progress: _Optional[int]=..., progress_message: _Optional[str]=...) -> None:
+    def __init__(self, id: _Optional[str]=..., queue: _Optional[str]=..., type: _Optional[str]=..., payload: _Optional[bytes]=..., content_type: _Optional[str]=..., metadata: _Optional[_Mapping[str, str]]=..., options: _Optional[_Union[TaskOptions, _Mapping]]=..., retried: _Optional[int]=..., last_error: _Optional[str]=..., enqueued_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]]=..., started_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]]=..., completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]]=..., progress: _Optional[int]=..., progress_message: _Optional[str]=..., payload_chunked: _Optional[bool]=..., payload_size: _Optional[int]=..., payload_chunks: _Optional[int]=...) -> None:
         ...
 
 class TaskOptions(_message.Message):
