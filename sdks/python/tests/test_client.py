@@ -3,10 +3,13 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from datetime import datetime, timedelta, timezone
+from unittest.mock import MagicMock
 
 import pytest
 
 from conveyorq import Client, ConveyorError, json, new_task
+from conveyorq import client as client_module
+from conveyorq._transport import WORKER_MESSAGE_LIMIT
 from conveyorq.client import _derived_unique_key
 
 
@@ -59,6 +62,19 @@ async def test_get_task_rejects_empty_id():
             await client.get_task("")
     finally:
         await client.close()
+
+
+def test_client_channel_carries_receive_limit(monkeypatch):
+    captured = {}
+
+    def fake_create_channel(base_url, options=None):
+        captured["options"] = options
+        return MagicMock()
+
+    monkeypatch.setattr(client_module, "create_channel", fake_create_channel)
+    Client("http://localhost:9", token="x")._connect()
+
+    assert ("grpc.max_receive_message_length", WORKER_MESSAGE_LIMIT) in captured["options"]
 
 
 def test_worker_validates_configuration():

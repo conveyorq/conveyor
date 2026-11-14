@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { bytes, ContentType, decodeJson, decodeText, json, text } from "./codec.js";
+import { bytes, ContentType, decodeJson, decodeText, json, stream, text } from "./codec.js";
 import { ConveyorError } from "./errors.js";
 
 describe("codec", () => {
@@ -35,5 +35,15 @@ describe("codec", () => {
 
   it("refuses to JSON-decode a non-JSON content type", () => {
     expect(() => decodeJson(new Uint8Array([1]), ContentType.OctetStream)).toThrow(ConveyorError);
+  });
+
+  it("stream carries its source, defaulting to opaque binary", () => {
+    const source = (async function* () {})();
+
+    const payload = stream(source);
+    expect(payload.source).toBe(source);
+    expect(payload.data).toHaveLength(0);
+    expect(payload.contentType).toBe(ContentType.OctetStream);
+    expect(stream(source, ContentType.JSON).contentType).toBe(ContentType.JSON);
   });
 });

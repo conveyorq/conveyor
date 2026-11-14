@@ -32,6 +32,7 @@ Environment keys mirror the file with `CONVEYOR_` and `__` between levels. `brok
 Key groups:
 
 - `broker.driver` (`postgres` | `memory`), `broker.dsn`, and `broker.pool.{max_conns,min_conns,connect_timeout,statement_timeout}`.
+- `broker.max_payload_bytes` (default `1048576`, 1 MiB; at most 1 GiB) caps one task payload. Payloads up to 1 MiB travel inline; the SDKs upload anything larger in chunks and the broker stores it in chunks, so no node holds a large payload whole. Cron payloads stay inline, so they are capped at 1 MiB. `conveyor broker info` and the dashboard's Broker view report the effective value.
 - `api.listen` (default `:8080`), `api.auth_tokens`, `api.scoped_tokens`, `api.tls`, and the [dashboard](dashboard.md) settings `api.dashboard`, `api.cors_origins`, `api.grafana_url`, and `api.read_only`.
 - `webhooks.allow_private_targets` (default `false`; permits webhook delivery to private and loopback endpoints).
 - `cluster.discovery`, `cluster.bind_addr`, the remoting/discovery/peers ports, `cluster.tls`, and `cluster.kubernetes` (namespace + pod labels).

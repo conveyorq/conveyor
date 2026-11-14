@@ -17,8 +17,12 @@
 package conformance
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,6 +33,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/conveyorq/conveyor/encryption"
 	conveyor "github.com/conveyorq/conveyor/sdks/go"
 )
 
@@ -60,6 +65,19 @@ const (
 	rejectedExitCode = 1
 	acceptedExitCode = 2
 
+	// payloadCap is the server's payload cap: room for largePayloadBytes.
+	payloadCap = 32 << 20
+	// largePayloadBytes spans 20 full 1 MiB upload chunks and a partial one:
+	// more than the server's 16-chunk delivery window, so the payload reaches
+	// the worker only if the SDK returns chunk credit with PayloadAck.
+	largePayloadBytes = 20<<20 + 4321
+	// encryptionKeyID names the shared end-to-end key of the encrypted check.
+	encryptionKeyID = "conformance"
+	// encryptionKeyFill is the byte the 32-byte shared key is filled with.
+	encryptionKeyFill = 0x2a
+	// encryptionKeyBytes is the AES-256 key length.
+	encryptionKeyBytes = 32
+
 	readyTimeout = 30 * time.Second
 	bootTimeout  = 20 * time.Second
 	checkTimeout = 45 * time.Second
@@ -84,6 +102,8 @@ func TestConformance(t *testing.T) {
 			t.Run("LongTaskKeepsLease", func(t *testing.T) { checkLongTask(t, sdk, server, client) })
 			t.Run("BatchKeepsLeases", func(t *testing.T) { checkBatch(t, sdk, server, client) })
 			t.Run("DrainReleasesWithoutRetry", func(t *testing.T) { checkDrain(t, sdk, server, client) })
+			t.Run("LargePayloadDelivered", func(t *testing.T) { checkLargePayload(t, sdk, server, false) })
+			t.Run("EncryptedLargePayloadDelivered", func(t *testing.T) { checkLargePayload(t, sdk, server, true) })
 		})
 	}
 }
@@ -286,12 +306,22 @@ func checkDrain(t *testing.T, sdk sdk, server *conformanceServer, client *convey
 func startWorker(t *testing.T, sdk sdk, server *conformanceServer, queue string) func() {
 	t.Helper()
 
-	cmd := sdk.command(map[string]string{
+	return startWorkerWithEnv(t, sdk, server, queue, nil)
+}
+
+// startWorkerWithEnv is startWorker with extra environment for the worker.
+func startWorkerWithEnv(t *testing.T, sdk sdk, server *conformanceServer, queue string, extra map[string]string) func() {
+	t.Helper()
+
+	env := map[string]string{
 		"CONVEYOR_ADDR": server.baseURL,
 		"SCENARIO":      "sleep",
 		"SLEEP_MS":      strconv.Itoa(int(handlerSleep.Milliseconds())),
 		"QUEUE":         queue,
-	})
+	}
+	maps.Copy(env, extra)
+
+	cmd := sdk.command(env)
 
 	require.NoError(t, cmd.Start())
 
@@ -304,6 +334,54 @@ func startWorker(t *testing.T, sdk sdk, server *conformanceServer, queue string)
 
 		stopped = true
 		terminate(cmd)
+	}
+}
+
+// checkLargePayload asserts a payload above the inline limit reaches the SDK's
+// handlers intact: reassembled for a buffered handler, streamed for a streaming
+// one. With encrypted set, the Go client seals each chunk end to end and the
+// SDK worker opens them under the shared key, proving the chunk framing is
+// byte-compatible across SDKs.
+func checkLargePayload(t *testing.T, sdk sdk, server *conformanceServer, encrypted bool) {
+	payload := make([]byte, largePayloadBytes)
+	for index := range payload {
+		payload[index] = byte(index % 251)
+	}
+
+	digest := sha256.Sum256(payload)
+	env := map[string]string{"EXPECTED_SHA256": hex.EncodeToString(digest[:])}
+
+	check := "large"
+
+	var clientOptions []conveyor.Option
+
+	if encrypted {
+		check = "large-encrypted"
+		secret := bytes.Repeat([]byte{encryptionKeyFill}, encryptionKeyBytes)
+		env["ENCRYPTION_KEY_ID"] = encryptionKeyID
+		env["ENCRYPTION_KEY_HEX"] = hex.EncodeToString(secret)
+
+		encryptor, err := encryption.NewAESGCM(encryptionKeyID, encryption.Key{ID: encryptionKeyID, Secret: secret})
+		require.NoError(t, err)
+
+		clientOptions = append(clientOptions, conveyor.WithEncryption(encryptor))
+	}
+
+	queue := queueName(sdk, check)
+	stop := startWorkerWithEnv(t, sdk, server, queue, env)
+	defer stop()
+
+	client, err := conveyor.NewClient(server.baseURL, clientOptions...)
+	require.NoError(t, err)
+
+	for _, taskType := range []string{"conformance:large", "conformance:large-stream"} {
+		info, enqueueErr := client.Enqueue(context.Background(), conveyor.NewTask(taskType, conveyor.Bytes(payload)),
+			conveyor.Queue(queue), conveyor.MaxRetry(maxRetry), conveyor.Retention(time.Hour))
+		require.NoError(t, enqueueErr)
+		require.True(t, info.PayloadChunked, "a payload above the inline limit must be uploaded in chunks")
+
+		completed := waitForState(t, client, info.ID, conveyor.TaskStateCompleted, checkTimeout)
+		require.Zerof(t, completed.Retried, "%s must arrive intact on the first delivery", taskType)
 	}
 }
 

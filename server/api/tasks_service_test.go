@@ -6,6 +6,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -15,8 +16,10 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/conveyorq/conveyor/internal/broker"
+	"github.com/conveyorq/conveyor/internal/broker/memory"
 	"github.com/conveyorq/conveyor/internal/clock"
 	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
+	"github.com/conveyorq/conveyor/internal/proto/conveyor/v1/conveyorv1connect"
 )
 
 // newTestTaskService builds a TaskService over a fresh engine.
@@ -31,16 +34,47 @@ func newTestTaskService(t *testing.T) *TaskService {
 // TestMaxRequestBytesAdmitsFullBatch locks the wire read limit that the server
 // applies via connect.WithReadMaxBytes: it must be large enough to admit the
 // largest legitimate request — a full EnqueueBatch of maxBatchTasks tasks each
-// at the payload cap — with room for per-task field overhead, so hardening the
-// server against unbounded input never rejects a valid maximum batch. The
-// ~1 GiB boundary itself is not exercised end to end, since sending that much
-// in a test would exhaust the runner.
+// at the inline payload limit — with room for per-task field overhead, so
+// hardening the server against unbounded input never rejects a valid maximum
+// batch. The ~1 GiB boundary itself is not exercised end to end, since sending
+// that much in a test would exhaust the runner.
 func TestMaxRequestBytesAdmitsFullBatch(t *testing.T) {
-	fullBatchPayload := maxBatchTasks * maxPayloadBytes
+	fullBatchPayload := maxBatchTasks * broker.InlinePayloadBytes
 
 	require.Greater(t, MaxRequestBytes, fullBatchPayload,
-		"the read limit must admit a full batch of payload-cap tasks plus field overhead")
-	require.Equal(t, maxBatchTasks*(maxPayloadBytes+perTaskOverheadBytes), MaxRequestBytes)
+		"the read limit must admit a full batch of inline-limit tasks plus field overhead")
+	require.Equal(t, maxBatchTasks*(broker.InlinePayloadBytes+perTaskOverheadBytes), MaxRequestBytes)
+	require.Greater(t, MaxRequestBytes, maxPayloadChunkBytes, "the read limit must admit one upload chunk")
+}
+
+// TestMaxMessageBytesAdmitsOneTask locks the single-message read limit to one
+// task at the inline payload limit plus field overhead.
+func TestMaxMessageBytesAdmitsOneTask(t *testing.T) {
+	require.Equal(t, broker.InlinePayloadBytes+perTaskOverheadBytes, MaxMessageBytes)
+}
+
+// TestEnqueueEnforcesBrokerPayloadCap checks that the enqueue path reads the
+// payload cap from the broker: a payload at the cap is accepted and one byte
+// over is rejected as invalid_argument.
+func TestEnqueueEnforcesBrokerPayloadCap(t *testing.T) {
+	const smallPayloadCap = 16
+
+	engine, taskLog := startTestEngineWithBroker(t, memory.NewWithMaxPayload(clock.System(), smallPayloadCap))
+	service := NewTaskService(engine, taskLog, clock.System(), testDefaultMaxRetry)
+	ctx := context.Background()
+
+	_, err := service.Enqueue(ctx, connect.NewRequest(&conveyorv1.EnqueueRequest{
+		Type:    "test:at-cap",
+		Payload: make([]byte, smallPayloadCap),
+	}))
+	require.NoError(t, err)
+
+	_, err = service.Enqueue(ctx, connect.NewRequest(&conveyorv1.EnqueueRequest{
+		Type:    "test:over-cap",
+		Payload: make([]byte, smallPayloadCap+1),
+	}))
+	require.Error(t, err)
+	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
 }
 
 func TestEnqueueValidation(t *testing.T) {
@@ -58,7 +92,7 @@ func TestEnqueueValidation(t *testing.T) {
 		"negative max_retry": {Type: "test:ok", MaxRetry: -1},
 		"negative priority":  {Type: "test:ok", Priority: -1},
 		"priority too high":  {Type: "test:ok", Priority: 10},
-		"oversized payload":  {Type: "test:ok", Payload: make([]byte, maxPayloadBytes+1)},
+		"oversized payload":  {Type: "test:ok", Payload: make([]byte, broker.DefaultMaxPayloadBytes+1)},
 	}
 
 	for name, request := range cases {
@@ -324,4 +358,208 @@ func TestGetTask(t *testing.T) {
 	require.Equal(t, "critical", task.GetQueue())
 	require.Equal(t, "test:get", task.GetType())
 	require.EqualValues(t, 7, task.GetPriority())
+}
+
+// streamTestPayloadCap is the payload cap of the streaming test server: above
+// the inline limit, so chunked uploads are admitted, but small enough to test
+// the cap cheaply.
+const streamTestPayloadCap = 4 << 20
+
+// newStreamTestClient serves the API over a memory broker capped at
+// streamTestPayloadCap and returns a task client and the broker.
+func newStreamTestClient(t *testing.T) (conveyorv1connect.TaskServiceClient, broker.Broker) {
+	t.Helper()
+
+	engine, taskLog := startTestEngineWithBroker(t, memory.NewWithMaxPayload(clock.System(), streamTestPayloadCap))
+	baseURL := startAPIServer(t, engine, taskLog, nil)
+
+	return conveyorv1connect.NewTaskServiceClient(h2cHTTPClient(), baseURL, connect.WithGRPC()), taskLog
+}
+
+// streamEnqueue uploads the given messages on one EnqueueStream call.
+func streamEnqueue(t *testing.T, client conveyorv1connect.TaskServiceClient, messages ...*conveyorv1.EnqueueStreamRequest) (*connect.Response[conveyorv1.EnqueueResponse], error) {
+	t.Helper()
+
+	stream := client.EnqueueStream(context.Background())
+
+	for _, message := range messages {
+		if err := stream.Send(message); err != nil {
+			break
+		}
+	}
+
+	return stream.CloseAndReceive()
+}
+
+// headerMessage wraps a task header as an EnqueueStream message.
+func headerMessage(header *conveyorv1.EnqueueRequest) *conveyorv1.EnqueueStreamRequest {
+	return &conveyorv1.EnqueueStreamRequest{Frame: &conveyorv1.EnqueueStreamRequest_Header{Header: header}}
+}
+
+// chunkMessage wraps a payload chunk as an EnqueueStream message.
+func chunkMessage(chunk []byte) *conveyorv1.EnqueueStreamRequest {
+	return &conveyorv1.EnqueueStreamRequest{Frame: &conveyorv1.EnqueueStreamRequest_Chunk{Chunk: chunk}}
+}
+
+// commitMessage wraps an upload's closing commit as an EnqueueStream message.
+func commitMessage(size int) *conveyorv1.EnqueueStreamRequest {
+	return &conveyorv1.EnqueueStreamRequest{Frame: &conveyorv1.EnqueueStreamRequest_Commit{Commit: &conveyorv1.PayloadCommit{Size: uint64(size)}}}
+}
+
+// storedChunks reads a task's stored payload chunks as strings.
+func storedChunks(t *testing.T, taskLog broker.Broker, taskID string) []string {
+	t.Helper()
+
+	envelope, _, err := taskLog.GetTask(context.Background(), taskID)
+	require.NoError(t, err)
+
+	var chunks []string
+
+	for data, err := range taskLog.ReadPayload(context.Background(), taskID, 0, int(envelope.GetPayloadChunks())) {
+		require.NoError(t, err)
+
+		chunks = append(chunks, string(data))
+	}
+
+	return chunks
+}
+
+func TestEnqueueRejectsPayloadAboveInlineLimit(t *testing.T) {
+	engine, taskLog := startTestEngineWithBroker(t, memory.NewWithMaxPayload(clock.System(), streamTestPayloadCap))
+	service := NewTaskService(engine, taskLog, clock.System(), testDefaultMaxRetry)
+
+	_, err := service.Enqueue(context.Background(), connect.NewRequest(&conveyorv1.EnqueueRequest{
+		Type:    "test:large",
+		Payload: make([]byte, broker.InlinePayloadBytes+1),
+	}))
+	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.ErrorContains(t, err, "EnqueueStream")
+}
+
+func TestEnqueueStreamCommitsChunkedTask(t *testing.T) {
+	client, taskLog := newStreamTestClient(t)
+
+	response, err := streamEnqueue(t, client,
+		headerMessage(&conveyorv1.EnqueueRequest{TaskId: "task-stream", Type: "test:large"}),
+		chunkMessage([]byte("alpha")),
+		chunkMessage([]byte("beta")),
+		commitMessage(len("alphabeta")),
+	)
+	require.NoError(t, err)
+
+	info := response.Msg.GetTask()
+	require.Equal(t, "task-stream", info.GetId())
+	require.True(t, info.GetPayloadChunked())
+	require.EqualValues(t, len("alphabeta"), info.GetPayloadSize())
+	require.Empty(t, info.GetPayload())
+	require.Equal(t, []string{"alpha", "beta"}, storedChunks(t, taskLog, "task-stream"))
+
+	fetched, err := client.GetTask(context.Background(), connect.NewRequest(&conveyorv1.GetTaskRequest{Id: "task-stream"}))
+	require.NoError(t, err)
+	require.True(t, fetched.Msg.GetTask().GetPayloadChunked())
+	require.EqualValues(t, len("alphabeta"), fetched.Msg.GetTask().GetPayloadSize())
+}
+
+func TestEnqueueStreamIdempotentOnID(t *testing.T) {
+	client, taskLog := newStreamTestClient(t)
+	header := headerMessage(&conveyorv1.EnqueueRequest{TaskId: "task-stream", Type: "test:large"})
+
+	_, err := streamEnqueue(t, client, header, chunkMessage([]byte("first")), commitMessage(len("first")))
+	require.NoError(t, err)
+
+	retried, err := streamEnqueue(t, client, header, chunkMessage([]byte("second")), commitMessage(len("second")))
+	require.NoError(t, err)
+	require.EqualValues(t, len("first"), retried.Msg.GetTask().GetPayloadSize(), "an idempotent retry answers with the stored task")
+	require.True(t, retried.Msg.GetTask().GetPayloadChunked())
+	require.Equal(t, []string{"first"}, storedChunks(t, taskLog, "task-stream"))
+}
+
+func TestEnqueueStreamDuplicateUniqueKey(t *testing.T) {
+	client, _ := newStreamTestClient(t)
+	header := func(id string) *conveyorv1.EnqueueStreamRequest {
+		return headerMessage(&conveyorv1.EnqueueRequest{TaskId: id, Type: "test:large", UniqueKey: "report"})
+	}
+
+	_, err := streamEnqueue(t, client, header("task-1"), chunkMessage([]byte("data")), commitMessage(len("data")))
+	require.NoError(t, err)
+
+	_, err = streamEnqueue(t, client, header("task-2"), chunkMessage([]byte("data")), commitMessage(len("data")))
+	require.Equal(t, connect.CodeAlreadyExists, connect.CodeOf(err))
+}
+
+func TestEnqueueStreamValidation(t *testing.T) {
+	client, taskLog := newStreamTestClient(t)
+	header := headerMessage(&conveyorv1.EnqueueRequest{TaskId: "task-invalid", Type: "test:large"})
+	fullChunk := make([]byte, maxPayloadChunkBytes)
+
+	cases := map[string][]*conveyorv1.EnqueueStreamRequest{
+		"no messages":           nil,
+		"chunk before header":   {chunkMessage([]byte("data"))},
+		"header with payload":   {headerMessage(&conveyorv1.EnqueueRequest{TaskId: "task-invalid", Type: "test:large", Payload: []byte("inline")})},
+		"invalid header":        {headerMessage(&conveyorv1.EnqueueRequest{TaskId: "task-invalid"})},
+		"second header":         {header, chunkMessage([]byte("data")), header},
+		"oversized chunk":       {header, chunkMessage(make([]byte, maxPayloadChunkBytes+1))},
+		"payload above the cap": {header, chunkMessage(fullChunk), chunkMessage(fullChunk), chunkMessage([]byte("x"))},
+		"missing commit":        {header, chunkMessage([]byte("data"))},
+		"commit size mismatch":  {header, chunkMessage([]byte("data")), commitMessage(len("data") - 1)},
+		"message after commit":  {header, chunkMessage([]byte("data")), commitMessage(len("data")), chunkMessage([]byte("more"))},
+	}
+
+	for name, messages := range cases {
+		_, err := streamEnqueue(t, client, messages...)
+		require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err), "case %s: %v", name, err)
+
+		_, _, getErr := taskLog.GetTask(context.Background(), "task-invalid")
+		require.ErrorIs(t, getErr, broker.ErrTaskNotFound, "case %s committed a task", name)
+	}
+}
+
+func TestEnqueueStreamAcceptsPayloadAndChunkAtTheirLimits(t *testing.T) {
+	client, taskLog := newStreamTestClient(t)
+	fullChunk := make([]byte, maxPayloadChunkBytes)
+
+	response, err := streamEnqueue(t, client,
+		headerMessage(&conveyorv1.EnqueueRequest{TaskId: "task-at-cap", Type: "test:large"}),
+		chunkMessage(fullChunk),
+		chunkMessage(fullChunk),
+		commitMessage(streamTestPayloadCap),
+	)
+	require.NoError(t, err, "a payload of exactly the cap in chunks of exactly the chunk limit is admitted")
+	require.EqualValues(t, streamTestPayloadCap, response.Msg.GetTask().GetPayloadSize())
+	require.Len(t, storedChunks(t, taskLog, "task-at-cap"), 2)
+}
+
+func TestCheckInlinePayloadBoundaries(t *testing.T) {
+	const payloadCap = 2 * broker.InlinePayloadBytes
+
+	require.NoError(t, checkInlinePayload(make([]byte, broker.InlinePayloadBytes), payloadCap))
+	require.ErrorContains(t, checkInlinePayload(make([]byte, payloadCap), payloadCap), "EnqueueStream",
+		"a payload of exactly the cap is streamable")
+	require.ErrorContains(t, checkInlinePayload(make([]byte, payloadCap+1), payloadCap), "store large blobs elsewhere")
+	require.ErrorContains(t, checkInlinePayload(make([]byte, broker.InlinePayloadBytes), broker.InlinePayloadBytes-1), "store large blobs elsewhere",
+		"a cap below the inline limit bounds inline payloads")
+}
+
+// getTaskFailingBroker commits normally but cannot read a task back.
+type getTaskFailingBroker struct {
+	broker.Broker
+}
+
+// GetTask always fails.
+func (getTaskFailingBroker) GetTask(context.Context, string) (*conveyorv1.TaskEnvelope, conveyorv1.TaskState, error) {
+	return nil, conveyorv1.TaskState_TASK_STATE_UNSPECIFIED, errors.New("store down")
+}
+
+func TestEnqueueStreamReportsAFailedReadBack(t *testing.T) {
+	failing := getTaskFailingBroker{Broker: memory.NewWithMaxPayload(clock.System(), streamTestPayloadCap)}
+	engine, taskLog := startTestEngineWithBroker(t, failing)
+	baseURL := startAPIServer(t, engine, taskLog, nil)
+	client := conveyorv1connect.NewTaskServiceClient(h2cHTTPClient(), baseURL, connect.WithGRPC())
+
+	_, err := streamEnqueue(t, client,
+		headerMessage(&conveyorv1.EnqueueRequest{TaskId: "task-1", Type: "test:large"}),
+		chunkMessage([]byte("data")),
+		commitMessage(len("data")),
+	)
+	require.Equal(t, connect.CodeInternal, connect.CodeOf(err), "the commit stands; the client's retry of the id is a no-op")
 }

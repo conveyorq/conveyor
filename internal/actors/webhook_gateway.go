@@ -127,6 +127,8 @@ type WebhookManager struct {
 	// stopping holds names whose child is draining; the name cannot be
 	// respawned until the drain confirms.
 	stopping map[string]bool
+	// listing records that a reconcile read is in flight.
+	listing bool
 }
 
 // enforce interface compliance at compile time.
@@ -147,6 +149,9 @@ func (m *WebhookManager) PreStart(ctx *goakt.Context) error {
 	m.runtime = runtime
 	m.children = make(map[string]*goakt.PID)
 	m.stopping = make(map[string]bool)
+	// A restart reuses this instance; a listing that ended while it was
+	// stopped never reported.
+	m.listing = false
 
 	return nil
 }
@@ -160,6 +165,9 @@ func (m *WebhookManager) Receive(ctx *goakt.ReceiveContext) {
 
 	case *conveyorv1.WebhookReconcile:
 		m.reconcile(ctx)
+
+	case webhookWorkersListed:
+		m.converge(ctx, message)
 
 	case gatewayStopped:
 		delete(m.stopping, message.name)
@@ -186,16 +194,36 @@ func (m *WebhookManager) scheduleTicks(ctx *goakt.ReceiveContext) {
 	}
 }
 
-// reconcile converges the running gateway children onto the persisted
+// reconcile reads the persisted registrations off the turn, unless a read is
+// already in flight; converge applies them when they arrive.
+func (m *WebhookManager) reconcile(ctx *goakt.ReceiveContext) {
+	if m.listing {
+		return
+	}
+
+	m.listing = true
+	taskLog := m.runtime.Broker()
+
+	ctx.PipeTo(ctx.Self(), func() (any, error) {
+		workers, err := taskLog.ListWebhookWorkers(context.Background())
+
+		return webhookWorkersListed{workers: workers, err: err}, nil
+	})
+}
+
+// converge brings the running gateway children onto the persisted
 // registrations: active registrations get a child (spawned or refreshed),
 // paused and deleted ones lose theirs.
-func (m *WebhookManager) reconcile(ctx *goakt.ReceiveContext) {
-	workers, err := m.runtime.Broker().ListWebhookWorkers(ctx.Context())
-	if err != nil {
-		m.runtime.Logger().Warn("listing webhook workers failed; next tick retries", "error", err)
+func (m *WebhookManager) converge(ctx *goakt.ReceiveContext, listed webhookWorkersListed) {
+	m.listing = false
+
+	if listed.err != nil {
+		m.runtime.Logger().Warn("listing webhook workers failed; next tick retries", "error", listed.err)
 
 		return
 	}
+
+	workers := listed.workers
 
 	desired := make(map[string]*broker.WebhookWorker, len(workers))
 
@@ -442,6 +470,18 @@ func (w *WebhookGateway) Receive(ctx *goakt.ReceiveContext) {
 
 	case deferredCompletion:
 		w.reportCompletion(ctx, message.queue, message.taskID, message.success)
+
+	case outcomeApplied:
+		w.outcomeApplied(ctx, message)
+
+	case asyncLeaseExtended:
+		w.asyncLeaseExtended(ctx, message)
+
+	case leasesExtended:
+		w.leasesExtended(ctx, message)
+
+	case brokerWritten:
+		// Lease releases finished; their failures were logged.
 
 	case notificationSent:
 
@@ -717,18 +757,32 @@ func (w *WebhookGateway) deliver(ctx *goakt.ReceiveContext, message *conveyorv1.
 	}
 
 	deadline := w.deliveryDeadline(now, executionDeadlineAt(now, message.GetLeaseExpiresAt(), task.GetOptions()))
-	request := webhook.NewExecuteRequest(message.GetLeaseId(), w.taskParams(task, message.GetLeaseId(), deadline))
+	params := w.taskParams(task, message.GetLeaseId(), deadline)
+	request := webhook.NewExecuteRequest(message.GetLeaseId(), params)
 
 	requestCtx, abort := context.WithDeadline(context.Background(), deadline)
 	w.aborts[task.GetId()] = abort
 
 	taskID := task.GetId()
+	taskLog := w.runtime.Broker()
 	url := w.registration.URL
 	client := w.client
 	signer := w.signer
 
 	ctx.PipeTo(ctx.Self(), func() (any, error) {
 		defer abort()
+
+		// A webhook body carries the payload inline, so a chunked payload is
+		// reassembled here, off the mailbox turn. No lease renewal is needed:
+		// the register tick extends every open synchronous delivery's lease.
+		if task.GetPayloadChunked() {
+			payload, err := readChunkedPayload(requestCtx, taskLog, task, nil)
+			if err != nil {
+				return webhookDelivery{taskID: taskID, outcome: webhook.OutcomeRetry, message: payloadReadFailurePrefix + err.Error()}, nil
+			}
+
+			params.Payload = payload
+		}
 
 		response, err := client.Call(requestCtx, url, signer, request)
 		if err != nil {
@@ -754,6 +808,7 @@ func (w *WebhookGateway) deliverBatch(ctx *goakt.ReceiveContext, message *convey
 	now := w.runtime.Clock().Now()
 	ids := make([]string, 0, len(tasks))
 	requests := make([]*webhook.Request, 0, len(tasks))
+	chunkedParams := make(map[*conveyorv1.TaskEnvelope]*webhook.TaskParams)
 	deadline := w.deliveryDeadline(now, message.GetLeaseExpiresAt().AsTime())
 
 	for _, task := range tasks {
@@ -772,9 +827,15 @@ func (w *WebhookGateway) deliverBatch(ctx *goakt.ReceiveContext, message *convey
 		}
 
 		ids = append(ids, task.GetId())
+		params := w.taskParams(task, leaseID, deadline)
+
+		if task.GetPayloadChunked() {
+			chunkedParams[task] = params
+		}
+
 		// Batch member calls are keyed by task id: every member shares the
 		// batch's lease, so the lease id cannot correlate the responses.
-		requests = append(requests, webhook.NewExecuteRequest(task.GetId(), w.taskParams(task, leaseID, deadline)))
+		requests = append(requests, webhook.NewExecuteRequest(task.GetId(), params))
 	}
 
 	w.batchStates[leaseID] = &webhookBatch{
@@ -792,9 +853,22 @@ func (w *WebhookGateway) deliverBatch(ctx *goakt.ReceiveContext, message *convey
 	url := w.registration.URL
 	client := w.client
 	signer := w.signer
+	taskLog := w.runtime.Broker()
 
 	ctx.PipeTo(ctx.Self(), func() (any, error) {
 		defer abort()
+
+		// Chunked member payloads are reassembled here, off the mailbox turn;
+		// one unreadable payload retries every member. The register tick keeps
+		// the members' leases alive meanwhile.
+		for task, params := range chunkedParams {
+			payload, err := readChunkedPayload(requestCtx, taskLog, task, nil)
+			if err != nil {
+				return retryWebhookBatch(leaseID, ids, payloadReadFailurePrefix+err.Error()), nil
+			}
+
+			params.Payload = payload
+		}
 
 		responses, err := client.CallBatch(requestCtx, url, signer, requests)
 		if err != nil {
@@ -810,6 +884,18 @@ func (w *WebhookGateway) deliverBatch(ctx *goakt.ReceiveContext, message *convey
 
 		return webhookBatchDelivery{leaseID: leaseID, outcomes: outcomes}, nil
 	})
+}
+
+// retryWebhookBatch is the batch delivery reported when the batch could not be
+// sent: every member fails retryably with message.
+func retryWebhookBatch(leaseID string, ids []string, message string) webhookBatchDelivery {
+	outcomes := make(map[string]webhookDelivery, len(ids))
+
+	for _, id := range ids {
+		outcomes[id] = webhookDelivery{taskID: id, outcome: webhook.OutcomeRetry, message: message}
+	}
+
+	return webhookBatchDelivery{leaseID: leaseID, outcomes: outcomes}
 }
 
 // deliveryDeadline bounds one POST: the endpoint must answer within the
@@ -933,28 +1019,33 @@ func (w *WebhookGateway) resolveDelivery(ctx *goakt.ReceiveContext, taskID strin
 	delete(w.inflight, taskID)
 	delete(w.aborts, taskID)
 	delete(w.async, taskID)
-
-	success, terminal := applyOutcome(ctx.Context(), w.runtime, entry, result)
 	w.recordTypeOutcome(entry.taskType, result.GetOutcome())
 
-	if terminal {
-		w.resolveDependents(ctx, taskID)
+	pipeOutcome(ctx, w.runtime, taskID, entry, result)
+}
+
+// outcomeApplied finishes a delivery once its durable transition is done: a
+// terminal task resolves its dependents, and the completion counts toward its
+// batch or goes to the queue grain, unless the task type's breaker is open.
+func (w *WebhookGateway) outcomeApplied(ctx *goakt.ReceiveContext, message outcomeApplied) {
+	if message.terminal {
+		w.resolveDependents(ctx, message.taskID)
 	}
 
-	if state, batched := w.batchStates[entry.leaseID]; batched {
-		w.resolveBatchMember(ctx, entry.leaseID, state, success)
+	if state, batched := w.batchStates[message.leaseID]; batched {
+		w.resolveBatchMember(ctx, message.leaseID, state, message.success)
 
 		return
 	}
 
-	if w.typeBreakerFor(entry.taskType).State() == breaker.Open {
+	if w.typeBreakerFor(message.taskType).State() == breaker.Open {
 		w.runtime.Metrics().BreakerOpen(context.Background())
-		w.deferCompletion(ctx, entry.queue, taskID, success)
+		w.deferCompletion(ctx, message.queue, message.taskID, message.success)
 
 		return
 	}
 
-	w.reportCompletion(ctx, entry.queue, taskID, success)
+	w.reportCompletion(ctx, message.queue, message.taskID, message.success)
 }
 
 // resolveBatchMember records one member's resolution and, once the last
@@ -987,20 +1078,39 @@ func (w *WebhookGateway) heartbeatAsync(ctx *goakt.ReceiveContext, message *conv
 		return
 	}
 
-	err := w.runtime.Broker().ExtendLease(ctx.Context(), message.GetTaskId(), entry.leaseID, w.runtime.Settings().LeaseTTL)
-	if err == nil {
-		w.async[message.GetTaskId()] = w.runtime.Clock().Now()
+	ref := leaseRef{taskID: message.GetTaskId(), leaseID: entry.leaseID}
+	taskLog := w.runtime.Broker()
+	ttl := w.runtime.Settings().LeaseTTL
 
+	ctx.PipeTo(ctx.Self(), func() (any, error) {
+		return asyncLeaseExtended{ref: ref, err: taskLog.ExtendLease(context.Background(), ref.taskID, ref.leaseID, ttl)}, nil
+	})
+}
+
+// asyncLeaseExtended applies an asynchronous delivery's lease extension. A
+// delivery resolved or re-leased since is left alone. A success refreshes the
+// delivery's liveness; a lost lease drops it and tells the still-live endpoint
+// to stop, since the lease it just refreshed belongs to another delivery now.
+func (w *WebhookGateway) asyncLeaseExtended(ctx *goakt.ReceiveContext, message asyncLeaseExtended) {
+	entry, ok := w.inflight[message.ref.taskID]
+	if !ok || entry.leaseID != message.ref.leaseID {
 		return
 	}
 
-	if errors.Is(err, broker.ErrLeaseLost) {
-		w.dropDelivery(ctx, message.GetTaskId(), entry, true)
-
+	if _, isAsync := w.async[message.ref.taskID]; !isAsync {
 		return
 	}
 
-	w.runtime.Logger().Warn("webhook async lease extension failed", "task_id", message.GetTaskId(), "error", err)
+	switch {
+	case message.err == nil:
+		w.async[message.ref.taskID] = w.runtime.Clock().Now()
+
+	case errors.Is(message.err, broker.ErrLeaseLost):
+		w.dropDelivery(ctx, message.ref.taskID, entry, true)
+
+	default:
+		w.runtime.Logger().Warn("webhook async lease extension failed", "task_id", message.ref.taskID, "error", message.err)
+	}
 }
 
 // resultAsync resolves one asynchronously completing delivery from its
@@ -1107,29 +1217,34 @@ func (w *WebhookGateway) refillCredit(ctx *goakt.ReceiveContext, queue string) {
 // a silent endpoint must lose it. A lease lost to another delivery aborts
 // the open request: this gateway no longer owns the task.
 func (w *WebhookGateway) extendLeases(ctx *goakt.ReceiveContext) {
-	goCtx := ctx.Context()
-	taskLog := w.runtime.Broker()
-	ttl := w.runtime.Settings().LeaseTTL
+	refs := make([]leaseRef, 0, len(w.inflight))
 
 	for taskID, entry := range w.inflight {
-		if _, isAsync := w.async[taskID]; isAsync {
+		if _, isAsync := w.async[taskID]; !isAsync {
+			refs = append(refs, leaseRef{taskID: taskID, leaseID: entry.leaseID})
+		}
+	}
+
+	if len(refs) == 0 {
+		return
+	}
+
+	pipeLeaseExtensions(ctx, w.runtime, refs)
+}
+
+// leasesExtended applies the lost leases of a lease-extension pass: a
+// delivery still tracked under its lost lease has its open request aborted
+// and is dropped, since this gateway no longer owns the task.
+func (w *WebhookGateway) leasesExtended(ctx *goakt.ReceiveContext, message leasesExtended) {
+	for _, ref := range message.lost {
+		entry, ok := w.inflight[ref.taskID]
+		if !ok || entry.leaseID != ref.leaseID {
 			continue
 		}
 
-		err := taskLog.ExtendLease(goCtx, taskID, entry.leaseID, ttl)
-		if err == nil {
-			continue
-		}
-
-		if !errors.Is(err, broker.ErrLeaseLost) {
-			w.runtime.Logger().Warn("webhook lease extension failed", "task_id", taskID, "error", err)
-
-			continue
-		}
-
-		w.abortRequest(taskID)
-		w.dropDelivery(ctx, taskID, entry, false)
-		w.runtime.Logger().Debug("lease lost; webhook delivery aborted", "task_id", taskID, "gateway", w.name)
+		w.abortRequest(ref.taskID)
+		w.dropDelivery(ctx, ref.taskID, entry, false)
+		w.runtime.Logger().Debug("lease lost; webhook delivery aborted", "task_id", ref.taskID, "gateway", w.name)
 	}
 }
 
@@ -1193,18 +1308,15 @@ func (w *WebhookGateway) abortRequest(taskID string) {
 // every open request; late responses and callbacks arrive for unknown ids
 // and are dropped.
 func (w *WebhookGateway) drain(ctx *goakt.ReceiveContext) {
-	goCtx := ctx.Context()
-	taskLog := w.runtime.Broker()
+	refs := make([]leaseRef, 0, len(w.inflight))
 
 	for taskID, entry := range w.inflight {
-		err := taskLog.Release(goCtx, taskID, entry.leaseID)
-		if err != nil && !errors.Is(err, broker.ErrLeaseLost) {
-			w.runtime.Logger().Warn("releasing in-flight webhook task failed", "task_id", taskID, "error", err)
-		}
-
+		refs = append(refs, leaseRef{taskID: taskID, leaseID: entry.leaseID})
 		w.abortRequest(taskID)
 		w.runtime.Counters().Active.Add(-1)
 	}
+
+	pipeLeaseReleases(ctx, w.runtime, refs, "releasing in-flight webhook task failed")
 
 	w.inflight = make(map[string]*inflightTask)
 	w.batchStates = make(map[string]*webhookBatch)

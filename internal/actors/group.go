@@ -6,12 +6,12 @@ package actors
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"slices"
 	"time"
 
 	goakt "github.com/tochemey/goakt/v4/actor"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/conveyorq/conveyor/internal/broker"
@@ -46,6 +46,8 @@ type groupConfigKey struct {
 type GroupSweeper struct {
 	// runtime is the engine runtime.
 	runtime *Runtime
+	// passes runs one sweep at a time off the mailbox turn.
+	passes passGate
 }
 
 // enforce interface compliance at compile time.
@@ -64,18 +66,25 @@ func (s *GroupSweeper) PreStart(ctx *goakt.Context) error {
 	}
 
 	s.runtime = runtime
+	// A restart reuses this instance; a pass that ended while it was stopped
+	// never reported, so the gate is cleared here.
+	s.passes = passGate{}
 	return nil
 }
 
-// Receive handles firing ticks. Broker I/O runs synchronously, as in the
-// reaper: the mailbox carries only ticks.
+// Receive handles firing ticks. Each sweep runs off the turn through the pass
+// gate, as the reaper's passes do.
 func (s *GroupSweeper) Receive(ctx *goakt.ReceiveContext) {
 	switch ctx.Message().(type) {
 	case *goakt.PostStart:
 		s.scheduleTicks(ctx)
 
 	case *conveyorv1.GroupSweepTick:
-		s.sweep(ctx)
+		system, runtime := ctx.ActorSystem(), s.runtime
+		s.passes.start(ctx, func(goCtx context.Context) { sweepGroups(goCtx, system, runtime) })
+
+	case passFinished:
+		s.passes.finish()
 
 	default:
 		ctx.Unhandled()
@@ -104,18 +113,17 @@ func (s *GroupSweeper) PostStop(_ *goakt.Context) error {
 	return nil
 }
 
-// sweep fires every due aggregation group. One GroupStats scan (over the
+// sweepGroups fires every due aggregation group. One GroupStats scan (over the
 // partial aggregating index) yields every accumulating group across all queues,
-// so the pass cost tracks the number of aggregating rows, not total volume.
-func (s *GroupSweeper) sweep(ctx *goakt.ReceiveContext) {
-	goCtx := ctx.Context()
-
-	groups, err := s.runtime.Broker().GroupStats(goCtx)
+// so the pass cost tracks the number of aggregating rows, not total volume. It
+// is a PipeTo task body: it uses only the actor system and runtime it is given.
+func sweepGroups(goCtx context.Context, system goakt.ActorSystem, runtime *Runtime) {
+	groups, err := runtime.Broker().GroupStats(goCtx)
 	if err != nil {
 		// Runs under the default Stop directive like the reaper: skip this pass
 		// rather than escalate; the next tick retries.
-		s.runtime.Logger().Warn("group sweep: group stats failed", "pass", metrics.PassGroupSweep, "error", err)
-		s.runtime.Metrics().MaintenanceFailure(goCtx, metrics.PassGroupSweep)
+		runtime.Logger().Warn("group sweep: group stats failed", "pass", metrics.PassGroupSweep, "error", err)
+		runtime.Metrics().MaintenanceFailure(goCtx, metrics.PassGroupSweep)
 
 		return
 	}
@@ -126,17 +134,17 @@ func (s *GroupSweeper) sweep(ctx *goakt.ReceiveContext) {
 		return
 	}
 
-	now := s.runtime.Clock().Now()
-	settings := s.runtime.Settings()
+	now := runtime.Clock().Now()
+	settings := runtime.Settings()
 
 	// Load the per-group overrides once per tick (a small, cacheable read) and
 	// resolve each group's effective thresholds before the due check. A read
 	// failure falls back to the global defaults rather than skipping the pass,
 	// so aggregation keeps firing even if the config table is briefly unreadable.
-	overrides, err := s.runtime.Broker().GroupConfigs(goCtx)
+	overrides, err := runtime.Broker().GroupConfigs(goCtx)
 	if err != nil {
-		s.runtime.Logger().Warn("group sweep: group configs failed; using global defaults", "pass", metrics.PassGroupSweep, "error", err)
-		s.runtime.Metrics().MaintenanceFailure(goCtx, metrics.PassGroupSweep)
+		runtime.Logger().Warn("group sweep: group configs failed; using global defaults", "pass", metrics.PassGroupSweep, "error", err)
+		runtime.Metrics().MaintenanceFailure(goCtx, metrics.PassGroupSweep)
 	}
 
 	index := indexGroupConfigs(overrides)
@@ -144,7 +152,7 @@ func (s *GroupSweeper) sweep(ctx *goakt.ReceiveContext) {
 	for _, group := range groups {
 		maxSize, maxDelay, gracePeriod := effectiveGroupConfig(group, index, settings)
 		if groupDue(group, maxSize, maxDelay, gracePeriod, now) {
-			fireGroup(goCtx, ctx.ActorSystem(), s.runtime, group.Queue, group.Group, group.Type, maxSize)
+			fireGroup(goCtx, system, runtime, group.Queue, group.Group, group.Type, maxSize)
 		}
 	}
 }
@@ -340,8 +348,9 @@ func (x *QueueGrain) pickBatchGateway(taskType string) *gatewayCredits {
 
 // dispatchBatch forwards one fired aggregation group down the worker stream as
 // a single BatchDispatch and tracks its members until the batch result arrives.
-// A send failure releases the whole batch, mirroring dispatch.
-func (g *Gateway) dispatchBatch(message *conveyorv1.ExecuteBatch) {
+// A send failure releases the whole batch, mirroring dispatch. Chunked member
+// payloads are delivered as dispatch delivers them.
+func (g *Gateway) dispatchBatch(ctx *goakt.ReceiveContext, message *conveyorv1.ExecuteBatch) {
 	tasks := message.GetTasks()
 	if len(tasks) == 0 {
 		return
@@ -369,20 +378,22 @@ func (g *Gateway) dispatchBatch(message *conveyorv1.ExecuteBatch) {
 
 	g.batches[leaseID] = ids
 
-	frame := &conveyorv1.ServerMessage{
-		Frame: &conveyorv1.ServerMessage_BatchDispatch{
-			BatchDispatch: &conveyorv1.BatchDispatch{
-				Tasks:    tasks,
-				Deadline: timestamppb.New(deadline),
-				Group:    message.GetGroup(),
+	build := func(members []*conveyorv1.TaskEnvelope) *conveyorv1.ServerMessage {
+		return &conveyorv1.ServerMessage{
+			Frame: &conveyorv1.ServerMessage_BatchDispatch{
+				BatchDispatch: &conveyorv1.BatchDispatch{
+					Tasks:    members,
+					Deadline: timestamppb.New(deadline),
+					Group:    message.GetGroup(),
+				},
 			},
-		},
+		}
 	}
 
-	if err := g.sender.Send(frame); err != nil {
-		g.runtime.Logger().Warn("batch dispatch send failed; releasing group", "group", message.GetGroup(), "error", err)
-		g.releaseBatch(leaseID, ids)
-	}
+	delivery := &outboundDelivery{leaseID: leaseID, taskIDs: ids, batch: true}
+
+	g.sendDispatch(ctx, delivery, tasks, build,
+		func(err error) proto.Message { return retryBatchResult(tasks, err) })
 }
 
 // tightenDeadline narrows a running deadline by one member's bounds, mirroring
@@ -402,25 +413,6 @@ func tightenDeadline(deadline time.Time, task *conveyorv1.TaskEnvelope, now time
 	}
 
 	return deadline
-}
-
-// releaseBatch releases an undeliverable batch's members back to pending and
-// drops them from tracking; redelivery follows on resume or lease expiry.
-func (g *Gateway) releaseBatch(leaseID string, ids []string) {
-	taskLog := g.runtime.Broker()
-
-	for _, id := range ids {
-		delete(g.inflight, id)
-
-		if err := taskLog.Release(context.Background(), id, leaseID); err != nil && !errors.Is(err, broker.ErrLeaseLost) {
-			g.runtime.Logger().Warn("releasing undeliverable batch member failed", "task_id", id, "error", err)
-		}
-
-		g.runtime.Counters().Active.Add(-1)
-		g.runtime.Counters().Released.Add(1)
-	}
-
-	delete(g.batches, leaseID)
 }
 
 // batchResult applies a worker-reported batch outcome: each member's durable
@@ -455,15 +447,7 @@ func (g *Gateway) batchResult(ctx *goakt.ReceiveContext, message *conveyorv1.Bat
 	members := g.batches[leaseID]
 	delete(g.batches, leaseID)
 
-	goCtx := ctx.Context()
-	total := 0
-	succeeded := 0
-
-	// Successful members complete together in one broker round trip; every
-	// other outcome runs through applyOutcome one member at a time.
-	var successes []broker.AckItem
-
-	entries := make(map[string]*inflightTask, len(members))
+	tracked := make([]batchMember, 0, len(members))
 
 	for _, taskID := range members {
 		entry, ok := g.inflight[taskID]
@@ -472,8 +456,7 @@ func (g *Gateway) batchResult(ctx *goakt.ReceiveContext, message *conveyorv1.Bat
 		}
 
 		delete(g.inflight, taskID)
-		entries[taskID] = entry
-		total++
+		g.endPayloadStreams(taskID)
 
 		result := resultByID[taskID]
 		if result == nil {
@@ -481,66 +464,17 @@ func (g *Gateway) batchResult(ctx *goakt.ReceiveContext, message *conveyorv1.Bat
 			result = &conveyorv1.Result{TaskId: taskID, Outcome: conveyorv1.TaskOutcome_TASK_OUTCOME_RELEASED}
 		}
 
-		if result.GetOutcome() == conveyorv1.TaskOutcome_TASK_OUTCOME_SUCCESS {
-			successes = append(successes, broker.AckItem{TaskID: taskID, LeaseID: entry.leaseID, Result: result.GetResult()})
-
-			continue
-		}
-
-		success, terminal := applyOutcome(goCtx, g.runtime, entry, result)
 		g.recordOutcome(entry.taskType, result.GetOutcome())
-
-		if success {
-			succeeded++
-		}
-
-		if terminal {
-			g.resolveDependents(ctx, taskID)
-		}
+		tracked = append(tracked, batchMember{entry: entry, result: result})
 	}
 
-	for _, taskID := range g.ackBatch(goCtx, successes, entries) {
-		succeeded++
-		g.resolveDependents(ctx, taskID)
-	}
+	// The members left tracking above, so their entries are only read from
+	// here on, by the PipeTo task that applies the durable transitions.
+	runtime := g.runtime
 
-	g.reportBatchCompletion(ctx, queue, total, succeeded)
-}
-
-// ackBatch completes a batch's successful members in one broker round trip,
-// mirroring what applyOutcome does per member on SUCCESS: it records each
-// member's outcome and process duration and returns the ids that completed. A
-// member whose lease was lost to another delivery is missing from the broker's
-// answer and earns no completion, exactly as the single-task path treats a
-// lost lease; a broker error completes none and is logged the same way.
-func (g *Gateway) ackBatch(goCtx context.Context, items []broker.AckItem, entries map[string]*inflightTask) []string {
-	if len(items) == 0 {
-		return nil
-	}
-
-	acked, err := g.runtime.Broker().AckBatch(goCtx, items)
-	if err != nil {
-		g.runtime.Logger().Warn("durable transition failed", "members", len(items), "error", err)
-	}
-
-	completed := make(map[string]struct{}, len(acked))
-	for _, taskID := range acked {
-		completed[taskID] = struct{}{}
-	}
-
-	now := g.runtime.Clock().Now()
-
-	for _, item := range items {
-		entry := entries[item.TaskID]
-		g.recordOutcome(entry.taskType, conveyorv1.TaskOutcome_TASK_OUTCOME_SUCCESS)
-		g.runtime.Metrics().RecordProcessDuration(context.Background(), now.Sub(entry.dispatchedAt).Seconds(), entry.queue)
-
-		if _, ok := completed[item.TaskID]; !ok && err == nil {
-			g.runtime.Logger().Debug("result discarded: lease lost to another delivery", "task_id", item.TaskID)
-		}
-	}
-
-	return acked
+	ctx.PipeTo(ctx.Self(), func() (any, error) {
+		return applyBatchOutcomes(context.Background(), runtime, queue, tracked), nil
+	})
 }
 
 // reportBatchCompletion tells the queue grain a batch finished: its members

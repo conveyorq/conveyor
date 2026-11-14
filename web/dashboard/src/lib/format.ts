@@ -73,6 +73,26 @@ export function formatNumber(value: bigint | number): string {
   return value.toLocaleString("en-US");
 }
 
+// byteUnits are the binary size units formatBytes steps through.
+const byteUnits = ["B", "KiB", "MiB", "GiB"];
+
+// bytesPerUnit is the step between consecutive byteUnits.
+const bytesPerUnit = 1024;
+
+// formatBytes renders a byte count in the largest binary unit that keeps it at
+// or above one, with one decimal past bytes, e.g. "3.0 MiB".
+export function formatBytes(value: bigint | number): string {
+  let size = Number(value);
+  let unit = 0;
+
+  while (size >= bytesPerUnit && unit < byteUnits.length - 1) {
+    size /= bytesPerUnit;
+    unit++;
+  }
+
+  return unit === 0 ? `${size} ${byteUnits[unit]}` : `${size.toFixed(1)} ${byteUnits[unit]}`;
+}
+
 // humanizeDuration renders a millisecond span as a compact human string.
 function humanizeDuration(ms: number): string {
   if (ms < 1000) {

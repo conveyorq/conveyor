@@ -34,7 +34,8 @@ import type {
   TaskInfo,
   TaskState,
 } from "./options.js";
-import type { Task } from "./task.js";
+import { uploadChunks, uploadRequests } from "./stream.js";
+import { Task } from "./task.js";
 import { dateFromTimestamp, durationFromMs, timestampFromDate } from "./time.js";
 import { createTransport } from "./transport.js";
 
@@ -106,7 +107,13 @@ export class Client {
     }
 
     const requests = await Promise.all(
-      items.map((item) => {
+      items.map((item, index) => {
+        if (item.task.needsStreamUpload()) {
+          throw new ConveyorError(
+            `conveyor: task ${index} has a streamed or larger-than-inline payload, which enqueueTx cannot carry; use enqueue`,
+          );
+        }
+
         const options = item.options ?? {};
         const uniqueKey = resolveUniqueKey(item.task, options);
 
@@ -140,8 +147,15 @@ export class Client {
     }
   }
 
-  /** commit builds the wire request and enqueues one task. */
+  /**
+   * commit builds the wire request and enqueues one task, through the
+   * streaming upload when its payload is a stream or too large to send inline.
+   */
   private async commit(task: Task, options: EnqueueOptions, uniqueKey: string): Promise<TaskInfo> {
+    if (task.needsStreamUpload()) {
+      return this.commitStream(task, options, uniqueKey);
+    }
+
     const request = await this.buildRequest(task, options, uniqueKey);
 
     try {
@@ -150,6 +164,49 @@ export class Client {
       return taskInfoFromProto(response.task);
     } catch (error) {
       throw mapClientError(error);
+    }
+  }
+
+  /**
+   * commitStream uploads a task through the server's streaming enqueue: the
+   * task header first, then the payload in chunks of at most 1 MiB, then a
+   * commit stating the size sent. With encryption configured, each chunk is
+   * sealed on its own, so a streamed payload is never held whole. A failing
+   * payload source cancels the upload before any commit is sent, so the server
+   * commits nothing, and its error is rethrown. When the server
+   * answers before the whole payload is sent (an idempotent retry, or a
+   * rejection), the rest of the source is not read and the answer is returned.
+   */
+  private async commitStream(task: Task, options: EnqueueOptions, uniqueKey: string): Promise<TaskInfo> {
+    const headerTask = new Task({ type: task.type, contentType: task.contentType, metadata: task.metadata, data: new Uint8Array(0) });
+    const header = await this.buildRequest(headerTask, options, uniqueKey);
+
+    if (this.encryptor !== undefined) {
+      header.metadata[ENCRYPTION_MARKER_KEY] = ENCRYPTION_MARKER_VALUE;
+    }
+
+    const upload = new AbortController();
+    let sourceFailure: { error: unknown } | undefined;
+
+    const requests = uploadRequests(header, uploadChunks(task.payloadStream(), this.encryptor), (error) => {
+      sourceFailure = { error };
+      upload.abort(error);
+    });
+
+    try {
+      const response = await this.rpc.enqueueStream(requests, { signal: upload.signal });
+      if (sourceFailure !== undefined) {
+        throw sourceFailure.error;
+      }
+
+      return taskInfoFromProto(response.task);
+    } catch (error) {
+      throw sourceFailure === undefined ? mapClientError(error) : sourceFailure.error;
+    } finally {
+      // Close the payload source when the server answered before it was read
+      // to its end. Not awaited: a source blocked mid-read must not hold up
+      // the answer.
+      requests.return(undefined).catch(() => {});
     }
   }
 
@@ -209,6 +266,10 @@ function resolveUniqueKey(task: Task, options: EnqueueOptions): string {
 
   let uniqueKey = options.uniqueKey ?? "";
   if (uniqueKey === "" && (options.unique ?? 0) > 0) {
+    if (task.hasPayloadSource()) {
+      throw new ConveyorError("conveyor: unique on a stream payload needs an explicit uniqueKey");
+    }
+
     uniqueKey = derivedUniqueKey(task.type, task.payload());
   }
 
@@ -320,6 +381,8 @@ function taskInfoFromProto(info: ProtoTaskInfo | undefined): TaskInfo {
     lastError: info.lastError,
     progress: info.progress,
     progressMessage: info.progressMessage,
+    payloadSize: Number(info.payloadSize),
+    payloadChunked: info.payloadChunked,
   };
 
   const enqueuedAt = dateFromTimestamp(info.enqueuedAt);

@@ -17,6 +17,7 @@ import (
 	"math/big"
 	"net"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -533,4 +534,76 @@ func requireClusterMembers(t *testing.T, want int, nodes ...*Engine) {
 
 		return true
 	}, 30*time.Second, 200*time.Millisecond, "cluster must converge to %d members", want)
+}
+
+// callCountingBroker counts the broker reads that start the work of the
+// maintenance actors, the dependency resolver, and the webhook manager, so a
+// test can tell whether an actor's work runs at all.
+type callCountingBroker struct {
+	broker.Broker
+	// pendingCounts counts reaper passes.
+	pendingCounts atomic.Int32
+	// promotions counts scheduler passes.
+	promotions atomic.Int32
+	// groupStats counts group sweeps.
+	groupStats atomic.Int32
+	// resolutions counts dependency resolutions.
+	resolutions atomic.Int32
+	// webhookListings counts webhook manager reconciles.
+	webhookListings atomic.Int32
+}
+
+// PendingCount counts the call, then delegates.
+func (c *callCountingBroker) PendingCount(ctx context.Context) (map[string]int64, error) {
+	c.pendingCounts.Add(1)
+
+	return c.Broker.PendingCount(ctx)
+}
+
+// PromoteScheduled counts the call, then delegates.
+func (c *callCountingBroker) PromoteScheduled(ctx context.Context, limit int) ([]string, error) {
+	c.promotions.Add(1)
+
+	return c.Broker.PromoteScheduled(ctx, limit)
+}
+
+// GroupStats counts the call, then delegates.
+func (c *callCountingBroker) GroupStats(ctx context.Context) ([]broker.GroupStat, error) {
+	c.groupStats.Add(1)
+
+	return c.Broker.GroupStats(ctx)
+}
+
+// ResolveDependents counts the call, then delegates.
+func (c *callCountingBroker) ResolveDependents(ctx context.Context, taskID string) ([]string, error) {
+	c.resolutions.Add(1)
+
+	return c.Broker.ResolveDependents(ctx, taskID)
+}
+
+// ListWebhookWorkers counts the call, then delegates.
+func (c *callCountingBroker) ListWebhookWorkers(ctx context.Context) ([]*broker.WebhookWorker, error) {
+	c.webhookListings.Add(1)
+
+	return c.Broker.ListWebhookWorkers(ctx)
+}
+
+// startBareSystem starts an actor system that carries only the engine runtime
+// over taskLog, with none of the engine's actors, and stops it with the test.
+// It lets a test spawn one actor in a state a restart could leave it in and
+// watch it alone.
+func startBareSystem(t *testing.T, taskLog broker.Broker) goakt.ActorSystem {
+	t.Helper()
+
+	ctx := context.Background()
+	runtime := NewRuntime(taskLog, clock.System(), testSettings, quietLogger())
+
+	system, err := goakt.NewActorSystem("bare-runtime-system",
+		goakt.WithLogger(goaktlog.DiscardLogger), goakt.WithExtensions(runtime))
+	require.NoError(t, err)
+	require.NoError(t, system.Start(ctx))
+
+	t.Cleanup(func() { _ = system.Stop(ctx) })
+
+	return system
 }

@@ -7,6 +7,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"iter"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +17,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
 
+	"github.com/conveyorq/conveyor/internal/actors"
 	"github.com/conveyorq/conveyor/internal/clock"
 	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 	"github.com/conveyorq/conveyor/internal/proto/conveyor/v1/conveyorv1connect"
@@ -50,6 +52,7 @@ type testSessionBackend struct {
 // engineAPI is the slice of the engine the protocol tests use.
 type engineAPI interface {
 	Enqueue(ctx context.Context, task *conveyorv1.TaskEnvelope) error
+	EnqueueChunked(ctx context.Context, task *conveyorv1.TaskEnvelope, chunks iter.Seq2[[]byte, error]) error
 }
 
 // taskLogAPI is the slice of the broker the protocol tests use.
@@ -343,4 +346,87 @@ func TestStreamSenderRejectsSendsAfterClose(t *testing.T) {
 	sender.close()
 
 	require.ErrorIs(t, sender.Send(&conveyorv1.ServerMessage{}), errSessionClosed)
+}
+
+// enqueueChunkedTask commits a chunked task with the given chunks on queue
+// "default".
+func enqueueChunkedTask(t *testing.T, backend *testSessionBackend, id string, chunks ...string) {
+	t.Helper()
+
+	sequence := func(yield func([]byte, error) bool) {
+		for _, chunk := range chunks {
+			if !yield([]byte(chunk), nil) {
+				return
+			}
+		}
+	}
+
+	task := &conveyorv1.TaskEnvelope{Id: id, Queue: "default", Type: "test:large", Options: &conveyorv1.TaskOptions{MaxRetry: 3}}
+	require.NoError(t, backend.engine.EnqueueChunked(context.Background(), task, sequence))
+}
+
+func TestSessionStreamsChunkedPayload(t *testing.T) {
+	stream, backend := openSession(t)
+
+	hello := helloFrame(map[string]int32{"default": 1}, 1)
+	hello.GetHello().PayloadStreaming = true
+	require.NoError(t, stream.Send(hello))
+
+	welcome, err := stream.Receive()
+	require.NoError(t, err)
+	require.EqualValues(t, actors.PayloadChunkWindow, welcome.GetWelcome().GetPayloadChunkWindow(), "Welcome advertises the chunk window")
+
+	enqueueChunkedTask(t, backend, "task-chunked", "one", "two")
+
+	dispatched, err := stream.Receive()
+	require.NoError(t, err)
+	require.True(t, dispatched.GetDispatch().GetTask().GetPayloadChunked())
+	require.Empty(t, dispatched.GetDispatch().GetTask().GetPayload())
+
+	var received []string
+
+	for {
+		frame, receiveErr := stream.Receive()
+		require.NoError(t, receiveErr)
+
+		chunk := frame.GetPayloadChunk()
+		require.NotNil(t, chunk, "frames after the dispatch must be its payload chunks")
+		require.Equal(t, "task-chunked", chunk.GetTaskId())
+		require.Empty(t, chunk.GetError())
+
+		if chunk.GetLast() {
+			break
+		}
+
+		received = append(received, string(chunk.GetData()))
+	}
+
+	require.Equal(t, []string{"one", "two"}, received)
+
+	require.NoError(t, stream.Send(resultFrame("task-chunked", conveyorv1.TaskOutcome_TASK_OUTCOME_SUCCESS)))
+
+	require.Eventually(t, func() bool {
+		_, state, getErr := backend.taskLog.GetTask(context.Background(), "task-chunked")
+
+		return getErr == nil && state == conveyorv1.TaskState_TASK_STATE_COMPLETED
+	}, 10*time.Second, 20*time.Millisecond, "result must complete the chunked task")
+}
+
+func TestSessionReassemblesChunkedPayloadForNonStreamingWorker(t *testing.T) {
+	stream, backend := openSession(t)
+
+	require.NoError(t, stream.Send(helloFrame(map[string]int32{"default": 1}, 1)))
+
+	welcome, err := stream.Receive()
+	require.NoError(t, err)
+	require.NotNil(t, welcome.GetWelcome())
+
+	enqueueChunkedTask(t, backend, "task-chunked", "one", "two")
+
+	dispatched, err := stream.Receive()
+	require.NoError(t, err)
+
+	task := dispatched.GetDispatch().GetTask()
+	require.False(t, task.GetPayloadChunked())
+	require.Equal(t, "onetwo", string(task.GetPayload()))
 }

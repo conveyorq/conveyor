@@ -9,7 +9,7 @@ import { ActionAlert } from "../components/ActionAlert.tsx";
 import { Badge } from "../components/Badge.tsx";
 import { errorMessage } from "../lib/errors.ts";
 import { rememberTaskFilters, taskFilters } from "../lib/taskFilters.ts";
-import { decodePayload, formatDuration, formatTime, orDash, taskStateLabel, taskStateTone } from "../lib/format.ts";
+import { decodePayload, formatBytes, formatDuration, formatTime, orDash, taskStateLabel, taskStateTone } from "../lib/format.ts";
 import { TaskState } from "../gen/conveyor/v1/task_pb.ts";
 import type { TaskInfo } from "../gen/conveyor/v1/service_pb.ts";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
@@ -35,6 +35,16 @@ const pageSize = 20;
 // queueFilterDelayMs is how long typing in the queue filter must pause before
 // it applies, so a typed queue name costs one fetch, not one per keystroke.
 const queueFilterDelayMs = 300;
+
+// payloadFileSuffix names a downloaded payload file after its task id.
+const payloadFileSuffix = ".payload";
+
+// defaultPayloadType is the download's media type when the task has none.
+const defaultPayloadType = "application/octet-stream";
+
+// largeDownloadBytes is the payload size above which the detail panel warns
+// that a download is held in browser memory before it is saved.
+const largeDownloadBytes = 256 * 1024 * 1024;
 
 // maxNamedFailures caps how many failed tasks a batch error message names.
 const maxNamedFailures = 3;
@@ -380,6 +390,23 @@ export function Tasks() {
   );
 }
 
+// downloadPayload streams a task's payload from GetTaskPayload and saves it as
+// a file named after the task id, for payloads too large to show inline.
+async function downloadPayload(api: Api, task: TaskInfo): Promise<void> {
+  const parts: Uint8Array<ArrayBuffer>[] = [];
+
+  for await (const message of api.admin.getTaskPayload({ id: task.id })) {
+    parts.push(new Uint8Array(message.data));
+  }
+
+  const url = URL.createObjectURL(new Blob(parts, { type: task.contentType || defaultPayloadType }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${task.id}${payloadFileSuffix}`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
 // TaskDetail shows the full record for the selected task and the actions that
 // apply to it: run-now, cancel, and delete (the latter two confirmed). A
 // successful action reloads the view, which refetches this task, so the panel
@@ -436,6 +463,7 @@ function TaskDetail({
         ? `${task.progress}%${task.progressMessage !== "" ? ` (${task.progressMessage})` : ""}`
         : orDash(""),
     ],
+    ["Payload size", formatBytes(task.payloadSize)],
   ];
 
   const payload = decodePayload(task.payload, task.contentType);
@@ -461,9 +489,26 @@ function TaskDetail({
             Payload{task.contentType !== "" ? ` (${task.contentType})` : ""}
           </span>
         </div>
-        <pre className="max-h-64 overflow-auto rounded-md border border-[var(--border)] bg-[var(--bg)] p-3 font-mono text-xs text-[var(--text-soft)]">
-          {payload}
-        </pre>
+        {task.payloadChunked ? (
+          <div className="flex items-center gap-3 rounded-md border border-[var(--border)] bg-[var(--bg)] p-3 text-xs text-[var(--text-soft)]">
+            <span>
+              Stored in chunks; too large to show inline.
+              {Number(task.payloadSize) > largeDownloadBytes &&
+                ` Downloading holds all ${formatBytes(task.payloadSize)} in browser memory before saving.`}
+            </span>
+            <button
+              type="button"
+              onClick={() => act(() => downloadPayload(api, task))}
+              className="rounded border border-[var(--border)] px-2 py-0.5 text-[var(--text-soft)] hover:bg-[var(--surface)]"
+            >
+              Download
+            </button>
+          </div>
+        ) : (
+          <pre className="max-h-64 overflow-auto rounded-md border border-[var(--border)] bg-[var(--bg)] p-3 font-mono text-xs text-[var(--text-soft)]">
+            {payload}
+          </pre>
+        )}
       </div>
 
       <div className="mt-4 flex flex-wrap gap-2">

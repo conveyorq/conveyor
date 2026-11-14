@@ -451,3 +451,79 @@ test("drops a selected task from the batch once it leaves the page", async () =>
 
   await waitFor(() => expect(screen.queryByText("1 selected")).toBeNull());
 });
+
+test("downloads a chunked payload instead of showing it inline", async () => {
+  const chunked = create(TaskInfoSchema, {
+    id: "01BIG",
+    type: "blob:process",
+    queue: "default",
+    state: TaskState.PENDING,
+    contentType: "application/octet-stream",
+    payloadChunked: true,
+    payloadSize: 6n,
+  });
+
+  const transport = createRouterTransport((router) => {
+    router.service(AdminService, {
+      listTasks: () => ({ tasks: [chunked], nextPageToken: "" }),
+      async *getTaskPayload() {
+        yield { data: new Uint8Array([1, 2, 3]) };
+        yield { data: new Uint8Array([4, 5, 6]) };
+      },
+    });
+  });
+
+  const createObjectURL = vi.fn().mockReturnValue("blob:payload");
+  const revokeObjectURL = vi.fn();
+  vi.stubGlobal("URL", Object.assign(URL, { createObjectURL, revokeObjectURL }));
+  const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+
+  render(
+    <ApiProvider api={createApi(transport)}>
+      <Tasks />
+    </ApiProvider>,
+  );
+
+  await userEvent.click(await screen.findByText("01BIG"));
+
+  const detail = screen.getByLabelText("Task detail");
+  expect(detail).toHaveTextContent("Stored in chunks");
+  expect(detail).toHaveTextContent("6 B");
+
+  await userEvent.click(within(detail).getByRole("button", { name: "Download" }));
+
+  await waitFor(() => expect(click).toHaveBeenCalled());
+  const blob = createObjectURL.mock.calls[0][0] as Blob;
+  expect(blob.size).toBe(6);
+  expect(revokeObjectURL).toHaveBeenCalledWith("blob:payload");
+
+  click.mockRestore();
+  vi.unstubAllGlobals();
+});
+
+test("warns before downloading a very large chunked payload", async () => {
+  const huge = create(TaskInfoSchema, {
+    id: "01HUGE",
+    type: "blob:process",
+    queue: "default",
+    state: TaskState.PENDING,
+    payloadChunked: true,
+    payloadSize: 512n * 1024n * 1024n,
+  });
+
+  const transport = createRouterTransport((router) => {
+    router.service(AdminService, {
+      listTasks: () => ({ tasks: [huge], nextPageToken: "" }),
+    });
+  });
+
+  render(
+    <ApiProvider api={createApi(transport)}>
+      <Tasks />
+    </ApiProvider>,
+  );
+
+  await userEvent.click(await screen.findByText("01HUGE"));
+
+  expect(screen.getByLabelText("Task detail")).toHaveTextContent("holds all 512.0 MiB in browser memory");
+});

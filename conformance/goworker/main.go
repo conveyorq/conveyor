@@ -14,10 +14,18 @@
 //	SLEEP_MS       handler sleep in milliseconds (sleep scenario).
 //	QUEUE          queue to serve (default "default").
 //	CONVEYOR_ADDR  server base URL.
+//	EXPECTED_SHA256      hex SHA-256 the conformance:large and
+//	                     conformance:large-stream payloads must hash to.
+//	ENCRYPTION_KEY_ID    with ENCRYPTION_KEY_HEX (a 32-byte key in hex), runs the
+//	ENCRYPTION_KEY_HEX   worker with end-to-end AES-256-GCM under that key.
 package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -25,6 +33,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/conveyorq/conveyor/encryption"
 	conveyor "github.com/conveyorq/conveyor/sdks/go"
 )
 
@@ -48,11 +57,23 @@ func main() {
 		os.Exit(2)
 	}
 
-	worker, err := conveyor.NewWorker(addr,
-		conveyor.WithQueues(map[string]int{queue: 1}), conveyor.WithConcurrency(8))
+	options := []conveyor.Option{conveyor.WithQueues(map[string]int{queue: 1}), conveyor.WithConcurrency(8)}
+
+	if keyHex := os.Getenv("ENCRYPTION_KEY_HEX"); keyHex != "" {
+		encryptor, err := aesGCM(os.Getenv("ENCRYPTION_KEY_ID"), keyHex)
+		if err != nil {
+			log.Fatalf("encryption: %v", err)
+		}
+
+		options = append(options, conveyor.WithEncryption(encryptor))
+	}
+
+	worker, err := conveyor.NewWorker(addr, options...)
 	if err != nil {
 		log.Fatalf("worker: %v", err)
 	}
+
+	expectedDigest := os.Getenv("EXPECTED_SHA256")
 
 	mux := conveyor.NewMux()
 
@@ -71,6 +92,21 @@ func main() {
 		return nil
 	})
 
+	// A large payload must arrive intact, reassembled for a buffered handler
+	// and as a stream for a streaming one; a wrong digest archives the task.
+	mux.HandleFunc("conformance:large", func(_ context.Context, task *conveyor.Task) error {
+		return checkDigest(task.Payload(), expectedDigest)
+	})
+
+	mux.HandleStreamFunc("conformance:large-stream", func(_ context.Context, task *conveyor.Task) error {
+		payload, err := io.ReadAll(task.PayloadReader())
+		if err != nil {
+			return err
+		}
+
+		return checkDigest(payload, expectedDigest)
+	})
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
@@ -86,4 +122,26 @@ func envOr(key, fallback string) string {
 	}
 
 	return fallback
+}
+
+// checkDigest fails, without retry, unless payload hashes to the expected
+// SHA-256 hex digest.
+func checkDigest(payload []byte, expected string) error {
+	digest := sha256.Sum256(payload)
+	if got := hex.EncodeToString(digest[:]); got != expected {
+		return conveyor.SkipRetry(fmt.Errorf("payload digest %s, want %s", got, expected))
+	}
+
+	return nil
+}
+
+// aesGCM builds the worker's AES-256-GCM encryptor from a key id and a
+// hex-encoded 32-byte secret.
+func aesGCM(keyID, keyHex string) (encryption.Encryptor, error) {
+	secret, err := hex.DecodeString(keyHex)
+	if err != nil {
+		return nil, err
+	}
+
+	return encryption.NewAESGCM(keyID, encryption.Key{ID: keyID, Secret: secret})
 }

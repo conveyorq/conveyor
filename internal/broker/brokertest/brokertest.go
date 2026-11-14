@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"iter"
 	"slices"
 	"strconv"
 	"sync"
@@ -110,6 +111,12 @@ func Run(t *testing.T, factory Factory) {
 		{"PromoteReadyDependentsSafetyNet", testPromoteReadyDependentsSafetyNet},
 		{"ConcurrentFanInResolves", testConcurrentFanInResolves},
 		{"DependencyCycleStaysBlocked", testDependencyCycleStaysBlocked},
+		{"EnqueueChunkedRoundTrip", testEnqueueChunkedRoundTrip},
+		{"EnqueueChunkedIdempotentOnID", testEnqueueChunkedIdempotentOnID},
+		{"EnqueueChunkedSourceErrorCommitsNothing", testEnqueueChunkedSourceErrorCommitsNothing},
+		{"EnqueueChunkedUniqueKey", testEnqueueChunkedUniqueKey},
+		{"ReadPayloadOfInlineOrUnknownTask", testReadPayloadOfInlineOrUnknownTask},
+		{"DeleteTaskDropsPayloadChunks", testDeleteTaskDropsPayloadChunks},
 	}
 
 	for _, entry := range suite {
@@ -1730,8 +1737,8 @@ func recordIDs(records []broker.TaskRecord) []string {
 	return ids
 }
 
-// testInfo checks that Info reports a non-empty driver and includes a task
-// count that tracks committed work.
+// testInfo checks that Info reports a non-empty driver, includes a task count
+// that tracks committed work, and reports the broker's payload cap.
 func testInfo(t *testing.T, b broker.Broker, _ *clock.Fake) {
 	info, err := b.Info(context.Background())
 	if err != nil {
@@ -1744,6 +1751,14 @@ func testInfo(t *testing.T, b broker.Broker, _ *clock.Fake) {
 
 	if _, ok := info.Metrics["tasks"]; !ok {
 		t.Fatalf("Info metrics missing tasks count: %v", info.Metrics)
+	}
+
+	if b.MaxPayloadBytes() < 1 {
+		t.Fatalf("MaxPayloadBytes = %d, want a positive cap", b.MaxPayloadBytes())
+	}
+
+	if got, want := info.Metrics[broker.MaxPayloadBytesMetric], strconv.Itoa(b.MaxPayloadBytes()); got != want {
+		t.Fatalf("Info %s = %q, want %q", broker.MaxPayloadBytesMetric, got, want)
 	}
 
 	mustEnqueue(t, b, newTask("task-001"))
@@ -2281,4 +2296,194 @@ func testGroupConfig(t *testing.T, b broker.Broker, _ *clock.Fake) {
 	if err := b.DeleteGroupConfig(ctx, queueName, "nonexistent"); err != nil {
 		t.Fatalf("delete of missing override: %v", err)
 	}
+}
+
+// chunkSequence yields the given chunks in order.
+func chunkSequence(chunks ...[]byte) iter.Seq2[[]byte, error] {
+	return func(yield func([]byte, error) bool) {
+		for _, data := range chunks {
+			if !yield(data, nil) {
+				return
+			}
+		}
+	}
+}
+
+// mustEnqueueChunked commits a chunked task or fails the test.
+func mustEnqueueChunked(t *testing.T, b broker.Broker, task *conveyorv1.TaskEnvelope, chunks ...[]byte) {
+	t.Helper()
+
+	if err := b.EnqueueChunked(context.Background(), task, chunkSequence(chunks...)); err != nil {
+		t.Fatalf("EnqueueChunked(%s): %v", task.GetId(), err)
+	}
+}
+
+// readChunks collects a range of a task's payload chunks as strings, with the
+// error that ended the range, if any.
+func readChunks(b broker.Broker, taskID string, from, count int) ([]string, error) {
+	var chunks []string
+
+	for data, err := range b.ReadPayload(context.Background(), taskID, from, count) {
+		if err != nil {
+			return chunks, err
+		}
+
+		chunks = append(chunks, string(data))
+	}
+
+	return chunks, nil
+}
+
+// mustReadChunks is readChunks failing the test on any error.
+func mustReadChunks(t *testing.T, b broker.Broker, taskID string, from, count int) []string {
+	t.Helper()
+
+	chunks, err := readChunks(b, taskID, from, count)
+	if err != nil {
+		t.Fatalf("ReadPayload(%s, %d, %d): %v", taskID, from, count, err)
+	}
+
+	return chunks
+}
+
+// requireNoChunks fails the test unless reading one chunk of taskID finds
+// nothing stored.
+func requireNoChunks(t *testing.T, b broker.Broker, taskID, reason string) {
+	t.Helper()
+
+	chunks, err := readChunks(b, taskID, 0, 1)
+	if len(chunks) != 0 || !errors.Is(err, broker.ErrPayloadTruncated) {
+		t.Fatalf("%s: chunks = %q, err = %v, want none and ErrPayloadTruncated", reason, chunks, err)
+	}
+}
+
+// newChunkedTask builds a task with no inline payload, ready for EnqueueChunked.
+func newChunkedTask(id string, options ...taskOption) *conveyorv1.TaskEnvelope {
+	task := newTask(id, options...)
+	task.Payload = nil
+
+	return task
+}
+
+// testEnqueueChunkedRoundTrip checks that a chunked task commits marked as
+// chunked with an empty inline payload, leases like any other task, and reads
+// back chunk for chunk.
+func testEnqueueChunkedRoundTrip(t *testing.T, b broker.Broker, _ *clock.Fake) {
+	mustEnqueueChunked(t, b, newChunkedTask("task-001"), []byte("alpha"), []byte("beta"), []byte(""))
+
+	stored, state, err := b.GetTask(context.Background(), "task-001")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if state != conveyorv1.TaskState_TASK_STATE_PENDING {
+		t.Fatalf("state = %v, want pending", state)
+	}
+
+	// The stored size is the bytes the store holds, which an at-rest
+	// encrypting broker inflates, so only a lower bound is portable.
+	if !stored.GetPayloadChunked() || len(stored.GetPayload()) != 0 || stored.GetPayloadSize() < uint64(len("alphabeta")) || stored.GetPayloadChunks() != 3 {
+		t.Fatalf("stored envelope chunked=%v payload=%d size=%d chunks=%d, want chunked, empty, at least 9 bytes, 3 chunks",
+			stored.GetPayloadChunked(), len(stored.GetPayload()), stored.GetPayloadSize(), stored.GetPayloadChunks())
+	}
+
+	leased := mustLease(t, b, queueName, 1, "lease-1")
+	if len(leased) != 1 || !leased[0].GetPayloadChunked() {
+		t.Fatalf("leased %v, want the chunked task", leasedIDs(leased))
+	}
+
+	if got := mustReadChunks(t, b, "task-001", 0, 3); !slices.Equal(got, []string{"alpha", "beta", ""}) {
+		t.Fatalf("chunks = %q, want alpha, beta, empty", got)
+	}
+
+	if got := mustReadChunks(t, b, "task-001", 1, 1); !slices.Equal(got, []string{"beta"}) {
+		t.Fatalf("chunk range [1,2) = %q, want beta", got)
+	}
+
+	if got := mustReadChunks(t, b, "task-001", 1, 0); len(got) != 0 {
+		t.Fatalf("an empty range yielded %q", got)
+	}
+
+	got, err := readChunks(b, "task-001", 2, 2)
+	if !slices.Equal(got, []string{""}) || !errors.Is(err, broker.ErrPayloadTruncated) {
+		t.Fatalf("a range past the end = %q, %v; want the stored chunk then ErrPayloadTruncated", got, err)
+	}
+}
+
+// testEnqueueChunkedIdempotentOnID checks that re-committing an existing id is
+// a no-op that never consumes the new chunks.
+func testEnqueueChunkedIdempotentOnID(t *testing.T, b broker.Broker, _ *clock.Fake) {
+	mustEnqueueChunked(t, b, newChunkedTask("task-001"), []byte("original"))
+
+	untouched := func(func([]byte, error) bool) {
+		t.Fatal("chunks of an idempotent retry must not be consumed")
+	}
+
+	if err := b.EnqueueChunked(context.Background(), newChunkedTask("task-001"), untouched); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := mustReadChunks(t, b, "task-001", 0, 1); !slices.Equal(got, []string{"original"}) {
+		t.Fatalf("chunks = %q, want the original upload", got)
+	}
+}
+
+// testEnqueueChunkedSourceErrorCommitsNothing checks that a failing chunk
+// source aborts the enqueue with its error and leaves no task or chunks.
+func testEnqueueChunkedSourceErrorCommitsNothing(t *testing.T, b broker.Broker, _ *clock.Fake) {
+	failure := errors.New("upload broken")
+	broken := func(yield func([]byte, error) bool) {
+		if yield([]byte("partial"), nil) {
+			yield(nil, failure)
+		}
+	}
+
+	if err := b.EnqueueChunked(context.Background(), newChunkedTask("task-001"), broken); !errors.Is(err, failure) {
+		t.Fatalf("err = %v, want the source error", err)
+	}
+
+	if _, _, err := b.GetTask(context.Background(), "task-001"); !errors.Is(err, broker.ErrTaskNotFound) {
+		t.Fatalf("aborted upload left a task: %v", err)
+	}
+
+	requireNoChunks(t, b, "task-001", "aborted upload")
+}
+
+// testEnqueueChunkedUniqueKey checks that a chunked task claims its unique key
+// like any other, and that a collision commits neither task nor chunks.
+func testEnqueueChunkedUniqueKey(t *testing.T, b broker.Broker, _ *clock.Fake) {
+	mustEnqueueChunked(t, b, newChunkedTask("task-001", withUnique("report", time.Hour)), []byte("first"))
+
+	err := b.EnqueueChunked(context.Background(), newChunkedTask("task-002", withUnique("report", time.Hour)), chunkSequence([]byte("second")))
+	if !errors.Is(err, broker.ErrDuplicateTask) {
+		t.Fatalf("err = %v, want ErrDuplicateTask", err)
+	}
+
+	requireNoChunks(t, b, "task-002", "rejected upload")
+}
+
+// testReadPayloadOfInlineOrUnknownTask checks that an inline payload or an
+// unknown id has no chunks: an empty range yields nothing and any other range
+// reports truncation.
+func testReadPayloadOfInlineOrUnknownTask(t *testing.T, b broker.Broker, _ *clock.Fake) {
+	mustEnqueue(t, b, newTask("task-001"))
+
+	if got := mustReadChunks(t, b, "task-001", 0, 0); len(got) != 0 {
+		t.Fatalf("an empty range yielded chunks %q", got)
+	}
+
+	requireNoChunks(t, b, "task-001", "inline task")
+	requireNoChunks(t, b, "task-missing", "unknown task")
+}
+
+// testDeleteTaskDropsPayloadChunks checks that deleting a chunked task drops
+// its chunks with it.
+func testDeleteTaskDropsPayloadChunks(t *testing.T, b broker.Broker, _ *clock.Fake) {
+	mustEnqueueChunked(t, b, newChunkedTask("task-001"), []byte("payload"))
+
+	if err := b.DeleteTask(context.Background(), "task-001"); err != nil {
+		t.Fatal(err)
+	}
+
+	requireNoChunks(t, b, "task-001", "deleted task")
 }

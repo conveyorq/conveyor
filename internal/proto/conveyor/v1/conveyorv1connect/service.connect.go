@@ -48,6 +48,9 @@ const (
 	TaskServiceEnqueueTxProcedure = "/conveyor.v1.TaskService/EnqueueTx"
 	// TaskServiceGetTaskProcedure is the fully-qualified name of the TaskService's GetTask RPC.
 	TaskServiceGetTaskProcedure = "/conveyor.v1.TaskService/GetTask"
+	// TaskServiceEnqueueStreamProcedure is the fully-qualified name of the TaskService's EnqueueStream
+	// RPC.
+	TaskServiceEnqueueStreamProcedure = "/conveyor.v1.TaskService/EnqueueStream"
 	// WorkerServiceSessionProcedure is the fully-qualified name of the WorkerService's Session RPC.
 	WorkerServiceSessionProcedure = "/conveyor.v1.WorkerService/Session"
 	// WebhookServiceHeartbeatProcedure is the fully-qualified name of the WebhookService's Heartbeat
@@ -152,6 +155,9 @@ const (
 	// AdminServiceWatchEventsProcedure is the fully-qualified name of the AdminService's WatchEvents
 	// RPC.
 	AdminServiceWatchEventsProcedure = "/conveyor.v1.AdminService/WatchEvents"
+	// AdminServiceGetTaskPayloadProcedure is the fully-qualified name of the AdminService's
+	// GetTaskPayload RPC.
+	AdminServiceGetTaskPayloadProcedure = "/conveyor.v1.AdminService/GetTaskPayload"
 )
 
 // TaskServiceClient is a client for the conveyor.v1.TaskService service.
@@ -169,6 +175,15 @@ type TaskServiceClient interface {
 	EnqueueTx(context.Context, *connect.Request[v1.EnqueueTxRequest]) (*connect.Response[v1.EnqueueTxResponse], error)
 	// GetTask returns the current state of one task.
 	GetTask(context.Context, *connect.Request[v1.GetTaskRequest]) (*connect.Response[v1.GetTaskResponse], error)
+	// EnqueueStream durably commits one task whose payload is too large for
+	// Enqueue. The first message carries the task as an EnqueueRequest with an
+	// empty payload; the following messages carry payload chunks of at most
+	// 2 MiB each; the last message is a PayloadCommit stating the total size.
+	// The task is committed only when the commit arrives and its size matches
+	// the bytes received, so a broken or truncated upload commits nothing. The
+	// total payload is held to the server's payload cap. Idempotent on a
+	// client-supplied id.
+	EnqueueStream(context.Context) *connect.ClientStreamForClient[v1.EnqueueStreamRequest, v1.EnqueueResponse]
 }
 
 // NewTaskServiceClient constructs a client for the conveyor.v1.TaskService service. By default, it
@@ -206,15 +221,22 @@ func NewTaskServiceClient(httpClient connect.HTTPClient, baseURL string, opts ..
 			connect.WithSchema(taskServiceMethods.ByName("GetTask")),
 			connect.WithClientOptions(opts...),
 		),
+		enqueueStream: connect.NewClient[v1.EnqueueStreamRequest, v1.EnqueueResponse](
+			httpClient,
+			baseURL+TaskServiceEnqueueStreamProcedure,
+			connect.WithSchema(taskServiceMethods.ByName("EnqueueStream")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
 // taskServiceClient implements TaskServiceClient.
 type taskServiceClient struct {
-	enqueue      *connect.Client[v1.EnqueueRequest, v1.EnqueueResponse]
-	enqueueBatch *connect.Client[v1.EnqueueBatchRequest, v1.EnqueueBatchResponse]
-	enqueueTx    *connect.Client[v1.EnqueueTxRequest, v1.EnqueueTxResponse]
-	getTask      *connect.Client[v1.GetTaskRequest, v1.GetTaskResponse]
+	enqueue       *connect.Client[v1.EnqueueRequest, v1.EnqueueResponse]
+	enqueueBatch  *connect.Client[v1.EnqueueBatchRequest, v1.EnqueueBatchResponse]
+	enqueueTx     *connect.Client[v1.EnqueueTxRequest, v1.EnqueueTxResponse]
+	getTask       *connect.Client[v1.GetTaskRequest, v1.GetTaskResponse]
+	enqueueStream *connect.Client[v1.EnqueueStreamRequest, v1.EnqueueResponse]
 }
 
 // Enqueue calls conveyor.v1.TaskService.Enqueue.
@@ -237,6 +259,11 @@ func (c *taskServiceClient) GetTask(ctx context.Context, req *connect.Request[v1
 	return c.getTask.CallUnary(ctx, req)
 }
 
+// EnqueueStream calls conveyor.v1.TaskService.EnqueueStream.
+func (c *taskServiceClient) EnqueueStream(ctx context.Context) *connect.ClientStreamForClient[v1.EnqueueStreamRequest, v1.EnqueueResponse] {
+	return c.enqueueStream.CallClientStream(ctx)
+}
+
 // TaskServiceHandler is an implementation of the conveyor.v1.TaskService service.
 type TaskServiceHandler interface {
 	// Enqueue durably commits one task. Idempotent on a client-supplied id.
@@ -252,6 +279,15 @@ type TaskServiceHandler interface {
 	EnqueueTx(context.Context, *connect.Request[v1.EnqueueTxRequest]) (*connect.Response[v1.EnqueueTxResponse], error)
 	// GetTask returns the current state of one task.
 	GetTask(context.Context, *connect.Request[v1.GetTaskRequest]) (*connect.Response[v1.GetTaskResponse], error)
+	// EnqueueStream durably commits one task whose payload is too large for
+	// Enqueue. The first message carries the task as an EnqueueRequest with an
+	// empty payload; the following messages carry payload chunks of at most
+	// 2 MiB each; the last message is a PayloadCommit stating the total size.
+	// The task is committed only when the commit arrives and its size matches
+	// the bytes received, so a broken or truncated upload commits nothing. The
+	// total payload is held to the server's payload cap. Idempotent on a
+	// client-supplied id.
+	EnqueueStream(context.Context, *connect.ClientStream[v1.EnqueueStreamRequest]) (*connect.Response[v1.EnqueueResponse], error)
 }
 
 // NewTaskServiceHandler builds an HTTP handler from the service implementation. It returns the path
@@ -285,6 +321,12 @@ func NewTaskServiceHandler(svc TaskServiceHandler, opts ...connect.HandlerOption
 		connect.WithSchema(taskServiceMethods.ByName("GetTask")),
 		connect.WithHandlerOptions(opts...),
 	)
+	taskServiceEnqueueStreamHandler := connect.NewClientStreamHandler(
+		TaskServiceEnqueueStreamProcedure,
+		svc.EnqueueStream,
+		connect.WithSchema(taskServiceMethods.ByName("EnqueueStream")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/conveyor.v1.TaskService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case TaskServiceEnqueueProcedure:
@@ -295,6 +337,8 @@ func NewTaskServiceHandler(svc TaskServiceHandler, opts ...connect.HandlerOption
 			taskServiceEnqueueTxHandler.ServeHTTP(w, r)
 		case TaskServiceGetTaskProcedure:
 			taskServiceGetTaskHandler.ServeHTTP(w, r)
+		case TaskServiceEnqueueStreamProcedure:
+			taskServiceEnqueueStreamHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -318,6 +362,10 @@ func (UnimplementedTaskServiceHandler) EnqueueTx(context.Context, *connect.Reque
 
 func (UnimplementedTaskServiceHandler) GetTask(context.Context, *connect.Request[v1.GetTaskRequest]) (*connect.Response[v1.GetTaskResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("conveyor.v1.TaskService.GetTask is not implemented"))
+}
+
+func (UnimplementedTaskServiceHandler) EnqueueStream(context.Context, *connect.ClientStream[v1.EnqueueStreamRequest]) (*connect.Response[v1.EnqueueResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("conveyor.v1.TaskService.EnqueueStream is not implemented"))
 }
 
 // WorkerServiceClient is a client for the conveyor.v1.WorkerService service.
@@ -568,6 +616,9 @@ type AdminServiceClient interface {
 	// has events dropped rather than stalling task processing. The optional
 	// queue and event-type filters narrow the stream server-side.
 	WatchEvents(context.Context, *connect.Request[v1.WatchEventsRequest]) (*connect.ServerStreamForClient[v1.TaskEvent], error)
+	// GetTaskPayload streams one task's payload, chunked or inline, for
+	// inspection and download. TaskInfo omits a chunked payload.
+	GetTaskPayload(context.Context, *connect.Request[v1.GetTaskPayloadRequest]) (*connect.ServerStreamForClient[v1.GetTaskPayloadResponse], error)
 }
 
 // NewAdminServiceClient constructs a client for the conveyor.v1.AdminService service. By default,
@@ -797,6 +848,12 @@ func NewAdminServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(adminServiceMethods.ByName("WatchEvents")),
 			connect.WithClientOptions(opts...),
 		),
+		getTaskPayload: connect.NewClient[v1.GetTaskPayloadRequest, v1.GetTaskPayloadResponse](
+			httpClient,
+			baseURL+AdminServiceGetTaskPayloadProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("GetTaskPayload")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -838,6 +895,7 @@ type adminServiceClient struct {
 	listWorkerSessions          *connect.Client[v1.ListWorkerSessionsRequest, v1.ListWorkerSessionsResponse]
 	brokerInfo                  *connect.Client[v1.BrokerInfoRequest, v1.BrokerInfoResponse]
 	watchEvents                 *connect.Client[v1.WatchEventsRequest, v1.TaskEvent]
+	getTaskPayload              *connect.Client[v1.GetTaskPayloadRequest, v1.GetTaskPayloadResponse]
 }
 
 // ListQueues calls conveyor.v1.AdminService.ListQueues.
@@ -1020,6 +1078,11 @@ func (c *adminServiceClient) WatchEvents(ctx context.Context, req *connect.Reque
 	return c.watchEvents.CallServerStream(ctx, req)
 }
 
+// GetTaskPayload calls conveyor.v1.AdminService.GetTaskPayload.
+func (c *adminServiceClient) GetTaskPayload(ctx context.Context, req *connect.Request[v1.GetTaskPayloadRequest]) (*connect.ServerStreamForClient[v1.GetTaskPayloadResponse], error) {
+	return c.getTaskPayload.CallServerStream(ctx, req)
+}
+
 // AdminServiceHandler is an implementation of the conveyor.v1.AdminService service.
 type AdminServiceHandler interface {
 	ListQueues(context.Context, *connect.Request[v1.ListQueuesRequest]) (*connect.Response[v1.ListQueuesResponse], error)
@@ -1092,6 +1155,9 @@ type AdminServiceHandler interface {
 	// has events dropped rather than stalling task processing. The optional
 	// queue and event-type filters narrow the stream server-side.
 	WatchEvents(context.Context, *connect.Request[v1.WatchEventsRequest], *connect.ServerStream[v1.TaskEvent]) error
+	// GetTaskPayload streams one task's payload, chunked or inline, for
+	// inspection and download. TaskInfo omits a chunked payload.
+	GetTaskPayload(context.Context, *connect.Request[v1.GetTaskPayloadRequest], *connect.ServerStream[v1.GetTaskPayloadResponse]) error
 }
 
 // NewAdminServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -1317,6 +1383,12 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(adminServiceMethods.ByName("WatchEvents")),
 		connect.WithHandlerOptions(opts...),
 	)
+	adminServiceGetTaskPayloadHandler := connect.NewServerStreamHandler(
+		AdminServiceGetTaskPayloadProcedure,
+		svc.GetTaskPayload,
+		connect.WithSchema(adminServiceMethods.ByName("GetTaskPayload")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/conveyor.v1.AdminService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case AdminServiceListQueuesProcedure:
@@ -1391,6 +1463,8 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 			adminServiceBrokerInfoHandler.ServeHTTP(w, r)
 		case AdminServiceWatchEventsProcedure:
 			adminServiceWatchEventsHandler.ServeHTTP(w, r)
+		case AdminServiceGetTaskPayloadProcedure:
+			adminServiceGetTaskPayloadHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -1542,4 +1616,8 @@ func (UnimplementedAdminServiceHandler) BrokerInfo(context.Context, *connect.Req
 
 func (UnimplementedAdminServiceHandler) WatchEvents(context.Context, *connect.Request[v1.WatchEventsRequest], *connect.ServerStream[v1.TaskEvent]) error {
 	return connect.NewError(connect.CodeUnimplemented, errors.New("conveyor.v1.AdminService.WatchEvents is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) GetTaskPayload(context.Context, *connect.Request[v1.GetTaskPayloadRequest], *connect.ServerStream[v1.GetTaskPayloadResponse]) error {
+	return connect.NewError(connect.CodeUnimplemented, errors.New("conveyor.v1.AdminService.GetTaskPayload is not implemented"))
 }

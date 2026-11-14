@@ -154,6 +154,18 @@ message TaskEnvelope {
   // progress_message is the latest human-readable status reported alongside
   // progress. Overlay field; empty when none was reported.
   string progress_message = 14;
+  // payload_chunked marks a payload stored as a sequence of chunks rather than
+  // inline in payload, which is then empty. It is set for tasks enqueued with
+  // TaskService.EnqueueStream; a worker receives the chunks as PayloadChunk
+  // frames after the task's Dispatch.
+  bool payload_chunked = 15;
+  // payload_size is the stored size in bytes of a chunked payload (ciphertext
+  // when encrypted). Zero for an inline payload, whose size is len(payload).
+  uint64 payload_size = 16;
+  // payload_chunks is how many chunks a chunked payload is stored in, so a
+  // reader can tell a complete payload from a truncated one. Zero for an
+  // inline payload.
+  uint32 payload_chunks = 17;
 }
 
 // TaskOptions captures the per-task execution options.

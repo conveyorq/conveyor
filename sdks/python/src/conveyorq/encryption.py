@@ -16,6 +16,7 @@ in any other.
 from __future__ import annotations
 
 import os
+import struct
 from typing import Dict, Protocol, runtime_checkable
 
 from cryptography.exceptions import InvalidTag
@@ -28,6 +29,13 @@ _NONCE_BYTES = 12
 _TAG_BYTES = 16
 _MAX_KEY_ID_BYTES = 255
 _HEADER_FIXED_BYTES = 2
+
+# Chunk framing sealed into every chunk of a streamed payload: an 8-byte
+# big-endian sequence number followed by a 1-byte last-chunk flag. Sealing the
+# header with the data lets the opener detect reordered, dropped, or appended
+# chunks, which per-chunk authentication alone would not catch.
+_CHUNK_HEADER = struct.Struct(">QB")
+_CHUNK_LAST_FLAG = 1
 
 #: Metadata key set on an encrypted payload so a worker knows to decrypt it.
 ENCRYPTION_MARKER_KEY = "conveyor.encryption"
@@ -140,6 +148,93 @@ class AESGCM:
             return _AESGCM(secret).decrypt(nonce, body, header)
         except InvalidTag:
             raise AuthenticationError() from None
+
+
+class ChunkOrderError(Exception):
+    """Raised when a chunk is not the next in sequence or follows the chunk marked last."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(f"encryption: chunk out of order: {message}")
+
+
+class ChunkTruncatedError(Exception):
+    """Raised when a chunked payload ends before the chunk marked last."""
+
+    def __init__(self) -> None:
+        super().__init__("encryption: chunked payload truncated")
+
+
+class ChunkSealer:
+    """Seals a streamed payload one chunk at a time, numbering chunks from zero.
+
+    Each chunk is sealed as ``encrypt(sequence || last || data)``, the framing
+    every SDK shares, so a payload sealed here opens in any of them. Use one
+    sealer per payload.
+    """
+
+    __slots__ = ("_encryptor", "_next")
+
+    def __init__(self, encryptor: Encryptor) -> None:
+        self._encryptor = encryptor
+        self._next = 0
+
+    def seal(self, data: bytes, last: bool) -> bytes:
+        """Frame and encrypt the next chunk.
+
+        ``last`` must be true on the final chunk, and only on it; an empty
+        payload is sealed as one empty chunk marked last.
+        """
+        flag = _CHUNK_LAST_FLAG if last else 0
+        sealed = self._encryptor.encrypt(_CHUNK_HEADER.pack(self._next, flag) + data)
+        self._next += 1
+
+        return sealed
+
+
+class ChunkOpener:
+    """Opens a payload sealed by :class:`ChunkSealer`, enforcing that chunks
+    arrive in order and end with the chunk marked last. Use one opener per
+    payload.
+    """
+
+    __slots__ = ("_encryptor", "_next", "_done")
+
+    def __init__(self, encryptor: Encryptor) -> None:
+        self._encryptor = encryptor
+        self._next = 0
+        self._done = False
+
+    def open(self, sealed: bytes) -> bytes:
+        """Decrypt the next chunk and return its data.
+
+        Raises :class:`ChunkOrderError` for a chunk out of sequence or after the
+        chunk marked last, and :class:`MalformedCiphertextError` when the opened
+        chunk is too short to carry the framing header.
+        """
+        if self._done:
+            raise ChunkOrderError("chunk after the last chunk")
+
+        framed = self._encryptor.decrypt(sealed)
+        if len(framed) < _CHUNK_HEADER.size:
+            raise MalformedCiphertextError("chunk shorter than its header")
+
+        sequence, flag = _CHUNK_HEADER.unpack_from(framed)
+        if sequence != self._next:
+            raise ChunkOrderError(f"got chunk {sequence}, want {self._next}")
+
+        self._next += 1
+        self._done = flag == _CHUNK_LAST_FLAG
+
+        return framed[_CHUNK_HEADER.size :]
+
+    def finish(self) -> None:
+        """Check the payload ended after the chunk marked last.
+
+        Raises :class:`ChunkTruncatedError` otherwise. A payload of no chunks at
+        all was not chunk-sealed and passes.
+        """
+        if self._next > 0 and not self._done:
+            raise ChunkTruncatedError()
 
 
 def new_aes_gcm(active_key_id: str, *keys: Key) -> AESGCM:

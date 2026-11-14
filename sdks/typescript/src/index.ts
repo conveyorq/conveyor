@@ -16,7 +16,7 @@ export { Worker } from "./worker.js";
 export { Mux, BatchError } from "./mux.js";
 export type { Handler, BatchHandler, HandlerContext, Middleware, BatchMiddleware } from "./mux.js";
 export { Task, newTask } from "./task.js";
-export { json, bytes, text, ContentType } from "./codec.js";
+export { json, bytes, text, stream, ContentType } from "./codec.js";
 export type { Payload } from "./codec.js";
 export { SkipRetry, skipRetry, DuplicateTaskError, ConveyorError } from "./errors.js";
 export {
@@ -27,6 +27,7 @@ export {
   MalformedCiphertextError,
   AuthenticationError,
 } from "./encryption.js";
+export { ChunkOrderError, ChunkTruncatedError } from "./chunk.js";
 export type { Encryptor, Key } from "./encryption.js";
 export type {
   ClientOptions,

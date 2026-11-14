@@ -1781,3 +1781,85 @@ func TestDrainingWebhookGatewaySkipsReRegistration(t *testing.T) {
 	require.Equal(t, conveyorv1.TaskState_TASK_STATE_PENDING, state)
 	require.Nil(t, envelope.GetStartedAt(), "a draining webhook gateway must not re-register")
 }
+
+// bareWebhookGateway builds a webhook gateway with the working state PreStart
+// would set, without spawning it, so turn-side handlers can be driven directly.
+func bareWebhookGateway(t *testing.T) *WebhookGateway {
+	t.Helper()
+
+	gateway := newWebhookGateway(testWebhookWorker("http://127.0.0.1:0", "served"))
+	gateway.runtime = NewRuntime(memory.New(clock.System()), clock.System(), testSettings, quietLogger())
+	gateway.inflight = make(map[string]*inflightTask)
+	gateway.batchStates = make(map[string]*webhookBatch)
+	gateway.aborts = make(map[string]context.CancelFunc)
+	gateway.async = make(map[string]time.Time)
+
+	return gateway
+}
+
+func TestWebhookAsyncLeaseExtendedIgnoresStaleAndSynchronousDeliveries(t *testing.T) {
+	gateway := bareWebhookGateway(t)
+	gateway.inflight["task-sync"] = &inflightTask{leaseID: "lease-1"}
+	gateway.inflight["task-async"] = &inflightTask{leaseID: "lease-new"}
+	gateway.async["task-async"] = time.Time{}
+
+	// No branch here reaches the receive context.
+	gateway.asyncLeaseExtended(nil, asyncLeaseExtended{ref: leaseRef{taskID: "task-sync", leaseID: "lease-1"}})
+	gateway.asyncLeaseExtended(nil, asyncLeaseExtended{ref: leaseRef{taskID: "task-async", leaseID: "lease-old"}, err: broker.ErrLeaseLost})
+	gateway.asyncLeaseExtended(nil, asyncLeaseExtended{ref: leaseRef{taskID: "task-unknown", leaseID: "lease-1"}})
+
+	require.Contains(t, gateway.inflight, "task-async", "a report for a superseded lease drops nothing")
+	require.True(t, gateway.async["task-async"].IsZero(), "a stale report refreshes nothing")
+	require.NotContains(t, gateway.async, "task-sync")
+}
+
+func TestWebhookAsyncLeaseExtendedRefreshesOnSuccessAndKeepsOnError(t *testing.T) {
+	gateway := bareWebhookGateway(t)
+	gateway.inflight["task-1"] = &inflightTask{leaseID: "lease-1"}
+	gateway.async["task-1"] = time.Time{}
+	ref := leaseRef{taskID: "task-1", leaseID: "lease-1"}
+
+	gateway.asyncLeaseExtended(nil, asyncLeaseExtended{ref: ref, err: errors.New("store down")})
+	require.True(t, gateway.async["task-1"].IsZero(), "a failed extension does not count as a heartbeat")
+	require.Contains(t, gateway.inflight, "task-1")
+
+	gateway.asyncLeaseExtended(nil, asyncLeaseExtended{ref: ref})
+	require.False(t, gateway.async["task-1"].IsZero(), "a successful extension refreshes the delivery's liveness")
+}
+
+func TestWebhookLeasesExtendedIgnoresReleasedDeliveries(t *testing.T) {
+	gateway := bareWebhookGateway(t)
+	current := &inflightTask{leaseID: "lease-new"}
+	gateway.inflight["task-1"] = current
+
+	gateway.leasesExtended(nil, leasesExtended{lost: []leaseRef{{taskID: "task-1", leaseID: "lease-old"}}})
+
+	require.Same(t, current, gateway.inflight["task-1"])
+}
+
+func TestWebhookManagerConvergeSkipsAFailedListing(t *testing.T) {
+	manager := &WebhookManager{
+		runtime:  NewRuntime(memory.New(clock.System()), clock.System(), testSettings, quietLogger()),
+		children: make(map[string]*goakt.PID),
+		stopping: make(map[string]bool),
+		listing:  true,
+	}
+
+	// A failed read returns before any child is touched.
+	manager.converge(nil, webhookWorkersListed{err: errors.New("store down")})
+
+	require.False(t, manager.listing, "the next tick may list again")
+	require.Empty(t, manager.children)
+}
+
+func TestWebhookManagerClearsListingOnStart(t *testing.T) {
+	counting := &callCountingBroker{Broker: memory.New(clock.System())}
+	system := startBareSystem(t, counting)
+
+	// As a restart that lost a listing's completion would leave it.
+	_, err := system.Spawn(context.Background(), "webhook-manager-restarted", &WebhookManager{listing: true})
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool { return counting.webhookListings.Load() > 0 },
+		5*time.Second, 20*time.Millisecond, "the start reconcile lists the registrations")
+}

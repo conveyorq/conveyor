@@ -28,7 +28,7 @@ Give it an operator token: one from `api.auth_tokens`, or a scoped token that ca
 | **Limits** | Per-queue dispatch [rate-limit](rate-limiting.md) overrides (rate and burst). A queue without one uses the server default. | Set, edit, remove |
 | **Concurrency** | Per-queue, per-key [concurrency limits](concurrency.md). | Set, edit, remove |
 | **Groups** | Per-group [aggregation](grouping.md) overrides (max size, max delay, grace). An empty group key is the queue-wide default. | Set, edit, remove |
-| **Tasks** | The task store, filtered by queue and state and paged, with a detail panel per task: type, queue, priority, retries and last error, timestamps and duration, reported progress, and the decoded payload. | Run now, reschedule, archive, cancel, delete; select several rows for a batch run, archive, cancel, or delete |
+| **Tasks** | The task store, filtered by queue and state and paged, with a detail panel per task: type, queue, priority, retries and last error, timestamps and duration, reported progress, payload size, and the decoded payload (a payload stored in chunks is downloaded rather than shown inline). | Run now, reschedule, archive, cancel, delete; select several rows for a batch run, archive, cancel, or delete |
 | **Cron** | Registered schedules with their spec, target, next run, and paused flag, plus an editor. | Create, edit, pause, resume, delete |
 | **Webhooks** | [Webhook worker](webhook-workers.md) registrations, plus an editor. Secrets are write-only: the server redacts them in listings. | Create, edit, pause, resume, delete |
 | **Workers** | The worker sessions connected to this node: the queues each serves, its declared concurrency, SDK version, and uptime. | |

@@ -10,6 +10,7 @@ from typing import Any, Mapping, Optional
 
 from . import codec
 from .codec import ContentType, Payload
+from .streaming import INLINE_PAYLOAD_BYTES, PayloadSource, PayloadStream
 
 
 class Task:
@@ -29,6 +30,8 @@ class Task:
         "retried",
         "max_retry",
         "_data",
+        "_source",
+        "_stream",
     )
 
     def __init__(
@@ -42,6 +45,8 @@ class Task:
         queue: str = "",
         retried: int = 0,
         max_retry: int = 0,
+        source: Optional[PayloadSource] = None,
+        stream: Optional[PayloadStream] = None,
     ) -> None:
         #: The handler routing key, e.g. ``"email:welcome"``.
         self.type = type
@@ -58,11 +63,30 @@ class Task:
         #: The retry budget before the task is dead-lettered.
         self.max_retry = max_retry
         self._data = data
+        self._source = source
+        self._stream = stream
 
     @property
     def payload(self) -> bytes:
-        """The raw payload bytes."""
+        """The raw payload bytes. Empty for a payload a streaming handler
+        receives (see :meth:`Mux.handle_stream`); read :attr:`payload_stream`
+        instead."""
         return self._data
+
+    @property
+    def payload_stream(self) -> PayloadStream:
+        """The payload as a stream of byte chunks. A streaming handler reads a
+        chunked payload here as it arrives; for any other task it yields
+        :attr:`payload`."""
+        if self._stream is not None:
+            return self._stream
+
+        return PayloadStream(self._data)
+
+    def _streamed(self) -> bool:
+        """Whether enqueueing uploads the payload in chunks: it comes from a
+        stream, or it is too large to send inline."""
+        return self._source is not None or len(self._data) > INLINE_PAYLOAD_BYTES
 
     def json(self) -> Any:
         """Decode a JSON payload into a value; raises if the content type is not JSON."""
@@ -86,4 +110,5 @@ def new_task(type: str, payload: Payload, *, metadata: Optional[Mapping[str, str
         content_type=payload.content_type or ContentType.JSON,
         data=payload.data,
         metadata=metadata,
+        source=payload.source,
     )

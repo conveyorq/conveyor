@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync, type ChildProcess, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { createServer } from "node:net";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -11,12 +12,30 @@ import { fileURLToPath } from "node:url";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { Code, ConnectError } from "@connectrpc/connect";
+
 import { Client } from "./client.js";
-import { json } from "./codec.js";
+import { bytes, json, stream } from "./codec.js";
 import { newAESGCM } from "./encryption.js";
 import { Mux } from "./mux.js";
-import { newTask } from "./task.js";
+import { DEFAULT_PAYLOAD_CHUNK_WINDOW, PAYLOAD_CHUNK_BYTES } from "./stream.js";
+import { newTask, type Task } from "./task.js";
 import { Worker } from "./worker.js";
+
+/** The payload cap the test server runs with, room for a payload larger than the chunk window. */
+const MAX_PAYLOAD_BYTES = 32 << 20;
+
+/** A payload size above the inline limit, spanning several chunks with a partial last one. */
+const LARGE_PAYLOAD_BYTES = 3 * PAYLOAD_CHUNK_BYTES + 12345;
+
+/** How long a test server waits after a group's last member before firing it. */
+const GROUP_GRACE_PERIOD = "200ms";
+
+/** How long the slow streaming handler pauses on each chunk it reads. */
+const SLOW_READ_MS = 20;
+
+/** How long a completed task stays visible to getTask. */
+const RETENTION_MS = 3_600_000;
 
 // The repo root, four levels up from sdks/typescript/src.
 const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
@@ -62,6 +81,9 @@ beforeAll(async () => {
 
   const apiPort = await freePort();
   const metricsPort = await freePort();
+  // Cluster ports are picked too, so the server never collides with another
+  // conveyord already holding the defaults.
+  const [remotingPort, discoveryPort, peersPort] = [await freePort(), await freePort(), await freePort()];
   baseUrl = `http://127.0.0.1:${apiPort}`;
 
   server = spawn(binary, ["--dev"], {
@@ -70,6 +92,11 @@ beforeAll(async () => {
       ...process.env,
       CONVEYOR_API__LISTEN: `127.0.0.1:${apiPort}`,
       CONVEYOR_METRICS__LISTEN: `127.0.0.1:${metricsPort}`,
+      CONVEYOR_CLUSTER__REMOTING_PORT: String(remotingPort),
+      CONVEYOR_CLUSTER__DISCOVERY_PORT: String(discoveryPort),
+      CONVEYOR_CLUSTER__PEERS_PORT: String(peersPort),
+      CONVEYOR_BROKER__MAX_PAYLOAD_BYTES: String(MAX_PAYLOAD_BYTES),
+      CONVEYOR_ENGINE__GROUP_GRACE_PERIOD: GROUP_GRACE_PERIOD,
     },
     stdio: "ignore",
   });
@@ -90,6 +117,55 @@ beforeAll(async () => {
 afterAll(() => {
   server?.kill("SIGKILL");
 });
+
+/** largePayload returns a deterministic payload of the given size. */
+function largePayload(size = LARGE_PAYLOAD_BYTES): Uint8Array {
+  const payload = new Uint8Array(size);
+  for (let index = 0; index < payload.length; index++) {
+    payload[index] = index % 251;
+  }
+
+  return payload;
+}
+
+/** sha256 returns the hex SHA-256 digest of data. */
+function sha256(data: Uint8Array): string {
+  return createHash("sha256").update(data).digest("hex");
+}
+
+/** streamDigest reads a task's payload stream to its end and returns its digest. */
+async function streamDigest(task: Task): Promise<string> {
+  const hash = createHash("sha256");
+  for await (const chunk of task.payloadStream()) {
+    hash.update(chunk);
+  }
+
+  return hash.digest("hex");
+}
+
+/** pieces yields data in pieces of the given size, like a Node stream. */
+async function* pieces(data: Uint8Array, size: number): AsyncGenerator<Uint8Array> {
+  for (let offset = 0; offset < data.length; offset += size) {
+    yield data.subarray(offset, offset + size);
+  }
+}
+
+/** startWorker runs a worker over the mux until the returned stop is called. */
+function startWorker(mux: Mux, options: { encryptor?: ReturnType<typeof newAESGCM> } = {}): () => Promise<void> {
+  const worker = new Worker(baseUrl, { queues: { default: 1 }, concurrency: 4, ...options });
+  const stop = new AbortController();
+  const running = worker.run(mux, stop.signal);
+
+  return async () => {
+    stop.abort();
+    await running;
+  };
+}
+
+/** awaitState waits until a task reaches the given state. */
+async function awaitState(client: Client, id: string, state: string): Promise<void> {
+  await waitUntil(async () => (await client.getTask(id)).state === state, 20_000);
+}
 
 describe("integration against a live conveyord", () => {
   it("round-trips a task from producer to worker to completion", async () => {
@@ -200,5 +276,171 @@ describe("integration against a live conveyord", () => {
 
     stop.abort();
     await running;
+  }, 30_000);
+
+  it("delivers a payload larger than the inline limit reassembled", async () => {
+    const client = new Client(baseUrl);
+    const payload = largePayload();
+    const digests = new Map<string, string>();
+
+    const stop = startWorker(
+      new Mux().handle("blob:process", (task) => {
+        digests.set(task.id, sha256(task.payload()));
+      }),
+    );
+
+    const info = await client.enqueue(newTask("blob:process", bytes(payload)), { retention: RETENTION_MS });
+    expect(info.payloadChunked).toBe(true);
+    expect(info.payloadSize).toBe(payload.length);
+
+    await awaitState(client, info.id, "completed");
+    expect(digests.get(info.id)).toBe(sha256(payload));
+
+    await stop();
+  }, 40_000);
+
+  it("streams a stream payload to a streaming handler", async () => {
+    const client = new Client(baseUrl);
+    const payload = largePayload();
+    const digests = new Map<string, string>();
+
+    const stop = startWorker(
+      new Mux().handleStream("blob:stream", async (task) => {
+        digests.set(task.id, await streamDigest(task));
+      }),
+    );
+
+    const info = await client.enqueue(newTask("blob:stream", stream(pieces(payload, 64 * 1024))), { retention: RETENTION_MS });
+
+    await awaitState(client, info.id, "completed");
+    expect(digests.get(info.id)).toBe(sha256(payload));
+
+    await stop();
+  }, 40_000);
+
+  it("streams a payload larger than the chunk window to a slow streaming handler", async () => {
+    const client = new Client(baseUrl);
+    const payload = largePayload((DEFAULT_PAYLOAD_CHUNK_WINDOW + 4) * PAYLOAD_CHUNK_BYTES + 12345);
+    const digests = new Map<string, string>();
+
+    const stop = startWorker(
+      new Mux().handleStream("blob:slow-stream", async (task) => {
+        const hash = createHash("sha256");
+        for await (const chunk of task.payloadStream()) {
+          await new Promise((resolve) => setTimeout(resolve, SLOW_READ_MS));
+          hash.update(chunk);
+        }
+
+        digests.set(task.id, hash.digest("hex"));
+      }),
+    );
+
+    const info = await client.enqueue(newTask("blob:slow-stream", bytes(payload)), { retention: RETENTION_MS });
+
+    await awaitState(client, info.id, "completed");
+    expect(digests.get(info.id)).toBe(sha256(payload));
+
+    await stop();
+  }, 60_000);
+
+  it("round-trips a large payload encrypted end to end", async () => {
+    const codec = newAESGCM("k1", { id: "k1", secret: new Uint8Array(32).fill(1) });
+    const client = new Client(baseUrl, { encryptor: codec });
+    const payload = largePayload();
+    const digests = new Map<string, string>();
+
+    const stop = startWorker(
+      new Mux()
+        .handle("blob:secret", (task) => {
+          digests.set(task.id, sha256(task.payload()));
+        })
+        .handleStream("blob:secret-stream", async (task) => {
+          digests.set(task.id, await streamDigest(task));
+        }),
+      { encryptor: codec },
+    );
+
+    for (const type of ["blob:secret", "blob:secret-stream"]) {
+      const info = await client.enqueue(newTask(type, bytes(payload)), { retention: RETENTION_MS });
+
+      await awaitState(client, info.id, "completed");
+      expect(digests.get(info.id), type).toBe(sha256(payload));
+    }
+
+    await stop();
+  }, 40_000);
+
+  it("retries an encrypted chunked task on a worker without the key", async () => {
+    const client = new Client(baseUrl, { encryptor: newAESGCM("k1", { id: "k1", secret: new Uint8Array(32).fill(1) }) });
+    const stop = startWorker(new Mux().handle("blob:keyless", () => {}));
+
+    const info = await client.enqueue(newTask("blob:keyless", bytes(largePayload())), { retention: RETENTION_MS });
+
+    await awaitState(client, info.id, "retry");
+    expect((await client.getTask(info.id)).lastError).toContain("no encryptor");
+
+    await stop();
+  }, 40_000);
+
+  it("delivers chunked batch members reassembled", async () => {
+    const client = new Client(baseUrl);
+    const payload = largePayload();
+    const digests = new Map<string, string>();
+
+    const stop = startWorker(
+      new Mux().handleBatch("blob:batch", (tasks) => {
+        for (const task of tasks) {
+          digests.set(task.id, sha256(task.payload()));
+        }
+      }),
+    );
+
+    const ids: string[] = [];
+    for (let member = 0; member < 2; member++) {
+      ids.push((await client.enqueue(newTask("blob:batch", bytes(payload)), { group: "blobs", retention: RETENTION_MS })).id);
+    }
+
+    for (const id of ids) {
+      await awaitState(client, id, "completed");
+      expect(digests.get(id)).toBe(sha256(payload));
+    }
+
+    await stop();
+  }, 40_000);
+
+  it("commits nothing when the payload source breaks", async () => {
+    const client = new Client(baseUrl);
+    const broken = new Error("source broken");
+    const source = (async function* () {
+      yield new Uint8Array(PAYLOAD_CHUNK_BYTES);
+      throw broken;
+    })();
+
+    await expect(client.enqueue(newTask("blob:broken", stream(source)), { taskId: "ts-broken-upload" })).rejects.toBe(broken);
+    await expect(client.getTask("ts-broken-upload")).rejects.toThrow();
+  }, 30_000);
+
+  it("answers a re-sent streamed task id with the committed task", async () => {
+    const client = new Client(baseUrl);
+    const first = await client.enqueue(newTask("blob:idempotent", bytes(largePayload())), {
+      taskId: "ts-idempotent-upload",
+      retention: RETENTION_MS,
+    });
+
+    const again = await client.enqueue(newTask("blob:idempotent", bytes(largePayload())), {
+      taskId: "ts-idempotent-upload",
+      retention: RETENTION_MS,
+    });
+
+    expect(again.id).toBe(first.id);
+  }, 30_000);
+
+  it("rejects a streamed payload above the server's cap", async () => {
+    const client = new Client(baseUrl);
+
+    const rejection = await client.enqueue(newTask("blob:huge", bytes(largePayload(MAX_PAYLOAD_BYTES + 1)))).catch((error: unknown) => error);
+
+    expect(rejection).toBeInstanceOf(ConnectError);
+    expect((rejection as ConnectError).code).toBe(Code.InvalidArgument);
   }, 30_000);
 });

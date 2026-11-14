@@ -7,6 +7,7 @@ package conveyor
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 
 	"google.golang.org/protobuf/proto"
 )
@@ -22,11 +23,13 @@ const (
 )
 
 // Payload is an encoded task payload plus its content type. Build one with
-// JSON or Bytes; an encoding failure is carried inside and surfaces from
-// Client.Enqueue, so call sites stay single-expression.
+// JSON, Bytes, Proto, or Stream; an encoding failure is carried inside and
+// surfaces from Client.Enqueue, so call sites stay single-expression.
 type Payload struct {
 	// data is the encoded payload.
 	data []byte
+	// reader supplies a streamed payload; nil for an in-memory one.
+	reader io.Reader
 	// contentType describes the encoding.
 	contentType string
 	// err is a deferred encoding failure.
@@ -60,4 +63,18 @@ func Proto(m proto.Message) Payload {
 	}
 
 	return Payload{data: data, contentType: ContentTypeProto}
+}
+
+// Stream supplies the task payload from r with the given content type, for a
+// payload too large to hold in memory. Client.Enqueue uploads it in chunks
+// through the server's streaming enqueue, reading r to its end, and the
+// worker side receives it chunked (see Task.PayloadReader). A streamed
+// payload cannot be enqueued with EnqueueTx, and Unique needs an explicit
+// UniqueKey since the payload is never held whole to hash.
+func Stream(r io.Reader, contentType string) Payload {
+	if r == nil {
+		return Payload{err: fmt.Errorf("conveyor: Stream needs a reader")}
+	}
+
+	return Payload{reader: r, contentType: contentType}
 }

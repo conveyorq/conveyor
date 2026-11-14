@@ -186,7 +186,7 @@ Failures return a non-2xx status and a JSON body with a Connect error code:
 | Rule                                                                                                        | Violation          |
 |-------------------------------------------------------------------------------------------------------------|--------------------|
 | `type` is required                                                                                          | `invalid_argument` |
-| `payload` at most 1 MiB                                                                                     | `invalid_argument` |
+| `payload` at most 1 MiB (the inline limit); a larger one needs an SDK, which streams it over HTTP/2          | `invalid_argument` |
 | `queue` matches `^[a-zA-Z0-9][a-zA-Z0-9-_.]*$`                                                              | `invalid_argument` |
 | `priority` in 1..9 (0 selects the default)                                                                  | `invalid_argument` |
 | Batch and Tx take 1 to 1000 tasks                                                                           | `invalid_argument` |

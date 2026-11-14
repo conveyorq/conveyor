@@ -12,11 +12,40 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"iter"
 	"time"
 
 	"github.com/conveyorq/conveyor/internal/events"
 	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 )
+
+// LeaseExpiredMessage is recorded as the task's last error when the reaper
+// reclaims an expired lease.
+const LeaseExpiredMessage = "lease expired"
+
+// TaskExpiredMessage is recorded as the task's last error when the reaper
+// archives a task whose pre-dispatch expiry (expires_at) lapsed before it was
+// ever dispatched.
+const TaskExpiredMessage = "task expired before dispatch"
+
+// CascadeCanceledMessage is recorded as the task's last error when it is
+// canceled because a dependency it declared with the cascade-cancel policy
+// failed terminally.
+const CascadeCanceledMessage = "canceled by failed dependency"
+
+// DefaultMaxPayloadBytes is the payload cap a broker applies when it is not
+// configured with one: 1 MiB. Larger blobs belong in object storage with a
+// reference in the payload.
+const DefaultMaxPayloadBytes = 1 << 20
+
+// InlinePayloadBytes is the largest payload stored inline in the task
+// envelope. Enqueue, EnqueueBatch, and cron entries carry inline payloads; a
+// larger payload is stored in chunks through EnqueueChunked.
+const InlinePayloadBytes = 1 << 20
+
+// MaxPayloadBytesMetric is the Info.Metrics key under which a broker reports
+// its effective payload cap.
+const MaxPayloadBytesMetric = "max_payload_bytes"
 
 // Sentinel errors returned by Broker implementations. Match with errors.Is.
 var (
@@ -40,6 +69,10 @@ var (
 	// group and a future process_at: aggregation and scheduling are mutually
 	// exclusive in v1.
 	ErrGroupedSchedule = errors.New("broker: a grouped task cannot be scheduled")
+
+	// ErrPayloadTruncated is returned by ReadPayload when the store holds fewer
+	// chunks than the requested range: the payload is incomplete.
+	ErrPayloadTruncated = errors.New("broker: payload truncated")
 
 	// ErrTaskHasDependents is returned by DeleteTask when other tasks still
 	// depend on the task: deleting it would strand those dependents blocked on
@@ -92,20 +125,6 @@ func EffectiveListLimit(limit int) int {
 
 	return limit
 }
-
-// LeaseExpiredMessage is recorded as the task's last error when the reaper
-// reclaims an expired lease.
-const LeaseExpiredMessage = "lease expired"
-
-// TaskExpiredMessage is recorded as the task's last error when the reaper
-// archives a task whose pre-dispatch expiry (expires_at) lapsed before it was
-// ever dispatched.
-const TaskExpiredMessage = "task expired before dispatch"
-
-// CascadeCanceledMessage is recorded as the task's last error when it is
-// canceled because a dependency it declared with the cascade-cancel policy
-// failed terminally.
-const CascadeCanceledMessage = "canceled by failed dependency"
 
 // CronEntry is a persisted cron schedule from which the scheduler
 // materializes tasks.
@@ -342,6 +361,25 @@ type Broker interface {
 	// same key and the key's TTL has not lapsed.
 	Enqueue(ctx context.Context, task *conveyorv1.TaskEnvelope) error
 
+	// EnqueueChunked durably commits a task whose payload arrives as chunks,
+	// consuming chunks in order and storing each as given. The task's inline
+	// payload must be empty; the stored envelope is marked payload_chunked with
+	// payload_size set to the total of the chunk lengths and payload_chunks to
+	// their count. The task and its
+	// chunks commit together, so an error from chunks or the store commits
+	// nothing. Committing an id that already exists is a no-op that does not
+	// consume chunks. Otherwise it follows Enqueue: unique keys, dependencies,
+	// grouping, and scheduling apply unchanged. The broker may retain the chunk
+	// slices, so callers must not reuse them.
+	EnqueueChunked(ctx context.Context, task *conveyorv1.TaskEnvelope, chunks iter.Seq2[[]byte, error]) error
+
+	// ReadPayload yields count chunks of a chunked task's payload in order,
+	// starting at chunk from (zero-based), exactly as they were stored. When the
+	// store holds fewer chunks than the range asks for, it yields
+	// ErrPayloadTruncated after the chunks it has. Iteration stops at the first
+	// error, which is yielded. A zero count yields nothing.
+	ReadPayload(ctx context.Context, taskID string, from, count int) iter.Seq2[[]byte, error]
+
 	// EnqueueBatch atomically commits every task or none of them. Each task is
 	// committed with the same semantics as Enqueue, but the whole set is one
 	// unit of work: if any task fails (a duplicate unique key, a unique-key
@@ -528,8 +566,14 @@ type Broker interface {
 	GroupConfigs(ctx context.Context) ([]GroupConfig, error)
 
 	// Info reports the storage engine's driver and runtime statistics for
-	// the dashboard's broker-info view.
+	// the dashboard's broker-info view. It includes the payload cap under
+	// MaxPayloadBytesMetric.
 	Info(ctx context.Context) (Info, error)
+
+	// MaxPayloadBytes reports the largest task payload, in bytes, the broker
+	// stores, inline or chunked. The API rejects a larger payload before it
+	// reaches the broker.
+	MaxPayloadBytes() int
 
 	// GetTask returns the task and its current state, or ErrTaskNotFound.
 	GetTask(ctx context.Context, id string) (*conveyorv1.TaskEnvelope, conveyorv1.TaskState, error)

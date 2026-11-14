@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"syscall"
 	"testing"
 	"time"
@@ -84,6 +85,7 @@ func startServer(t *testing.T, root, conveyord string) *conformanceServer {
 		"CONVEYOR_ENGINE__GROUP_MAX_SIZE":       fmt.Sprintf("%d", groupSize),
 		"CONVEYOR_ENGINE__GROUP_GRACE_PERIOD":   "500ms",
 		"CONVEYOR_ENGINE__GROUP_SWEEP_INTERVAL": "300ms",
+		"CONVEYOR_BROKER__MAX_PAYLOAD_BYTES":    strconv.Itoa(payloadCap),
 	})
 	cmd.Stdout = server.log
 	cmd.Stderr = server.log

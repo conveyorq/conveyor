@@ -25,6 +25,15 @@ service TaskService {
   rpc EnqueueTx(EnqueueTxRequest) returns (EnqueueTxResponse) {}
   // GetTask returns the current state of one task.
   rpc GetTask(GetTaskRequest) returns (GetTaskResponse) {}
+  // EnqueueStream durably commits one task whose payload is too large for
+  // Enqueue. The first message carries the task as an EnqueueRequest with an
+  // empty payload; the following messages carry payload chunks of at most
+  // 2 MiB each; the last message is a PayloadCommit stating the total size.
+  // The task is committed only when the commit arrives and its size matches
+  // the bytes received, so a broken or truncated upload commits nothing. The
+  // total payload is held to the server's payload cap. Idempotent on a
+  // client-supplied id.
+  rpc EnqueueStream(stream EnqueueStreamRequest) returns (EnqueueResponse) {}
 }
 
 // WorkerService carries worker sessions.
@@ -120,6 +129,9 @@ service AdminService {
   // has events dropped rather than stalling task processing. The optional
   // queue and event-type filters narrow the stream server-side.
   rpc WatchEvents(WatchEventsRequest) returns (stream TaskEvent) {}
+  // GetTaskPayload streams one task's payload, chunked or inline, for
+  // inspection and download. TaskInfo omits a chunked payload.
+  rpc GetTaskPayload(GetTaskPayloadRequest) returns (stream GetTaskPayloadResponse) {}
 }
 
 // ---- TaskService messages ----
@@ -211,6 +223,27 @@ message GetTaskRequest {
   string id = 1;
 }
 
+// EnqueueStreamRequest is one message of an EnqueueStream upload: the task
+// header first, then payload chunks.
+message EnqueueStreamRequest {
+  oneof frame {
+    // header is the task to commit, with an empty payload. It must be the
+    // first message and must appear once.
+    EnqueueRequest header = 1;
+    // chunk is the next slice of the payload, at most 2 MiB.
+    bytes chunk = 2;
+    // commit ends the upload. It must be the last message.
+    PayloadCommit commit = 3;
+  }
+}
+
+// PayloadCommit ends an EnqueueStream upload and states its total size, so the
+// server can tell a complete upload from one cut short.
+message PayloadCommit {
+  // size is the total of the uploaded chunk lengths, in bytes.
+  uint64 size = 1;
+}
+
 message GetTaskResponse {
   TaskInfo task = 1;
 }
@@ -242,6 +275,12 @@ message TaskInfo {
   // progress_message is the latest human-readable status reported alongside
   // progress. Empty when none was reported.
   string progress_message = 16;
+  // payload_chunked marks a payload stored in chunks; payload is then empty
+  // and AdminService.GetTaskPayload streams it.
+  bool payload_chunked = 17;
+  // payload_size is the stored payload size in bytes (ciphertext when
+  // encrypted), chunked or inline.
+  uint64 payload_size = 18;
 }
 
 // ---- WorkerService frames ----
@@ -255,6 +294,7 @@ message WorkerMessage {
     Heartbeat heartbeat = 4;
     BatchResult batch_result = 5;
     Progress progress = 6;
+    PayloadAck payload_ack = 7;
   }
 }
 
@@ -266,6 +306,7 @@ message ServerMessage {
     Cancel cancel = 3;
     Ping ping = 4;
     BatchDispatch batch_dispatch = 5;
+    PayloadChunk payload_chunk = 6;
   }
 }
 
@@ -286,6 +327,11 @@ message Hello {
   // members as a single BatchDispatch only to a worker that advertised the
   // group's type here; workers that advertise none never receive a batch.
   repeated string batch_types = 6;
+  // payload_streaming declares that the worker accepts chunked payloads as
+  // PayloadChunk frames following a Dispatch or BatchDispatch. A worker that
+  // leaves it false receives every chunked payload reassembled inline in the
+  // envelope, bounded by its own receive limit.
+  bool payload_streaming = 7;
 }
 
 // Credit optionally grants n additional dispatch slots beyond the worker's
@@ -378,6 +424,10 @@ message Welcome {
   // semver string. A worker older than this is rejected at Hello; the value is
   // surfaced here so a worker can report the requirement clearly.
   string min_sdk_version = 5;
+  // payload_chunk_window is how many PayloadChunk frames of one task the
+  // server sends ahead of the worker's PayloadAck credit. A worker that sets
+  // Hello.payload_streaming must buffer this many chunks per task.
+  uint32 payload_chunk_window = 6;
 }
 
 // Dispatch delivers one leased task to the worker.
@@ -386,6 +436,34 @@ message Dispatch {
   // deadline is the effective execution deadline:
   // min(task deadline, lease expiry, task timeout).
   google.protobuf.Timestamp deadline = 2;
+}
+
+// PayloadAck returns chunk credit for one task's payload: the worker has taken
+// chunks off its buffer, so the server may send that many more. The server
+// keeps at most Welcome.payload_chunk_window unacknowledged chunks in flight
+// per task, which lets the worker buffer every chunk it receives without ever
+// pausing its read of the stream.
+message PayloadAck {
+  // task_id is the task whose chunks were consumed.
+  string task_id = 1;
+  // chunks is how many chunks were consumed since the last ack.
+  uint32 chunks = 2;
+}
+
+// PayloadChunk carries one slice of a chunked payload after the Dispatch or
+// BatchDispatch that delivered its task. Chunks of one task arrive in order;
+// chunks of different tasks may interleave. The final frame of a task has
+// last set and carries no data. A frame with error set ends the payload early:
+// the server could not read it, and the worker reports a retryable failure.
+message PayloadChunk {
+  // task_id is the task the chunk belongs to.
+  string task_id = 1;
+  // data is the next slice of the payload, exactly as it was uploaded.
+  bytes data = 2;
+  // last marks the end of the task's payload.
+  bool last = 3;
+  // error, when set, aborts the payload with the server's read failure.
+  string error = 4;
 }
 
 // BatchDispatch delivers one fired aggregation group to the worker as a single
@@ -570,6 +648,16 @@ message DeleteGroupConfigRequest {
 }
 
 message DeleteGroupConfigResponse {}
+
+// GetTaskPayloadRequest names the task whose payload to stream.
+message GetTaskPayloadRequest {
+  string id = 1;
+}
+
+// GetTaskPayloadResponse carries one slice of the payload.
+message GetTaskPayloadResponse {
+  bytes data = 1;
+}
 
 message ListTasksRequest {
   string queue = 1;

@@ -5,19 +5,19 @@ one enqueueing client.
 
 ## Run it
 
-Terminal 1 — the server (in-memory broker, auth off, debug logs):
+Terminal 1, the server (in-memory broker, auth off, debug logs):
 
 ```sh
 go run ./cmd/conveyord --dev
 ```
 
-Terminal 2 — the worker:
+Terminal 2, the worker:
 
 ```sh
 go run ./examples/standalone/worker
 ```
 
-Terminal 3 — enqueue ten welcome emails:
+Terminal 3, enqueue ten welcome emails:
 
 ```sh
 go run ./examples/standalone/client
@@ -25,7 +25,7 @@ go run ./examples/standalone/client
 
 The worker prints one line per processed task. Kill the worker (`kill -9`)
 mid-run and restart it: every in-flight task is redelivered immediately
-with no retry penalty — that is the at-least-once contract.
+with no retry penalty. That is the at-least-once contract.
 
 Both programs read `CONVEYOR_ADDR` (default `http://localhost:8080`) and
 `CONVEYOR_TOKEN` (empty for `--dev` servers, which disable auth).

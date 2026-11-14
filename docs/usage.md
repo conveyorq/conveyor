@@ -6,6 +6,7 @@ The two halves of using Conveyor: a **worker** registers a handler per task type
 
 - [Writing a worker](#writing-a-worker)
 - [Enqueueing work](#enqueueing-work)
+- [Large payloads](#large-payloads)
 
 ## Writing a worker
 
@@ -154,3 +155,66 @@ asyncio.run(main())
 ```sh
 go run ./cmd/conveyor enqueue email:welcome --queue critical --json '{"user_id":42}' --in 5m
 ```
+
+## Large payloads
+
+A payload of up to 1 MiB travels inline with the task. Larger payloads are accepted up to the server's payload cap, which an operator raises with `broker.max_payload_bytes` (up to 1 GiB; the default is 1 MiB). The SDKs upload them in 1 MiB chunks on their own, the server stores them in chunks, and workers receive them in chunks, so no process holds a large payload whole unless a handler asks for it.
+
+Nothing changes for a payload you already have in memory: `Enqueue` streams it when it is over 1 MiB. To send one you do not want to load, such as a file, pass it as a stream. A streamed payload cannot go through `EnqueueTx`, and `Unique` needs an explicit `UniqueKey`, since the payload is never held whole to hash.
+
+A worker hands a large payload to an ordinary handler reassembled, exactly like a small one. A **streaming handler** reads it as it arrives instead. The server sends a few chunks ahead of the handler and the rest as it reads, so a slow reader only slows its own task. End-to-end encryption works on streamed payloads too: each chunk is sealed on its own.
+
+### Go
+
+```go
+file, err := os.Open("report.pdf")
+if err != nil {
+    return err
+}
+defer file.Close()
+
+_, err = client.Enqueue(ctx, conveyor.NewTask("report:index", conveyor.Stream(file, "application/pdf")))
+```
+
+```go
+mux.HandleStreamFunc("report:index", func(ctx context.Context, t *conveyor.Task) error {
+    _, err := io.Copy(index, t.PayloadReader())
+
+    return err
+})
+```
+
+### TypeScript
+
+```ts
+import { createReadStream } from "node:fs";
+import { newTask, stream } from "@conveyorq/conveyor";
+
+await client.enqueue(newTask("report:index", stream(createReadStream("report.pdf"), "application/pdf")));
+```
+
+```ts
+mux.handleStream("report:index", async (task) => {
+  for await (const chunk of task.payloadStream()) {
+    await index.write(chunk);
+  }
+});
+```
+
+### Python
+
+```python
+from conveyorq import new_task, stream
+
+with open("report.pdf", "rb") as file:
+    await client.enqueue(new_task("report:index", stream(file, "application/pdf")))
+```
+
+```python
+@mux.stream_handler("report:index")
+async def index_report(task, ctx) -> None:
+    async for chunk in task.payload_stream:
+        await index.write(chunk)
+```
+
+Plain HTTP producers send payloads of up to 1 MiB; the chunked upload is a streaming call that needs an SDK. The wire details are in the [protocol spec](protocol.md#63-enqueuestream).

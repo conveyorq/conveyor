@@ -5,6 +5,7 @@
 package actors
 
 import (
+	"context"
 	"fmt"
 
 	goakt "github.com/tochemey/goakt/v4/actor"
@@ -19,13 +20,23 @@ const resolverRouterName = "conveyor-resolver"
 // gateway's turn. A pool of these sits behind the per-node resolver router: the
 // gateway hands off a ResolveDependents message with a non-blocking tell, the
 // router spreads it across the pool, and the routee runs the resolving broker
-// transaction. Blocking a routee is harmless — its mailbox carries only
-// resolution requests — so the bounded pool caps how many resolutions run at
-// once without ever stalling task delivery.
+// transaction. Each routee keeps one resolution in flight, in a PipeTo task,
+// and queues the rest in its own state: the pool still caps how many
+// resolutions run at once, and no turn waits on the broker, so a slow store
+// never holds a worker of the dispatcher pool the node's actors and grains
+// share.
 type DependencyResolver struct {
 	// runtime is the engine runtime.
 	runtime *Runtime
+	// pending are the finished tasks waiting for this routee's resolution, in
+	// arrival order.
+	pending []string
+	// resolving records that a resolution is in flight.
+	resolving bool
 }
+
+// dependentsResolved reports that a routee's resolution finished.
+type dependentsResolved struct{}
 
 // enforce interface compliance at compile time.
 var _ goakt.Actor = (*DependencyResolver)(nil)
@@ -44,6 +55,10 @@ func (d *DependencyResolver) PreStart(ctx *goakt.Context) error {
 	}
 
 	d.runtime = runtime
+	// A restart reuses this instance; a resolution that ended while it was
+	// stopped never reported, and queued requests died with the mailbox.
+	d.pending = nil
+	d.resolving = false
 
 	return nil
 }
@@ -56,7 +71,12 @@ func (d *DependencyResolver) Receive(ctx *goakt.ReceiveContext) {
 		// Nothing to arm: routees are stateless and react only to requests.
 
 	case *conveyorv1.ResolveDependents:
-		d.resolve(ctx, message)
+		d.pending = append(d.pending, message.GetTaskId())
+		d.resolveNext(ctx)
+
+	case dependentsResolved:
+		d.resolving = false
+		d.resolveNext(ctx)
 
 	default:
 		ctx.Unhandled()
@@ -68,21 +88,39 @@ func (d *DependencyResolver) PostStop(_ *goakt.Context) error {
 	return nil
 }
 
-// resolve reconciles one finished task's dependents and wakes any queue whose
-// work became eligible. The broker call is the long-running task this pool
-// exists to offload. Resolution is best-effort — the reaper sweep backstops any
-// failure — so a broker error is logged, never escalated.
-func (d *DependencyResolver) resolve(ctx *goakt.ReceiveContext, message *conveyorv1.ResolveDependents) {
-	goCtx := ctx.Context()
+// resolveNext starts the next queued resolution unless one is in flight.
+func (d *DependencyResolver) resolveNext(ctx *goakt.ReceiveContext) {
+	if d.resolving || len(d.pending) == 0 {
+		return
+	}
 
-	queues, err := d.runtime.Broker().ResolveDependents(goCtx, message.GetTaskId())
+	taskID := d.pending[0]
+	d.pending = d.pending[1:]
+	d.resolving = true
+
+	system, runtime := ctx.ActorSystem(), d.runtime
+
+	ctx.PipeTo(ctx.Self(), func() (any, error) {
+		resolveDependents(context.Background(), system, runtime, taskID)
+
+		return dependentsResolved{}, nil
+	})
+}
+
+// resolveDependents reconciles one finished task's dependents and wakes any
+// queue whose work became eligible. Resolution is best-effort (the reaper
+// sweep backstops any failure), so a broker error is logged, never escalated.
+// It is a PipeTo task body: it uses only the actor system and runtime it is
+// given.
+func resolveDependents(ctx context.Context, system goakt.ActorSystem, runtime *Runtime, taskID string) {
+	queues, err := runtime.Broker().ResolveDependents(ctx, taskID)
 	if err != nil {
-		d.runtime.Logger().Warn("resolving dependents failed", "task_id", message.GetTaskId(), "error", err)
+		runtime.Logger().Warn("resolving dependents failed", "task_id", taskID, "error", err)
 
 		return
 	}
 
 	for _, queue := range queues {
-		wakeQueue(goCtx, ctx.ActorSystem(), d.runtime, queue, 0)
+		wakeQueue(ctx, system, runtime, queue, 0)
 	}
 }

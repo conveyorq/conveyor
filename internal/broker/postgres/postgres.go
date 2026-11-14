@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"iter"
 	"maps"
 	"slices"
 	"strconv"
@@ -53,8 +54,39 @@ const (
 // a 23505 on it maps to broker.ErrDuplicateTask.
 const uniqueIndexName = "conveyor_tasks_unique_idx"
 
+// payloadChunksPrimaryKey is the primary key of conveyor_task_payload_chunks;
+// a violation means another upload already stored this task's chunks.
+const payloadChunksPrimaryKey = "conveyor_task_payload_chunks_pkey"
+
 // uniqueViolationCode is the Postgres SQLSTATE for unique violations.
 const uniqueViolationCode = "23505"
+
+// taskExistsQuery reports whether a task id is already committed.
+const taskExistsQuery = `SELECT EXISTS (SELECT 1 FROM conveyor_tasks WHERE id = $1)`
+
+// insertPayloadChunkQuery stores one chunk of a chunked payload.
+const insertPayloadChunkQuery = `INSERT INTO conveyor_task_payload_chunks (task_id, seq, data) VALUES ($1, $2, $3)`
+
+// readPayloadChunksQuery reads one page of a chunked payload in order,
+// starting at a sequence number.
+const readPayloadChunksQuery = `SELECT data FROM conveyor_task_payload_chunks
+WHERE task_id = $1 AND seq >= $2 ORDER BY seq LIMIT $3`
+
+// chunkUploadIdleTimeout bounds how long a chunked enqueue's transaction may
+// sit idle waiting for the producer's next chunk. The upload is paced by the
+// client, so without it a stalled or hostile producer could hold a pool
+// connection and an open transaction indefinitely; past the timeout Postgres
+// ends the session and the upload fails, committing nothing.
+const chunkUploadIdleTimeout = 30 * time.Second
+
+// setUploadIdleTimeoutQuery applies chunkUploadIdleTimeout to the current
+// transaction only.
+const setUploadIdleTimeoutQuery = `SELECT set_config('idle_in_transaction_session_timeout', $1, true)`
+
+// payloadChunkPageSize is how many chunks ReadPayload fetches per query. Each
+// page is read in full and its connection returned to the pool before the
+// chunks are yielded, so a slow consumer never pins a pool connection.
+const payloadChunkPageSize = 4
 
 // insertTaskQuery commits one task row; the id conflict target makes
 // client retries idempotent.
@@ -467,6 +499,8 @@ type Broker struct {
 	pool pgxPool
 	// clock supplies the current time for every statement.
 	clock clock.Clock
+	// maxPayloadBytes is the payload cap reported by MaxPayloadBytes.
+	maxPayloadBytes int
 	// sink receives lifecycle events on each state transition; nil until wired
 	// by the server. It is a pointer to an interface so SetEventSink is race-free
 	// against concurrent transitions.
@@ -588,16 +622,32 @@ type PoolSettings struct {
 // statement's execution, in milliseconds.
 const statementTimeoutParam = "statement_timeout"
 
-// New connects to the database at dsn with the driver's default pool, applies
-// any pending embedded migrations, and returns the broker reading time from the
-// given clock.
-func New(ctx context.Context, dsn string, timeSource clock.Clock) (*Broker, error) {
-	return NewWithPool(ctx, dsn, timeSource, PoolSettings{})
+// Settings configures a broker built by NewWithSettings. The zero value keeps
+// every default.
+type Settings struct {
+	// Pool tunes the connection pool built from the DSN.
+	Pool PoolSettings
+	// MaxPayloadBytes is the payload cap reported by MaxPayloadBytes. Zero keeps
+	// broker.DefaultMaxPayloadBytes.
+	MaxPayloadBytes int
 }
 
-// NewWithPool is New with the connection pool tuned by settings.
-func NewWithPool(ctx context.Context, dsn string, timeSource clock.Clock, settings PoolSettings) (*Broker, error) {
-	config, err := poolConfig(dsn, settings)
+// New connects to the database at dsn with the driver's default pool and
+// payload cap, applies any pending embedded migrations, and returns the broker
+// reading time from the given clock.
+func New(ctx context.Context, dsn string, timeSource clock.Clock) (*Broker, error) {
+	return NewWithSettings(ctx, dsn, timeSource, Settings{})
+}
+
+// NewWithSettings is New with the connection pool and payload cap taken from
+// settings.
+func NewWithSettings(ctx context.Context, dsn string, timeSource clock.Clock, settings Settings) (*Broker, error) {
+	maxPayloadBytes := settings.MaxPayloadBytes
+	if maxPayloadBytes == 0 {
+		maxPayloadBytes = broker.DefaultMaxPayloadBytes
+	}
+
+	config, err := poolConfig(dsn, settings.Pool)
 	if err != nil {
 		return nil, fmt.Errorf("postgres: parse dsn: %w", err)
 	}
@@ -619,7 +669,7 @@ func NewWithPool(ctx context.Context, dsn string, timeSource clock.Clock, settin
 		return nil, err
 	}
 
-	return &Broker{pool: pool, clock: timeSource}, nil
+	return &Broker{pool: pool, clock: timeSource, maxPayloadBytes: maxPayloadBytes}, nil
 }
 
 // poolConfig parses the DSN and layers the pool settings over it, so a set
@@ -696,6 +746,150 @@ func (b *Broker) Enqueue(ctx context.Context, task *conveyorv1.TaskEnvelope) (er
 	}
 
 	return b.enqueueWithEdges(ctx, prepared)
+}
+
+// EnqueueChunked commits a task whose payload arrives in chunks; see
+// broker.Broker. Each chunk is inserted as it arrives inside one transaction
+// whose deferred foreign key lets the chunks precede the task row, which is
+// inserted last once the payload size is known.
+func (b *Broker) EnqueueChunked(ctx context.Context, task *conveyorv1.TaskEnvelope, chunks iter.Seq2[[]byte, error]) (err error) {
+	var exists bool
+	if err = b.pool.QueryRow(ctx, taskExistsQuery, task.GetId()).Scan(&exists); err != nil {
+		return fmt.Errorf("postgres: check task exists: %w", err)
+	}
+
+	if exists {
+		return nil
+	}
+
+	transaction, err := b.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("postgres: begin chunked enqueue: %w", err)
+	}
+
+	defer func() {
+		err = rollback(ctx, transaction, err)
+	}()
+
+	idleTimeout := strconv.FormatInt(chunkUploadIdleTimeout.Milliseconds(), 10)
+	if _, err = transaction.Exec(ctx, setUploadIdleTimeoutQuery, idleTimeout); err != nil {
+		return fmt.Errorf("postgres: bound chunked enqueue idle time: %w", err)
+	}
+
+	var (
+		sequence int
+		size     uint64
+	)
+
+	for data, chunkErr := range chunks {
+		if chunkErr != nil {
+			return chunkErr
+		}
+
+		if _, err = transaction.Exec(ctx, insertPayloadChunkQuery, task.GetId(), sequence, data); err != nil {
+			// A concurrent upload of the same id committed its chunks first:
+			// this upload is the idempotent retry, so it commits nothing.
+			if isChunkConflict(err) {
+				return nil
+			}
+
+			return fmt.Errorf("postgres: insert payload chunk: %w", err)
+		}
+
+		sequence++
+		size += uint64(len(data))
+	}
+
+	chunked := proto.Clone(task).(*conveyorv1.TaskEnvelope)
+	chunked.Payload = nil
+	chunked.PayloadChunked = true
+	chunked.PayloadSize = size
+	chunked.PayloadChunks = uint32(sequence)
+
+	prepared, err := b.prepareEnqueue(chunked, b.clock.Now())
+	if err != nil {
+		return err
+	}
+
+	event, err := b.enqueueOneTx(ctx, transaction, prepared)
+	if err != nil {
+		return err
+	}
+
+	if err = transaction.Commit(ctx); err != nil {
+		if isUniqueViolation(err) {
+			return broker.ErrDuplicateTask
+		}
+
+		return fmt.Errorf("postgres: commit chunked enqueue: %w", err)
+	}
+
+	b.emitEvent(event)
+
+	return nil
+}
+
+// ReadPayload yields a range of a chunked task's stored chunks, a page at a
+// time; see broker.Broker.
+func (b *Broker) ReadPayload(ctx context.Context, taskID string, from, count int) iter.Seq2[[]byte, error] {
+	return func(yield func([]byte, error) bool) {
+		next := from
+		end := from + count
+
+		for next < end {
+			want := min(payloadChunkPageSize, end-next)
+
+			page, err := b.readPayloadPage(ctx, taskID, next, want)
+			if err != nil {
+				yield(nil, err)
+
+				return
+			}
+
+			for _, data := range page {
+				if !yield(data, nil) {
+					return
+				}
+			}
+
+			if len(page) < want {
+				yield(nil, broker.ErrPayloadTruncated)
+
+				return
+			}
+
+			next += len(page)
+		}
+	}
+}
+
+// readPayloadPage reads up to limit chunks starting at the given sequence
+// number, releasing the connection before returning.
+func (b *Broker) readPayloadPage(ctx context.Context, taskID string, from, limit int) ([][]byte, error) {
+	rows, err := b.pool.Query(ctx, readPayloadChunksQuery, taskID, from, limit)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: read payload chunks: %w", err)
+	}
+
+	defer rows.Close()
+
+	page := make([][]byte, 0, limit)
+
+	for rows.Next() {
+		var data []byte
+
+		if err = rows.Scan(&data); err != nil {
+			return nil, fmt.Errorf("postgres: scan payload chunk: %w", err)
+		}
+
+		page = append(page, data)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres: read payload chunks: %w", err)
+	}
+
+	return page, nil
 }
 
 // EnqueueBatch atomically commits every task or none; see broker.Broker. It
@@ -1818,8 +2012,14 @@ func (b *Broker) Info(ctx context.Context) (broker.Info, error) {
 
 	metrics["tasks"] = strconv.FormatInt(max(tasks, 0), 10)
 	metrics["cron_entries"] = strconv.FormatInt(entries, 10)
+	metrics[broker.MaxPayloadBytesMetric] = strconv.Itoa(b.maxPayloadBytes)
 
 	return broker.Info{Driver: "postgres", Metrics: metrics}, nil
+}
+
+// MaxPayloadBytes reports the configured payload cap; see broker.Broker.
+func (b *Broker) MaxPayloadBytes() int {
+	return b.maxPayloadBytes
 }
 
 // GetTask returns one task and its state; see broker.Broker.
@@ -2807,6 +3007,16 @@ func isUniqueViolation(err error) bool {
 	return errors.As(err, &pgErr) &&
 		pgErr.Code == uniqueViolationCode &&
 		pgErr.ConstraintName == uniqueIndexName
+}
+
+// isChunkConflict reports whether err is a collision on a payload chunk's
+// primary key.
+func isChunkConflict(err error) bool {
+	var pgErr *pgconn.PgError
+
+	return errors.As(err, &pgErr) &&
+		pgErr.Code == uniqueViolationCode &&
+		pgErr.ConstraintName == payloadChunksPrimaryKey
 }
 
 // protoTime converts an optional proto timestamp to a nullable time.

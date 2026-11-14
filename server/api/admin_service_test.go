@@ -20,6 +20,7 @@ import (
 	"github.com/conveyorq/conveyor/internal/broker"
 	"github.com/conveyorq/conveyor/internal/clock"
 	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
+	"github.com/conveyorq/conveyor/internal/proto/conveyor/v1/conveyorv1connect"
 )
 
 // newTestAdminService builds an AdminService and a TaskService over one
@@ -513,6 +514,7 @@ func TestCronLifecycle(t *testing.T) {
 		"missing task type": {Id: "hourly", Spec: "0 * * * * *"},
 		"bad spec":          {Id: "hourly", Spec: "not-a-spec", TaskType: "report:hourly"},
 		"bad queue":         {Id: "hourly", Spec: "0 * * * * *", TaskType: "report:hourly", Queue: "no spaces"},
+		"oversized payload": {Id: "hourly", Spec: "0 * * * * *", TaskType: "report:hourly", Payload: make([]byte, broker.DefaultMaxPayloadBytes+1)},
 	}
 
 	for name, entry := range invalid {
@@ -614,4 +616,57 @@ func TestAdminTaskErrorMapsBrokerFailures(t *testing.T) {
 			require.Equal(t, testCase.want, connect.CodeOf(adminTaskError(testCase.err)))
 		})
 	}
+}
+
+// collectTaskPayload streams one task's payload through GetTaskPayload.
+func collectTaskPayload(t *testing.T, client conveyorv1connect.AdminServiceClient, id string) ([]string, error) {
+	t.Helper()
+
+	stream, err := client.GetTaskPayload(context.Background(), connect.NewRequest(&conveyorv1.GetTaskPayloadRequest{Id: id}))
+	if err != nil {
+		return nil, err
+	}
+
+	var chunks []string
+
+	for stream.Receive() {
+		chunks = append(chunks, string(stream.Msg().GetData()))
+	}
+
+	return chunks, stream.Err()
+}
+
+func TestGetTaskPayload(t *testing.T) {
+	engine, taskLog := startTestEngine(t)
+	baseURL := startAPIServer(t, engine, taskLog, nil)
+	client := conveyorv1connect.NewAdminServiceClient(h2cHTTPClient(), baseURL, connect.WithGRPC())
+	ctx := context.Background()
+
+	require.NoError(t, engine.Enqueue(ctx, &conveyorv1.TaskEnvelope{Id: "task-inline", Queue: defaultQueueName, Type: "test:inline", Payload: []byte("inline")}))
+	require.NoError(t, engine.Enqueue(ctx, &conveyorv1.TaskEnvelope{Id: "task-empty", Queue: defaultQueueName, Type: "test:inline"}))
+
+	chunks := func(yield func([]byte, error) bool) {
+		if yield([]byte("one"), nil) {
+			yield([]byte("two"), nil)
+		}
+	}
+	require.NoError(t, engine.EnqueueChunked(ctx, &conveyorv1.TaskEnvelope{Id: "task-chunked", Queue: defaultQueueName, Type: "test:large"}, chunks))
+
+	got, err := collectTaskPayload(t, client, "task-inline")
+	require.NoError(t, err)
+	require.Equal(t, []string{"inline"}, got)
+
+	got, err = collectTaskPayload(t, client, "task-chunked")
+	require.NoError(t, err)
+	require.Equal(t, []string{"one", "two"}, got)
+
+	got, err = collectTaskPayload(t, client, "task-empty")
+	require.NoError(t, err)
+	require.Empty(t, got)
+
+	_, err = collectTaskPayload(t, client, "")
+	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+
+	_, err = collectTaskPayload(t, client, "task-missing")
+	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
 }

@@ -19,10 +19,12 @@ code that is not itself async.
 from __future__ import annotations
 
 from .client import Client, TxTask
-from .codec import ContentType, Payload, binary, decode_json, decode_text, json, text
+from .codec import ContentType, Payload, binary, decode_json, decode_text, json, stream, text
 from .encryption import (
     AESGCM,
     AuthenticationError,
+    ChunkOrderError,
+    ChunkTruncatedError,
     Encryptor,
     InvalidKeyError,
     Key,
@@ -51,6 +53,7 @@ from .options import (
     TaskInfo,
     TaskState,
 )
+from .streaming import PayloadSource, PayloadStream
 from .sync import SyncClient, SyncWorker
 from .task import Task, new_task
 from .worker import SDK_VERSION, Worker
@@ -63,6 +66,8 @@ __all__ = [
     "BatchError",
     "BatchHandler",
     "BatchMiddleware",
+    "ChunkOrderError",
+    "ChunkTruncatedError",
     "Client",
     "ContentType",
     "ConveyorError",
@@ -81,6 +86,8 @@ __all__ = [
     "Middleware",
     "Mux",
     "Payload",
+    "PayloadSource",
+    "PayloadStream",
     "RetryPolicy",
     "RetryStrategy",
     "SDK_VERSION",
@@ -101,5 +108,6 @@ __all__ = [
     "new_aes_gcm",
     "new_task",
     "skip_retry",
+    "stream",
     "text",
 ]

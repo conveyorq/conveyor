@@ -125,7 +125,7 @@ building blocks are ordinary; adapt these to your namespace, image registry,
 and API Service:
 
 ```sh
-# 1. Stand up the conveyord cluster itself — the server the workload runs
+# 1. Stand up the conveyord cluster itself, the server the workload runs
 #    against. This example ships no conveyord manifest; it reuses the production
 #    Helm chart, which creates the `conveyor` StatefulSet, the `conveyor` API
 #    Service, and the `conveyor-headless` peer Service. See

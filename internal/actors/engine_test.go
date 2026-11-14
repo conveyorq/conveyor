@@ -419,6 +419,89 @@ func TestGrainRelocatesOnNodeLoss(t *testing.T) {
 	requireDrained(t, taskLog)
 }
 
+// TestCrossNodeDispatchOfChunkedTask dispatches a chunked task whose payload
+// exceeds GoAkt's default remoting message limit from a queue grain on one
+// node to a gateway on another. The payload stays in the broker, so the
+// dispatch message carries only the envelope and the gateway reads the chunks
+// itself.
+func TestCrossNodeDispatchOfChunkedTask(t *testing.T) {
+	if testing.Short() {
+		t.Skip("cluster smoke skipped in -short mode")
+	}
+
+	const (
+		largeQueue      = "large"
+		largePayloadCap = 32 << 20
+		chunkCount      = 20
+	)
+
+	ctx := context.Background()
+	taskLog := memory.NewWithMaxPayload(clock.System(), largePayloadCap)
+
+	grainPorts := freePorts(t, 3)
+	gatewayPorts := freePorts(t, 3)
+	peers := []string{
+		fmt.Sprintf("%s:%d", testBindAddr, grainPorts[1]),
+		fmt.Sprintf("%s:%d", testBindAddr, gatewayPorts[1]),
+	}
+
+	grainNode := newNode(taskLog, recoverySettings, grainPorts, peers)
+	require.NoError(t, grainNode.Start(ctx))
+
+	gatewayNode := newNode(taskLog, recoverySettings, gatewayPorts, peers)
+	require.NoError(t, gatewayNode.Start(ctx))
+
+	t.Cleanup(func() {
+		stopCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		_ = gatewayNode.Stop(stopCtx)
+		_ = grainNode.Stop(stopCtx)
+	})
+
+	// Pin the queue grain away from the gateway so dispatch crosses nodes.
+	_, err := goakt.GrainOf[*QueueGrain](ctx, grainNode.System(), QueueGrainName(largeQueue),
+		goakt.WithGrainDeactivateAfter(recoverySettings.PassivateAfter),
+		goakt.WithActivationStrategy(goakt.LocalActivation))
+	require.NoError(t, err)
+
+	var (
+		dispatchedPayload atomic.Int64
+		storedBytes       atomic.Int64
+	)
+
+	spawnGateway(t, gatewayNode, &mockGateway{queue: largeQueue, capacity: 1, handler: func(task *conveyorv1.TaskEnvelope) error {
+		dispatchedPayload.Store(int64(len(task.GetPayload())))
+
+		for data, err := range taskLog.ReadPayload(ctx, task.GetId(), 0, int(task.GetPayloadChunks())) {
+			if err != nil {
+				return err
+			}
+
+			storedBytes.Add(int64(len(data)))
+		}
+
+		return nil
+	}})
+
+	chunk := make([]byte, broker.InlinePayloadBytes)
+	chunks := func(yield func([]byte, error) bool) {
+		for range chunkCount {
+			if !yield(chunk, nil) {
+				return
+			}
+		}
+	}
+
+	task := newTask("task-large", largeQueue, "test:ok", 4)
+	task.Payload = nil
+	require.NoError(t, grainNode.EnqueueChunked(ctx, task, chunks))
+
+	require.Eventually(t, completedReaches(taskLog, 1), time.Minute, 20*time.Millisecond,
+		"the chunked task must be dispatched across nodes and complete")
+	require.Zero(t, dispatchedPayload.Load(), "the dispatch message must not carry the payload")
+	require.EqualValues(t, chunkCount*broker.InlinePayloadBytes, storedBytes.Load())
+}
+
 // TestEngineAccessorsAndStartValidation covers the engine's small public
 // surface: settings and id accessors, and the discovery provider guard.
 func TestEngineAccessorsAndStartValidation(t *testing.T) {

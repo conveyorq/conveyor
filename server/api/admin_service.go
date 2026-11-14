@@ -670,6 +670,10 @@ func (s *AdminService) UpsertCron(ctx context.Context, request *connect.Request[
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("group and concurrency_key are mutually exclusive"))
 	}
 
+	if err := checkPayloadSize(entry.GetPayload(), inlinePayloadLimit(s.taskLog.MaxPayloadBytes())); err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+
 	err := s.taskLog.UpsertCronEntry(ctx, &broker.CronEntry{
 		ID:          entry.GetId(),
 		Spec:        entry.GetSpec(),
@@ -809,6 +813,46 @@ func (s *AdminService) BrokerInfo(ctx context.Context, _ *connect.Request[convey
 		Driver:  info.Driver,
 		Metrics: info.Metrics,
 	}), nil
+}
+
+// GetTaskPayload streams one task's payload: an inline payload as a single
+// message, a chunked one chunk by chunk as the broker stored it, so a large
+// payload is never held in memory whole.
+func (s *AdminService) GetTaskPayload(ctx context.Context, request *connect.Request[conveyorv1.GetTaskPayloadRequest], stream *connect.ServerStream[conveyorv1.GetTaskPayloadResponse]) error {
+	id := request.Msg.GetId()
+	if id == "" {
+		return connect.NewError(connect.CodeInvalidArgument, errors.New("task id is required"))
+	}
+
+	envelope, _, err := s.taskLog.GetTask(ctx, id)
+
+	if errors.Is(err, broker.ErrTaskNotFound) {
+		return connect.NewError(connect.CodeNotFound, err)
+	}
+
+	if err != nil {
+		return connect.NewError(connect.CodeInternal, err)
+	}
+
+	if !envelope.GetPayloadChunked() {
+		if len(envelope.GetPayload()) == 0 {
+			return nil
+		}
+
+		return stream.Send(&conveyorv1.GetTaskPayloadResponse{Data: envelope.GetPayload()})
+	}
+
+	for data, readErr := range s.taskLog.ReadPayload(ctx, id, 0, int(envelope.GetPayloadChunks())) {
+		if readErr != nil {
+			return connect.NewError(connect.CodeInternal, readErr)
+		}
+
+		if err = stream.Send(&conveyorv1.GetTaskPayloadResponse{Data: data}); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // setCronPaused validates the id and persists the entry pause flag.

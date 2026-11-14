@@ -20,10 +20,11 @@ import grpc
 
 from . import _time
 from ._transport import auth_metadata, create_channel, worker_channel_options
-from .encryption import ENCRYPTION_MARKER_KEY, Encryptor
+from .encryption import ENCRYPTION_MARKER_KEY, ChunkOpener, Encryptor
 from .errors import ConveyorError, SkipRetry
 from .gen.conveyor.v1 import service_pb2, service_pb2_grpc, task_pb2
 from .mux import BatchError, BatchHandler, Handler, HandlerContext, Mux
+from .streaming import DEFAULT_PAYLOAD_CHUNK_WINDOW, ChunkStream, PayloadAssembly, PayloadComplete
 from .task import Task
 
 #: The SDK version reported in Hello.
@@ -251,6 +252,11 @@ class _Session:
         # reported RELEASED (returned to the queue, no retry penalty) rather than
         # RETRY. A server cancel or a deadline is not recorded here and so retries.
         self._released_ids: Set[str] = set()
+        # Chunked payloads still arriving, by task id. Only the receive loop
+        # touches it.
+        self._payloads: Dict[str, PayloadAssembly] = {}
+        # How many unacknowledged chunks of one task the server sends.
+        self._chunk_window = DEFAULT_PAYLOAD_CHUNK_WINDOW
         self._tasks: Set[asyncio.Task[None]] = set()
         self._sem = asyncio.Semaphore(config.concurrency)
         self._call: Optional["grpc.aio.StreamStreamCall"] = None
@@ -293,6 +299,7 @@ class _Session:
         finally:
             drainer.cancel()
             self._stop_heartbeat()
+            self._abort_payloads()
             self._cancel_inflight()
             self._send(None)  # end the request stream if drain did not
             with contextlib.suppress(Exception):
@@ -325,28 +332,187 @@ class _Session:
             if self._draining:
                 self._parked.add(message.dispatch.task.id)
             else:
-                self._spawn(self._run_one(message.dispatch.task, _deadline(message.dispatch)))
+                self._dispatch(message.dispatch.task, _deadline(message.dispatch))
         elif which == "batch_dispatch":
             batch = message.batch_dispatch
             if self._draining:
                 self._parked.update(task.id for task in batch.tasks)
             else:
-                self._spawn(self._run_batch(list(batch.tasks), batch.group, _deadline(batch)))
+                self._dispatch_batch(list(batch.tasks), batch.group, _deadline(batch))
         elif which == "cancel":
             event = self._inflight.get(message.cancel.task_id)
             if event is not None:
                 event.set()
+        elif which == "payload_chunk":
+            self._receive_chunk(message.payload_chunk)
         # "ping" and an unset frame are tolerated without a reply.
 
     def _on_welcome(self, welcome: "service_pb2.Welcome") -> None:
         self._established = True
         self._lease_ttl = _time.duration_seconds(welcome.lease_ttl) or _DEFAULT_LEASE_TTL
         self._heartbeat_interval = _time.duration_seconds(welcome.heartbeat_interval) or self._lease_ttl / 3
+        self._chunk_window = _chunk_window(welcome)
         self._start_heartbeat()
 
-    async def _run_one(self, envelope: "task_pb2.TaskEnvelope", deadline: Optional[float]) -> None:
-        """Execute a single dispatched task and report exactly one outcome."""
+    def _dispatch(self, envelope: "task_pb2.TaskEnvelope", deadline: Optional[float]) -> None:
+        """Start a dispatched task, or wait for its chunked payload first.
+
+        A streaming handler starts at once and reads the chunks as they arrive;
+        any other handler runs once the payload is reassembled. The task is
+        registered as in flight meanwhile, so heartbeats keep its lease alive.
+        """
+        if not envelope.payload_chunked:
+            self._spawn(self._run_one(envelope, deadline))
+            return
+
+        try:
+            opener = self._chunk_opener(envelope)
+        except ConveyorError as error:
+            self._report(envelope.id, service_pb2.TASK_OUTCOME_RETRY, str(error))
+            return
+
+        if self._mux.streams(envelope.type):
+            stream = ChunkStream(self._chunk_window, self._chunk_acker(envelope.id))
+            self._payloads[envelope.id] = PayloadAssembly(opener, stream=stream)
+            self._spawn(self._run_one(envelope, deadline, stream=stream))
+            return
+
         cancelled = asyncio.Event()
+        self._inflight[envelope.id] = cancelled
+
+        def complete(payload: bytes, error: Optional[BaseException]) -> None:
+            if error is not None:
+                self._inflight.pop(envelope.id, None)
+                self._report(envelope.id, service_pb2.TASK_OUTCOME_RETRY, str(error))
+                return
+
+            envelope.payload = payload
+            envelope.payload_chunked = False
+            self._spawn(self._run_one(envelope, deadline, cancelled=cancelled))
+
+        self._payloads[envelope.id] = PayloadAssembly(
+            opener, complete=complete, ack=self._chunk_acker(envelope.id)
+        )
+
+    def _dispatch_batch(
+        self, envelopes: "List[task_pb2.TaskEnvelope]", group: str, deadline: Optional[float]
+    ) -> None:
+        """Start a batch once every chunked member's payload has arrived; a batch
+        with none starts at once.
+
+        Batch handlers receive whole tasks, so chunked members are reassembled,
+        never streamed. A member whose payload fails retries the whole batch, and
+        the other members' remaining chunks are dropped.
+        """
+        chunked = [envelope for envelope in envelopes if envelope.payload_chunked]
+        if not chunked:
+            self._spawn(self._run_batch(envelopes, group, deadline))
+            return
+
+        ids = [envelope.id for envelope in envelopes]
+        cancelled = asyncio.Event()
+
+        for task_id in ids:
+            self._inflight[task_id] = cancelled
+
+        remaining = len(chunked)
+
+        # A failure drops every member's assembly, so no member completes after it.
+        def fail(error: BaseException) -> None:
+            for member in chunked:
+                self._payloads.pop(member.id, None)
+
+            for task_id in ids:
+                self._inflight.pop(task_id, None)
+
+            self._report_each(ids, service_pb2.TASK_OUTCOME_RETRY, str(error))
+
+        def member_complete(envelope: "task_pb2.TaskEnvelope") -> PayloadComplete:
+            def complete(payload: bytes, error: Optional[BaseException]) -> None:
+                nonlocal remaining
+
+                if error is not None:
+                    fail(error)
+                    return
+
+                envelope.payload = payload
+                envelope.payload_chunked = False
+                remaining -= 1
+
+                if remaining == 0:
+                    self._spawn(self._run_batch(envelopes, group, deadline, cancelled=cancelled))
+
+            return complete
+
+        for envelope in chunked:
+            try:
+                opener = self._chunk_opener(envelope)
+            except ConveyorError as error:
+                fail(error)
+                return
+
+            self._payloads[envelope.id] = PayloadAssembly(
+                opener, complete=member_complete(envelope), ack=self._chunk_acker(envelope.id)
+            )
+
+    def _chunk_opener(self, envelope: "task_pb2.TaskEnvelope") -> Optional[ChunkOpener]:
+        """Return the opener for an end-to-end encrypted chunked payload, or
+        ``None`` for plaintext.
+
+        The encryption marker is stripped since the chunks are decrypted as they
+        arrive. A marked payload raises when the worker has no encryptor.
+        """
+        if not envelope.metadata.get(ENCRYPTION_MARKER_KEY):
+            return None
+
+        if self._encryptor is None:
+            raise _missing_encryptor(envelope.id)
+
+        del envelope.metadata[ENCRYPTION_MARKER_KEY]
+
+        return ChunkOpener(self._encryptor)
+
+    def _chunk_acker(self, task_id: str) -> "Callable[[], None]":
+        """Build the acknowledgement for one consumed chunk of a task's payload,
+        granting the server credit for the next."""
+        ack = service_pb2.WorkerMessage(payload_ack=service_pb2.PayloadAck(task_id=task_id, chunks=1))
+
+        return lambda: self._send(ack)
+
+    def _receive_chunk(self, chunk: "service_pb2.PayloadChunk") -> None:
+        """Apply one chunk frame to its task's payload without waiting. A chunk
+        for a task with no payload in progress (its dispatch failed, or its
+        payload already ended in error) is dropped."""
+        assembly = self._payloads.get(chunk.task_id)
+        if assembly is None:
+            return
+
+        if assembly.add(chunk):
+            self._payloads.pop(chunk.task_id, None)
+
+    def _abort_payloads(self) -> None:
+        """End every payload still arriving when the session ends, so no
+        handler waits for chunks that will never come."""
+        while self._payloads:
+            _, assembly = self._payloads.popitem()
+            assembly.abort()
+
+    async def _run_one(
+        self,
+        envelope: "task_pb2.TaskEnvelope",
+        deadline: Optional[float],
+        *,
+        stream: Optional[ChunkStream] = None,
+        cancelled: Optional[asyncio.Event] = None,
+    ) -> None:
+        """Execute a single dispatched task and report exactly one outcome.
+
+        ``stream``, when set, feeds a streaming handler the chunked payload; it
+        is abandoned once the handler returns, so unread chunks never stall the
+        session. ``cancelled`` carries over an event registered while the
+        payload arrived.
+        """
+        cancelled = cancelled or asyncio.Event()
         self._inflight[envelope.id] = cancelled
         timer = _arm_deadline(cancelled, deadline)
 
@@ -357,7 +523,7 @@ class _Session:
                     self._report(envelope.id, service_pb2.TASK_OUTCOME_RELEASED, "")
                     return
 
-                task = self._open_task(envelope)
+                task = self._open_task(envelope, stream)
                 handler = self._mux.resolve(envelope.type)
 
                 if handler is None:
@@ -383,13 +549,22 @@ class _Session:
             if timer is not None:
                 timer.cancel()
 
+            if stream is not None:
+                stream.abandon()
+
             self._inflight.pop(envelope.id, None)
 
     async def _run_batch(
-        self, envelopes: "List[task_pb2.TaskEnvelope]", group: str, deadline: Optional[float]
+        self,
+        envelopes: "List[task_pb2.TaskEnvelope]",
+        group: str,
+        deadline: Optional[float],
+        *,
+        cancelled: Optional[asyncio.Event] = None,
     ) -> None:
-        """Execute an aggregation group's members as one delivery."""
-        cancelled = asyncio.Event()
+        """Execute an aggregation group's members as one delivery. ``cancelled``
+        carries over an event registered while chunked members arrived."""
+        cancelled = cancelled or asyncio.Event()
         ids = [envelope.id for envelope in envelopes]
 
         # Register every member id so each member's lease is heartbeated
@@ -455,16 +630,15 @@ class _Session:
             else:
                 self._report_each(ids, service_pb2.TASK_OUTCOME_RETRY, str(error))
 
-    def _open_task(self, envelope: "task_pb2.TaskEnvelope") -> Task:
-        """Decode a dispatched envelope into a Task, decrypting if it is marked."""
+    def _open_task(self, envelope: "task_pb2.TaskEnvelope", stream: Optional[ChunkStream] = None) -> Task:
+        """Decode a dispatched envelope into a Task, decrypting if it is marked.
+        ``stream`` carries a payload a streaming handler reads as it arrives."""
         payload = envelope.payload
         metadata = dict(envelope.metadata)
 
         if metadata.get(ENCRYPTION_MARKER_KEY):
             if self._encryptor is None:
-                raise ConveyorError(
-                    f"conveyor: task {envelope.id} is encrypted but the worker has no encryptor"
-                )
+                raise _missing_encryptor(envelope.id)
 
             payload = self._encryptor.decrypt(payload)
             metadata.pop(ENCRYPTION_MARKER_KEY, None)
@@ -478,6 +652,7 @@ class _Session:
             queue=envelope.queue,
             retried=envelope.retried,
             max_retry=envelope.options.max_retry,
+            stream=stream,
         )
 
     def _spawn(self, coro: "Awaitable[None]") -> None:
@@ -641,8 +816,19 @@ def _hello(config: _SessionConfig, batch_types: List[str]) -> "service_pb2.Worke
             sdk_version=config.sdk_version,
             min_server_version=config.min_server_version,
             batch_types=batch_types,
+            payload_streaming=True,
         )
     )
+
+
+def _chunk_window(welcome: "service_pb2.Welcome") -> int:
+    """Return the per-task chunk window the server advertised, or the default."""
+    return welcome.payload_chunk_window or DEFAULT_PAYLOAD_CHUNK_WINDOW
+
+
+def _missing_encryptor(task_id: str) -> ConveyorError:
+    """Build the failure for an encrypted task reaching a worker with no encryptor."""
+    return ConveyorError(f"conveyor: task {task_id} is encrypted but the worker has no encryptor")
 
 
 def _deadline(frame: object) -> Optional[float]:

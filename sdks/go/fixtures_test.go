@@ -37,6 +37,14 @@ func freeTestPorts(t *testing.T, n int) []int {
 func startTestServer(t *testing.T, tokens []string) string {
 	t.Helper()
 
+	return startTestServerWithPayloadCap(t, tokens, 0)
+}
+
+// startTestServerWithPayloadCap is startTestServer with the broker's payload
+// cap raised to maxPayloadBytes; zero keeps the default.
+func startTestServerWithPayloadCap(t *testing.T, tokens []string, maxPayloadBytes int) string {
+	t.Helper()
+
 	ports := freeTestPorts(t, 3)
 
 	config := server.DevConfig()
@@ -50,6 +58,10 @@ func startTestServer(t *testing.T, tokens []string) string {
 	config.Engine.PromoteInterval = 100 * time.Millisecond
 	config.Engine.GroupGracePeriod = 100 * time.Millisecond
 	config.Engine.GroupSweepInterval = 50 * time.Millisecond
+
+	if maxPayloadBytes > 0 {
+		config.Broker.MaxPayloadBytes = maxPayloadBytes
+	}
 
 	node, err := server.New(config, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)

@@ -523,8 +523,20 @@ type TaskEnvelope struct {
 	// progress_message is the latest human-readable status reported alongside
 	// progress. Overlay field; empty when none was reported.
 	ProgressMessage string `protobuf:"bytes,14,opt,name=progress_message,json=progressMessage,proto3" json:"progress_message,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// payload_chunked marks a payload stored as a sequence of chunks rather than
+	// inline in payload, which is then empty. It is set for tasks enqueued with
+	// TaskService.EnqueueStream; a worker receives the chunks as PayloadChunk
+	// frames after the task's Dispatch.
+	PayloadChunked bool `protobuf:"varint,15,opt,name=payload_chunked,json=payloadChunked,proto3" json:"payload_chunked,omitempty"`
+	// payload_size is the stored size in bytes of a chunked payload (ciphertext
+	// when encrypted). Zero for an inline payload, whose size is len(payload).
+	PayloadSize uint64 `protobuf:"varint,16,opt,name=payload_size,json=payloadSize,proto3" json:"payload_size,omitempty"`
+	// payload_chunks is how many chunks a chunked payload is stored in, so a
+	// reader can tell a complete payload from a truncated one. Zero for an
+	// inline payload.
+	PayloadChunks uint32 `protobuf:"varint,17,opt,name=payload_chunks,json=payloadChunks,proto3" json:"payload_chunks,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *TaskEnvelope) Reset() {
@@ -653,6 +665,27 @@ func (x *TaskEnvelope) GetProgressMessage() string {
 		return x.ProgressMessage
 	}
 	return ""
+}
+
+func (x *TaskEnvelope) GetPayloadChunked() bool {
+	if x != nil {
+		return x.PayloadChunked
+	}
+	return false
+}
+
+func (x *TaskEnvelope) GetPayloadSize() uint64 {
+	if x != nil {
+		return x.PayloadSize
+	}
+	return 0
+}
+
+func (x *TaskEnvelope) GetPayloadChunks() uint32 {
+	if x != nil {
+		return x.PayloadChunks
+	}
+	return 0
 }
 
 // TaskOptions captures the per-task execution options.
@@ -913,7 +946,7 @@ const file_conveyor_v1_task_proto_rawDesc = "" +
 	"\x0eTaskDependency\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12C\n" +
 	"\n" +
-	"on_failure\x18\x02 \x01(\x0e2$.conveyor.v1.DependencyFailurePolicyR\tonFailure\"\xf2\x04\n" +
+	"on_failure\x18\x02 \x01(\x0e2$.conveyor.v1.DependencyFailurePolicyR\tonFailure\"\xe5\x05\n" +
 	"\fTaskEnvelope\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x14\n" +
 	"\x05queue\x18\x02 \x01(\tR\x05queue\x12\x12\n" +
@@ -932,7 +965,10 @@ const file_conveyor_v1_task_proto_rawDesc = "" +
 	"started_at\x18\v \x01(\v2\x1a.google.protobuf.TimestampR\tstartedAt\x12=\n" +
 	"\fcompleted_at\x18\f \x01(\v2\x1a.google.protobuf.TimestampR\vcompletedAt\x12\x1a\n" +
 	"\bprogress\x18\r \x01(\rR\bprogress\x12)\n" +
-	"\x10progress_message\x18\x0e \x01(\tR\x0fprogressMessage\x1a;\n" +
+	"\x10progress_message\x18\x0e \x01(\tR\x0fprogressMessage\x12'\n" +
+	"\x0fpayload_chunked\x18\x0f \x01(\bR\x0epayloadChunked\x12!\n" +
+	"\fpayload_size\x18\x10 \x01(\x04R\vpayloadSize\x12%\n" +
+	"\x0epayload_chunks\x18\x11 \x01(\rR\rpayloadChunks\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xf9\x04\n" +

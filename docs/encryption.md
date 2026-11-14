@@ -46,6 +46,16 @@ Encrypted and plaintext tasks can share a queue. A worker decrypts **only** task
 
 If an **encrypted** task reaches a worker that has no encryptor, or one whose key cannot open it, the task **fails without running the handler** and follows the normal retry/dead-letter path. The worker never hands ciphertext to your code.
 
+## Chunked payloads
+
+A payload above the 1 MiB inline limit is uploaded in chunks (see [the wire protocol](protocol.md#63-enqueuestream)), and it is sealed one chunk at a time, so neither the client nor the worker ever holds the whole payload to encrypt or decrypt it. Each chunk is encrypted on its own over a small framed plaintext:
+
+```
+Encrypt( sequence (8 bytes, big-endian, from 0) || last (1 byte: 1 on the final chunk, else 0) || chunk data )
+```
+
+The worker opens the chunks in order and fails the task, without running the handler, when a chunk is out of sequence, arrives after the one marked last, or the payload ends before it. An empty streamed payload is sent as one sealed empty chunk marked last. Every SDK uses this framing, so a payload sealed by one SDK opens in any other with the same key. The [`encryption`](../encryption) package implements it as `ChunkSealer` and `ChunkOpener`.
+
 ## Key rotation
 
 Keep the old key alongside the new one and make the new one active. New tasks seal under the active key; tasks still pending under the old key decrypt because the worker's keyring still holds it:
@@ -64,7 +74,7 @@ Each ciphertext records the id of the key that sealed it, so rotation needs no c
 - **The dashboard shows ciphertext** for encrypted tasks. The server cannot decrypt for display because it has no key, which is the point.
 - **Results** are not encrypted today because the Go SDK emits no result bytes.
 - **Raw-protocol clients** (hand-rolling the wire protocol without an SDK) do not get encryption from the stock binary; use an SDK or run embedded.
-- **Unique tasks still work.** The uniqueness key is derived from the plaintext before the payload is sealed, so `Unique(ttl)` still rejects duplicate work even though every ciphertext is different.
+- **Unique tasks still work.** The uniqueness key is derived from the plaintext before the payload is sealed, so `Unique(ttl)` still rejects duplicate work even though every ciphertext is different. A payload supplied as a stream is never held whole to hash, so it needs an explicit `UniqueKey`.
 
 ## See also
 

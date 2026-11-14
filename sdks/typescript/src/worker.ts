@@ -5,11 +5,14 @@
 import { create } from "@bufbuild/protobuf";
 import { type Client as ConnectClient, Code, ConnectError, createClient } from "@connectrpc/connect";
 
+import { ChunkOpener } from "./chunk.js";
 import { ConveyorError, SkipRetry } from "./errors.js";
 import { ENCRYPTION_MARKER_KEY, type Encryptor } from "./encryption.js";
 import {
   HeartbeatSchema,
   HelloSchema,
+  PayloadAckSchema,
+  type PayloadChunk,
   ProgressSchema,
   ResultSchema,
   type ServerMessage,
@@ -21,6 +24,13 @@ import {
 import type { TaskEnvelope } from "./gen/conveyor/v1/task_pb.js";
 import { BatchError, type BatchHandler, type Handler, type Mux } from "./mux.js";
 import type { WorkerOptions } from "./options.js";
+import {
+  ChunkStream,
+  DEFAULT_PAYLOAD_CHUNK_WINDOW,
+  PayloadAssembly,
+  type PayloadResult,
+  SESSION_ENDED_MESSAGE,
+} from "./stream.js";
 import { Task } from "./task.js";
 import { durationToMs } from "./time.js";
 import { createTransport } from "./transport.js";
@@ -156,6 +166,13 @@ export class Session {
    * reporting RELEASED at once would only have the server redispatch them here.
    */
   private readonly parked = new Set<string>();
+  /**
+   * payloads maps a task id to its chunked payload still arriving. Only the
+   * receive loop adds chunks to it.
+   */
+  private readonly payloads = new Map<string, PayloadAssembly>();
+  /** How many unacknowledged chunks per task the server sends, from Welcome. */
+  private chunkWindow = DEFAULT_PAYLOAD_CHUNK_WINDOW;
   private readonly slots: Semaphore;
   private established = false;
   private draining = false;
@@ -185,8 +202,10 @@ export class Session {
     this.outbound.push(this.hello());
 
     try {
+      // Awaiting each message keeps a payload's chunks decrypted in order; it
+      // never waits on a handler.
       for await (const message of this.rpc.session(this.outbound, { signal: call.signal })) {
-        this.handleServerMessage(message);
+        await this.handleServerMessage(message);
       }
 
       return this.established;
@@ -200,6 +219,7 @@ export class Session {
       this.signal.removeEventListener("abort", onAbort);
       this.stopHeartbeat();
       this.outbound.end();
+      this.abortPayloads();
       this.abortInflight();
     }
   }
@@ -215,17 +235,23 @@ export class Session {
           sdkVersion: this.options.sdkVersion ?? SDK_VERSION,
           minServerVersion: this.options.minServerVersion ?? "",
           batchTypes: this.mux.batchTypes(),
+          payloadStreaming: true,
         }),
       },
     });
   }
 
-  private handleServerMessage(message: ServerMessage): void {
+  /**
+   * handleServerMessage applies one server frame. It resolves once the frame is
+   * handled, which for an encrypted payload chunk includes decrypting it.
+   */
+  private async handleServerMessage(message: ServerMessage): Promise<void> {
     switch (message.frame.case) {
       case "welcome": {
         this.established = true;
         this.leaseTtlMs = durationToMs(message.frame.value.leaseTtl) || DEFAULT_LEASE_TTL_MS;
         this.heartbeatMs = durationToMs(message.frame.value.heartbeatInterval) || this.leaseTtlMs / 3;
+        this.chunkWindow = message.frame.value.payloadChunkWindow || DEFAULT_PAYLOAD_CHUNK_WINDOW;
         this.startHeartbeat();
         break;
       }
@@ -239,7 +265,7 @@ export class Session {
         if (this.draining) {
           this.parked.add(task.id);
         } else {
-          void this.runOne(task, deadlineMs(message.frame.value.deadline));
+          this.dispatch(task, deadlineMs(message.frame.value.deadline));
         }
         break;
       }
@@ -250,8 +276,14 @@ export class Session {
             this.parked.add(task.id);
           }
         } else {
-          void this.runBatch(message.frame.value.tasks, deadlineMs(message.frame.value.deadline));
+          const tasks = message.frame.value.tasks;
+          void this.runBatch(tasks, deadlineMs(message.frame.value.deadline), this.assembleBatch(tasks));
         }
+        break;
+      }
+
+      case "payloadChunk": {
+        await this.receiveChunk(message.frame.value);
         break;
       }
 
@@ -268,14 +300,43 @@ export class Session {
   }
 
   /**
-   * runOne executes a single dispatched task and reports its outcome. The task
-   * is tracked in `inflight` before a slot is acquired, so heartbeats extend the
-   * lease of work still queued behind the concurrency gate.
+   * dispatch starts one dispatched task. A chunked payload is collected from
+   * the PayloadChunk frames that follow: a streaming handler starts at once and
+   * reads the chunks as they arrive, while any other handler runs once the
+   * payload is reassembled.
    */
-  private async runOne(envelope: TaskEnvelope, deadline: number | undefined): Promise<void> {
+  private dispatch(envelope: TaskEnvelope, deadline: number | undefined): void {
+    if (!envelope.payloadChunked) {
+      void this.runOne(envelope, deadline, undefined, undefined);
+      return;
+    }
+
+    const stream = this.mux.streams(envelope.type) ? new ChunkStream(this.chunkWindow, this.chunkAcker(envelope.id)) : undefined;
+    void this.runOne(envelope, deadline, this.assemble(envelope, stream), stream);
+  }
+
+  /**
+   * runOne executes a single dispatched task and reports its outcome. The task
+   * is tracked in `inflight` before its payload arrives and before a slot is
+   * acquired, so heartbeats extend the lease of work still receiving its
+   * payload or queued behind the concurrency gate. `assembled`, when set,
+   * resolves once a chunked payload is ready for the handler; `stream`, when
+   * set, feeds a streaming handler and is abandoned once the task is done, so
+   * unread chunks never stall the session.
+   */
+  private async runOne(
+    envelope: TaskEnvelope,
+    deadline: number | undefined,
+    assembled: Promise<void> | undefined,
+    stream: ChunkStream | undefined,
+  ): Promise<void> {
     const controller = this.scopedController(envelope.id, deadline);
 
     try {
+      if (assembled !== undefined) {
+        await assembled;
+      }
+
       await this.slots.acquire();
 
       try {
@@ -286,7 +347,7 @@ export class Session {
           return;
         }
 
-        const task = await this.openTask(envelope);
+        const task = await this.openTask(envelope, stream);
         const handler = this.mux.resolve(envelope.type);
 
         if (handler === undefined) {
@@ -300,14 +361,16 @@ export class Session {
         this.slots.release();
       }
     } catch (error) {
-      // A payload that could not be opened (e.g. an undecryptable task) is
-      // retryable; a task the drain interrupted here is released, no penalty.
+      // A payload that could not be opened or did not arrive (e.g. an
+      // undecryptable task) is retryable; a task the drain interrupted here is
+      // released, no penalty.
       if (controller.signal.reason === DRAINING) {
         this.report(envelope.id, TaskOutcome.RELEASED, "");
       } else {
         this.report(envelope.id, TaskOutcome.RETRY, errorMessage(error));
       }
     } finally {
+      stream?.abandon();
       this.finish(envelope.id, controller);
     }
   }
@@ -318,12 +381,18 @@ export class Session {
    * heartbeat extends every member's lease (a batch longer than the lease TTL is
    * not reaped and retried) and a Cancel for any member aborts the whole batch.
    * A batch occupies a single concurrency slot, matching the one credit it holds.
+   * `assembled`, when set, resolves once every chunked member's payload is
+   * reassembled, and rejects when any of them fails, which retries the batch.
    */
-  private async runBatch(envelopes: TaskEnvelope[], deadline: number | undefined): Promise<void> {
+  private async runBatch(envelopes: TaskEnvelope[], deadline: number | undefined, assembled: Promise<void> | undefined): Promise<void> {
     const ids = envelopes.map((envelope) => envelope.id);
     const controller = this.scopedBatch(ids, deadline);
 
     try {
+      if (assembled !== undefined) {
+        await assembled;
+      }
+
       await this.slots.acquire();
 
       try {
@@ -387,8 +456,131 @@ export class Session {
     }
   }
 
-  /** openTask decodes a dispatched envelope into a Task, decrypting if marked. */
-  private async openTask(envelope: TaskEnvelope): Promise<Task> {
+  /**
+   * assemble registers the collection of a chunked payload and resolves once
+   * the handler may start: at once for a streaming handler, which reads
+   * `stream`, and otherwise when the payload is reassembled into the envelope.
+   * It rejects when the payload cannot be opened or fails to arrive.
+   */
+  private async assemble(envelope: TaskEnvelope, stream: ChunkStream | undefined): Promise<void> {
+    const opener = this.chunkOpener(envelope);
+
+    if (stream !== undefined) {
+      this.payloads.set(envelope.id, new PayloadAssembly(opener, stream));
+      return;
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      const complete = (result: PayloadResult): void => {
+        if ("error" in result) {
+          reject(result.error);
+          return;
+        }
+
+        envelope.payload = result.payload;
+        envelope.payloadChunked = false;
+        resolve();
+      };
+
+      this.payloads.set(envelope.id, new PayloadAssembly(opener, complete, this.chunkAcker(envelope.id)));
+    });
+  }
+
+  /**
+   * assembleBatch collects the chunked members of a batch, resolving once all
+   * are reassembled; it returns undefined for a batch with none. Batch handlers
+   * receive whole tasks, so chunked members are reassembled, never streamed. A
+   * member whose payload fails rejects the batch, and the other members'
+   * remaining chunks are dropped.
+   */
+  private assembleBatch(envelopes: TaskEnvelope[]): Promise<void> | undefined {
+    const chunked = envelopes.filter((envelope) => envelope.payloadChunked);
+    if (chunked.length === 0) {
+      return undefined;
+    }
+
+    return Promise.all(chunked.map((envelope) => this.assemble(envelope, undefined))).then(
+      () => undefined,
+      (error: unknown) => {
+        for (const member of chunked) {
+          this.payloads.delete(member.id);
+        }
+
+        throw error;
+      },
+    );
+  }
+
+  /**
+   * chunkAcker returns the acknowledgement for one consumed chunk of a task's
+   * payload, granting the server credit for the next. Once the stream has
+   * ended the acknowledgement is dropped.
+   */
+  private chunkAcker(taskId: string): () => void {
+    const ack = create(WorkerMessageSchema, {
+      frame: { case: "payloadAck", value: create(PayloadAckSchema, { taskId, chunks: 1 }) },
+    });
+
+    return () => this.outbound.push(ack);
+  }
+
+  /**
+   * chunkOpener returns the opener for an end-to-end encrypted chunked payload,
+   * stripping the encryption marker since the chunks are decrypted as they
+   * arrive; it returns undefined for a plaintext payload. A marked payload
+   * fails when the worker has no encryptor.
+   */
+  private chunkOpener(envelope: TaskEnvelope): ChunkOpener | undefined {
+    const marker = envelope.metadata[ENCRYPTION_MARKER_KEY];
+    if (marker === undefined || marker === "") {
+      return undefined;
+    }
+
+    if (this.encryptor === undefined) {
+      throw new ConveyorError(`conveyor: task ${envelope.id} is encrypted but the worker has no encryptor`);
+    }
+
+    delete envelope.metadata[ENCRYPTION_MARKER_KEY];
+
+    return new ChunkOpener(this.encryptor);
+  }
+
+  /**
+   * receiveChunk applies one PayloadChunk frame to its task's payload. A chunk
+   * for a task with no payload in progress (its dispatch failed, or its payload
+   * already ended) is dropped.
+   */
+  private async receiveChunk(chunk: PayloadChunk): Promise<void> {
+    const assembly = this.payloads.get(chunk.taskId);
+    if (assembly === undefined) {
+      return;
+    }
+
+    if (await assembly.add(chunk)) {
+      this.payloads.delete(chunk.taskId);
+    }
+  }
+
+  /**
+   * abortPayloads ends every payload still arriving when the session ends: a
+   * streaming handler's stream fails instead of waiting for chunks that will
+   * never come, and a buffered payload's task reports the failure.
+   */
+  private abortPayloads(): void {
+    const ended = new ConveyorError(SESSION_ENDED_MESSAGE);
+
+    for (const assembly of this.payloads.values()) {
+      assembly.finish(ended);
+    }
+
+    this.payloads.clear();
+  }
+
+  /**
+   * openTask decodes a dispatched envelope into a Task, decrypting if marked.
+   * `stream`, when set, carries the payload of a streaming handler's task.
+   */
+  private async openTask(envelope: TaskEnvelope, stream?: ChunkStream): Promise<Task> {
     let payload = envelope.payload;
     const metadata = { ...envelope.metadata };
 
@@ -410,6 +602,7 @@ export class Session {
       queue: envelope.queue,
       retried: envelope.retried,
       maxRetry: envelope.options?.maxRetry ?? 0,
+      ...(stream !== undefined ? { source: stream } : {}),
     });
   }
 

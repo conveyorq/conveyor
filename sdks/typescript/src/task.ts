@@ -3,12 +3,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { ContentType, decodeJson, decodeText, type Payload } from "./codec.js";
+import { INLINE_PAYLOAD_BYTES } from "./stream.js";
 
 /** Fields used to construct a {@link Task}. */
 export interface TaskInit {
   type: string;
   contentType: string;
   data: Uint8Array;
+  /**
+   * A streamed payload: on the producer side, the source given to
+   * {@link stream}; on the handler side, the chunks of a payload delivered to a
+   * streaming handler.
+   */
+  source?: AsyncIterable<Uint8Array>;
   metadata?: Record<string, string>;
   id?: string;
   queue?: string;
@@ -39,21 +46,54 @@ export class Task {
   readonly maxRetry: number;
 
   private readonly data: Uint8Array;
+  private readonly source: AsyncIterable<Uint8Array> | undefined;
 
   constructor(init: TaskInit) {
     this.type = init.type;
     this.contentType = init.contentType;
     this.metadata = init.metadata ?? {};
     this.data = init.data;
+    this.source = init.source;
     this.id = init.id ?? "";
     this.queue = init.queue ?? "";
     this.retried = init.retried ?? 0;
     this.maxRetry = init.maxRetry ?? 0;
   }
 
-  /** The raw payload bytes. */
+  /**
+   * The raw payload bytes. Empty for a payload a streaming handler receives
+   * (see {@link Mux.handleStream}); read {@link Task.payloadStream} instead.
+   */
   payload(): Uint8Array {
     return this.data;
+  }
+
+  /**
+   * The payload as an async iterable of byte chunks. A streaming handler reads
+   * a chunked payload here as it arrives, once; for any other task it yields
+   * {@link Task.payload}.
+   *
+   * ```ts
+   * for await (const chunk of task.payloadStream()) {
+   *   hash.update(chunk);
+   * }
+   * ```
+   */
+  payloadStream(): AsyncIterable<Uint8Array> {
+    return this.source ?? inlineChunks(this.data);
+  }
+
+  /** @internal hasPayloadSource reports whether the payload was supplied as a stream. */
+  hasPayloadSource(): boolean {
+    return this.source !== undefined;
+  }
+
+  /**
+   * @internal needsStreamUpload reports whether the task is enqueued through
+   * the streaming upload: its payload is a stream, or too large to send inline.
+   */
+  needsStreamUpload(): boolean {
+    return this.hasPayloadSource() || this.data.length > INLINE_PAYLOAD_BYTES;
   }
 
   /** Decode a JSON payload into a value. Throws if the content type is not JSON. */
@@ -69,7 +109,8 @@ export class Task {
 
 /**
  * newTask builds a task to enqueue. Construct the payload with a codec —
- * `json(value)` (the default) or `bytes(data)`:
+ * `json(value)` (the default), `bytes(data)`, or `stream(source)` for a payload
+ * too large to hold in memory:
  *
  * ```ts
  * client.enqueue(newTask("email:welcome", json({ userId: 42 })));
@@ -77,9 +118,20 @@ export class Task {
  */
 export function newTask(type: string, payload: Payload, options?: { metadata?: Record<string, string> }): Task {
   const init: TaskInit = { type, contentType: payload.contentType || ContentType.JSON, data: payload.data };
+  if (payload.source !== undefined) {
+    init.source = payload.source;
+  }
+
   if (options?.metadata !== undefined) {
     init.metadata = options.metadata;
   }
 
   return new Task(init);
+}
+
+/** inlineChunks yields an in-memory payload as a single chunk, or nothing when it is empty. */
+async function* inlineChunks(data: Uint8Array): AsyncGenerator<Uint8Array> {
+  if (data.length > 0) {
+    yield data;
+  }
 }

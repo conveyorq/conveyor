@@ -44,6 +44,10 @@ broker:
   dsnSecret:
     name: ""
     key: dsn
+  # maxPayloadBytes caps one task payload, in bytes; at most 1073741824
+  # (1 GiB). Payloads up to 1 MiB travel inline; the SDKs upload larger ones
+  # in chunks, which the broker stores and delivers in chunks.
+  maxPayloadBytes: 1048576
   # pool tunes the Postgres connection pool. Every node opens its own pool
   # against the same database, so the database must admit
   # replicaCount × maxConns. A zero or empty value keeps the driver default.

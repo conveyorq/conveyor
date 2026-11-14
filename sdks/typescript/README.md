@@ -1,10 +1,10 @@
 # Conveyor TypeScript SDK
 
 `@conveyorq/conveyor` is the TypeScript/Node SDK for [Conveyor](../../README.md),
-a distributed, push-based task queue. It speaks the same wire protocol as the Go
-SDK — a producer `Client` for enqueuing tasks and a `Worker` for processing
-them — so Go and TypeScript producers and workers interoperate on the same
-queues.
+a distributed, push-based task queue. It provides a producer `Client` for
+enqueuing tasks and a `Worker` for processing them, and speaks the same wire
+protocol as the Go SDK, so Go and TypeScript producers and workers interoperate
+on the same queues.
 
 Requires Node.js ≥ 20. The worker opens a bidirectional gRPC stream, so it runs
 on Node (not the browser).
@@ -12,7 +12,7 @@ on Node (not the browser).
 ## Install
 
 `@conveyorq/conveyor` is not yet on npm. Install it from a local checkout of the
-repository — building the SDK once produces the `dist/` that consumers import
+repository. Building the SDK once produces the `dist/` that consumers import
 (the package's `prepare` script runs the build automatically on install):
 
 ```sh
@@ -24,20 +24,20 @@ pnpm install && pnpm run build
 Then reference it from your project in one of these ways:
 
 ```sh
-# A) file: dependency — add to your package.json and run pnpm install:
+# A) file: dependency. Add to your package.json and run pnpm install:
 #    "dependencies": { "@conveyorq/conveyor": "file:../path/to/conveyor/sdks/typescript" }
 
-# B) pnpm link — best while actively editing the SDK:
+# B) pnpm link, best while actively editing the SDK:
 pnpm link --global                                  # run in conveyor/sdks/typescript
 pnpm link --global @conveyorq/conveyor              # run in your project
 
-# C) tarball — portable, no path coupling:
+# C) tarball, portable with no path coupling:
 pnpm pack                                  # run in conveyor/sdks/typescript -> conveyorq-conveyor-0.1.0.tgz
 pnpm install /path/to/conveyorq-conveyor-0.1.0.tgz  # run in your project
 ```
 
 > npm git installs can't target a subdirectory, so `npm install github:conveyorq/conveyor`
-> won't work — the SDK lives in `sdks/typescript`, not the repo root.
+> won't work: the SDK lives in `sdks/typescript`, not the repo root.
 
 ## Enqueue (producer)
 
@@ -92,6 +92,36 @@ graceful drain that lets in-flight tasks finish before the stream closes.
 | throws `SkipRetry`                            | `SKIP_RETRY` | archived (dead-lettered) immediately   |
 | throws anything else (or an uncaught reject)  | `RETRY`      | retried with backoff, then archived    |
 
+## Large payloads
+
+A payload over 1 MiB is uploaded in 1 MiB chunks automatically, up to the
+server's payload cap (`broker.max_payload_bytes`). To enqueue one without holding
+it in memory, build it with `stream(source)` from a Node `Readable`, a web
+`ReadableStream`, or any async iterable of `Uint8Array`:
+
+```ts
+import { createReadStream } from "node:fs";
+import { newTask, stream } from "@conveyorq/conveyor";
+
+await client.enqueue(newTask("report:index", stream(createReadStream("report.pdf"), "application/pdf")));
+```
+
+A streamed payload cannot go through `enqueueTx`, and `unique` needs an explicit
+`uniqueKey`. Workers receive large payloads reassembled in `task.payload()` by
+default. Register a handler with `mux.handleStream` to read the payload as it
+arrives instead:
+
+```ts
+mux.handleStream("report:index", async (task) => {
+  for await (const chunk of task.payloadStream()) {
+    await index.write(chunk);
+  }
+});
+```
+
+The server sends chunks only as fast as the handler reads them, so a slow reader
+holds back only its own payload.
+
 ## End-to-end encryption
 
 Set the same `Encryptor` on the client and the worker; the server only ever
@@ -127,6 +157,7 @@ const worker = new Worker(addr, { queues: { email: 1 }, concurrency: 10, encrypt
 | Cancellation                       | `context.Context`              | `HandlerContext.signal` (`AbortSignal`)       |
 | Codecs                             | `JSON` / `Bytes`               | `json` / `bytes` / `text`                     |
 | End-to-end encryption              | `WithEncryption` + AES-256-GCM | `encryptor` + `newAESGCM` (byte-compatible)   |
+| Large payloads                     | `Stream` / `HandleStreamFunc`  | `stream` / `Mux.handleStream`                 |
 | Min server version                 | `WithMinServerVersion`         | `minServerVersion`                            |
 
 The cross-SDK conformance suite is the executable form of this table.

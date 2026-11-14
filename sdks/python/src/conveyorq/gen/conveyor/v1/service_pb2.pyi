@@ -139,6 +139,26 @@ class GetTaskRequest(_message.Message):
     def __init__(self, id: _Optional[str]=...) -> None:
         ...
 
+class EnqueueStreamRequest(_message.Message):
+    __slots__ = ('header', 'chunk', 'commit')
+    HEADER_FIELD_NUMBER: _ClassVar[int]
+    CHUNK_FIELD_NUMBER: _ClassVar[int]
+    COMMIT_FIELD_NUMBER: _ClassVar[int]
+    header: EnqueueRequest
+    chunk: bytes
+    commit: PayloadCommit
+
+    def __init__(self, header: _Optional[_Union[EnqueueRequest, _Mapping]]=..., chunk: _Optional[bytes]=..., commit: _Optional[_Union[PayloadCommit, _Mapping]]=...) -> None:
+        ...
+
+class PayloadCommit(_message.Message):
+    __slots__ = ('size',)
+    SIZE_FIELD_NUMBER: _ClassVar[int]
+    size: int
+
+    def __init__(self, size: _Optional[int]=...) -> None:
+        ...
+
 class GetTaskResponse(_message.Message):
     __slots__ = ('task',)
     TASK_FIELD_NUMBER: _ClassVar[int]
@@ -148,7 +168,7 @@ class GetTaskResponse(_message.Message):
         ...
 
 class TaskInfo(_message.Message):
-    __slots__ = ('id', 'queue', 'type', 'state', 'priority', 'retried', 'max_retry', 'last_error', 'enqueued_at', 'process_at', 'completed_at', 'payload', 'content_type', 'started_at', 'progress', 'progress_message')
+    __slots__ = ('id', 'queue', 'type', 'state', 'priority', 'retried', 'max_retry', 'last_error', 'enqueued_at', 'process_at', 'completed_at', 'payload', 'content_type', 'started_at', 'progress', 'progress_message', 'payload_chunked', 'payload_size')
     ID_FIELD_NUMBER: _ClassVar[int]
     QUEUE_FIELD_NUMBER: _ClassVar[int]
     TYPE_FIELD_NUMBER: _ClassVar[int]
@@ -165,6 +185,8 @@ class TaskInfo(_message.Message):
     STARTED_AT_FIELD_NUMBER: _ClassVar[int]
     PROGRESS_FIELD_NUMBER: _ClassVar[int]
     PROGRESS_MESSAGE_FIELD_NUMBER: _ClassVar[int]
+    PAYLOAD_CHUNKED_FIELD_NUMBER: _ClassVar[int]
+    PAYLOAD_SIZE_FIELD_NUMBER: _ClassVar[int]
     id: str
     queue: str
     type: str
@@ -181,46 +203,52 @@ class TaskInfo(_message.Message):
     started_at: _timestamp_pb2.Timestamp
     progress: int
     progress_message: str
+    payload_chunked: bool
+    payload_size: int
 
-    def __init__(self, id: _Optional[str]=..., queue: _Optional[str]=..., type: _Optional[str]=..., state: _Optional[_Union[_task_pb2.TaskState, str]]=..., priority: _Optional[int]=..., retried: _Optional[int]=..., max_retry: _Optional[int]=..., last_error: _Optional[str]=..., enqueued_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]]=..., process_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]]=..., completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]]=..., payload: _Optional[bytes]=..., content_type: _Optional[str]=..., started_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]]=..., progress: _Optional[int]=..., progress_message: _Optional[str]=...) -> None:
+    def __init__(self, id: _Optional[str]=..., queue: _Optional[str]=..., type: _Optional[str]=..., state: _Optional[_Union[_task_pb2.TaskState, str]]=..., priority: _Optional[int]=..., retried: _Optional[int]=..., max_retry: _Optional[int]=..., last_error: _Optional[str]=..., enqueued_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]]=..., process_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]]=..., completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]]=..., payload: _Optional[bytes]=..., content_type: _Optional[str]=..., started_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]]=..., progress: _Optional[int]=..., progress_message: _Optional[str]=..., payload_chunked: _Optional[bool]=..., payload_size: _Optional[int]=...) -> None:
         ...
 
 class WorkerMessage(_message.Message):
-    __slots__ = ('hello', 'credit', 'result', 'heartbeat', 'batch_result', 'progress')
+    __slots__ = ('hello', 'credit', 'result', 'heartbeat', 'batch_result', 'progress', 'payload_ack')
     HELLO_FIELD_NUMBER: _ClassVar[int]
     CREDIT_FIELD_NUMBER: _ClassVar[int]
     RESULT_FIELD_NUMBER: _ClassVar[int]
     HEARTBEAT_FIELD_NUMBER: _ClassVar[int]
     BATCH_RESULT_FIELD_NUMBER: _ClassVar[int]
     PROGRESS_FIELD_NUMBER: _ClassVar[int]
+    PAYLOAD_ACK_FIELD_NUMBER: _ClassVar[int]
     hello: Hello
     credit: Credit
     result: Result
     heartbeat: Heartbeat
     batch_result: BatchResult
     progress: Progress
+    payload_ack: PayloadAck
 
-    def __init__(self, hello: _Optional[_Union[Hello, _Mapping]]=..., credit: _Optional[_Union[Credit, _Mapping]]=..., result: _Optional[_Union[Result, _Mapping]]=..., heartbeat: _Optional[_Union[Heartbeat, _Mapping]]=..., batch_result: _Optional[_Union[BatchResult, _Mapping]]=..., progress: _Optional[_Union[Progress, _Mapping]]=...) -> None:
+    def __init__(self, hello: _Optional[_Union[Hello, _Mapping]]=..., credit: _Optional[_Union[Credit, _Mapping]]=..., result: _Optional[_Union[Result, _Mapping]]=..., heartbeat: _Optional[_Union[Heartbeat, _Mapping]]=..., batch_result: _Optional[_Union[BatchResult, _Mapping]]=..., progress: _Optional[_Union[Progress, _Mapping]]=..., payload_ack: _Optional[_Union[PayloadAck, _Mapping]]=...) -> None:
         ...
 
 class ServerMessage(_message.Message):
-    __slots__ = ('welcome', 'dispatch', 'cancel', 'ping', 'batch_dispatch')
+    __slots__ = ('welcome', 'dispatch', 'cancel', 'ping', 'batch_dispatch', 'payload_chunk')
     WELCOME_FIELD_NUMBER: _ClassVar[int]
     DISPATCH_FIELD_NUMBER: _ClassVar[int]
     CANCEL_FIELD_NUMBER: _ClassVar[int]
     PING_FIELD_NUMBER: _ClassVar[int]
     BATCH_DISPATCH_FIELD_NUMBER: _ClassVar[int]
+    PAYLOAD_CHUNK_FIELD_NUMBER: _ClassVar[int]
     welcome: Welcome
     dispatch: Dispatch
     cancel: Cancel
     ping: Ping
     batch_dispatch: BatchDispatch
+    payload_chunk: PayloadChunk
 
-    def __init__(self, welcome: _Optional[_Union[Welcome, _Mapping]]=..., dispatch: _Optional[_Union[Dispatch, _Mapping]]=..., cancel: _Optional[_Union[Cancel, _Mapping]]=..., ping: _Optional[_Union[Ping, _Mapping]]=..., batch_dispatch: _Optional[_Union[BatchDispatch, _Mapping]]=...) -> None:
+    def __init__(self, welcome: _Optional[_Union[Welcome, _Mapping]]=..., dispatch: _Optional[_Union[Dispatch, _Mapping]]=..., cancel: _Optional[_Union[Cancel, _Mapping]]=..., ping: _Optional[_Union[Ping, _Mapping]]=..., batch_dispatch: _Optional[_Union[BatchDispatch, _Mapping]]=..., payload_chunk: _Optional[_Union[PayloadChunk, _Mapping]]=...) -> None:
         ...
 
 class Hello(_message.Message):
-    __slots__ = ('queues', 'concurrency', 'labels', 'sdk_version', 'min_server_version', 'batch_types')
+    __slots__ = ('queues', 'concurrency', 'labels', 'sdk_version', 'min_server_version', 'batch_types', 'payload_streaming')
 
     class QueuesEntry(_message.Message):
         __slots__ = ('key', 'value')
@@ -247,14 +275,16 @@ class Hello(_message.Message):
     SDK_VERSION_FIELD_NUMBER: _ClassVar[int]
     MIN_SERVER_VERSION_FIELD_NUMBER: _ClassVar[int]
     BATCH_TYPES_FIELD_NUMBER: _ClassVar[int]
+    PAYLOAD_STREAMING_FIELD_NUMBER: _ClassVar[int]
     queues: _containers.ScalarMap[str, int]
     concurrency: int
     labels: _containers.ScalarMap[str, str]
     sdk_version: str
     min_server_version: str
     batch_types: _containers.RepeatedScalarFieldContainer[str]
+    payload_streaming: bool
 
-    def __init__(self, queues: _Optional[_Mapping[str, int]]=..., concurrency: _Optional[int]=..., labels: _Optional[_Mapping[str, str]]=..., sdk_version: _Optional[str]=..., min_server_version: _Optional[str]=..., batch_types: _Optional[_Iterable[str]]=...) -> None:
+    def __init__(self, queues: _Optional[_Mapping[str, int]]=..., concurrency: _Optional[int]=..., labels: _Optional[_Mapping[str, str]]=..., sdk_version: _Optional[str]=..., min_server_version: _Optional[str]=..., batch_types: _Optional[_Iterable[str]]=..., payload_streaming: _Optional[bool]=...) -> None:
         ...
 
 class Credit(_message.Message):
@@ -334,19 +364,21 @@ class Progress(_message.Message):
         ...
 
 class Welcome(_message.Message):
-    __slots__ = ('session_id', 'lease_ttl', 'heartbeat_interval', 'server_version', 'min_sdk_version')
+    __slots__ = ('session_id', 'lease_ttl', 'heartbeat_interval', 'server_version', 'min_sdk_version', 'payload_chunk_window')
     SESSION_ID_FIELD_NUMBER: _ClassVar[int]
     LEASE_TTL_FIELD_NUMBER: _ClassVar[int]
     HEARTBEAT_INTERVAL_FIELD_NUMBER: _ClassVar[int]
     SERVER_VERSION_FIELD_NUMBER: _ClassVar[int]
     MIN_SDK_VERSION_FIELD_NUMBER: _ClassVar[int]
+    PAYLOAD_CHUNK_WINDOW_FIELD_NUMBER: _ClassVar[int]
     session_id: str
     lease_ttl: _duration_pb2.Duration
     heartbeat_interval: _duration_pb2.Duration
     server_version: str
     min_sdk_version: str
+    payload_chunk_window: int
 
-    def __init__(self, session_id: _Optional[str]=..., lease_ttl: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]]=..., heartbeat_interval: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]]=..., server_version: _Optional[str]=..., min_sdk_version: _Optional[str]=...) -> None:
+    def __init__(self, session_id: _Optional[str]=..., lease_ttl: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]]=..., heartbeat_interval: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]]=..., server_version: _Optional[str]=..., min_sdk_version: _Optional[str]=..., payload_chunk_window: _Optional[int]=...) -> None:
         ...
 
 class Dispatch(_message.Message):
@@ -357,6 +389,30 @@ class Dispatch(_message.Message):
     deadline: _timestamp_pb2.Timestamp
 
     def __init__(self, task: _Optional[_Union[_task_pb2.TaskEnvelope, _Mapping]]=..., deadline: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]]=...) -> None:
+        ...
+
+class PayloadAck(_message.Message):
+    __slots__ = ('task_id', 'chunks')
+    TASK_ID_FIELD_NUMBER: _ClassVar[int]
+    CHUNKS_FIELD_NUMBER: _ClassVar[int]
+    task_id: str
+    chunks: int
+
+    def __init__(self, task_id: _Optional[str]=..., chunks: _Optional[int]=...) -> None:
+        ...
+
+class PayloadChunk(_message.Message):
+    __slots__ = ('task_id', 'data', 'last', 'error')
+    TASK_ID_FIELD_NUMBER: _ClassVar[int]
+    DATA_FIELD_NUMBER: _ClassVar[int]
+    LAST_FIELD_NUMBER: _ClassVar[int]
+    ERROR_FIELD_NUMBER: _ClassVar[int]
+    task_id: str
+    data: bytes
+    last: bool
+    error: str
+
+    def __init__(self, task_id: _Optional[str]=..., data: _Optional[bytes]=..., last: _Optional[bool]=..., error: _Optional[str]=...) -> None:
         ...
 
 class BatchDispatch(_message.Message):
@@ -639,6 +695,22 @@ class DeleteGroupConfigResponse(_message.Message):
     __slots__ = ()
 
     def __init__(self) -> None:
+        ...
+
+class GetTaskPayloadRequest(_message.Message):
+    __slots__ = ('id',)
+    ID_FIELD_NUMBER: _ClassVar[int]
+    id: str
+
+    def __init__(self, id: _Optional[str]=...) -> None:
+        ...
+
+class GetTaskPayloadResponse(_message.Message):
+    __slots__ = ('data',)
+    DATA_FIELD_NUMBER: _ClassVar[int]
+    data: bytes
+
+    def __init__(self, data: _Optional[bytes]=...) -> None:
         ...
 
 class ListTasksRequest(_message.Message):

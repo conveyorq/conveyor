@@ -25,6 +25,7 @@ import (
 	"github.com/knadh/koanf/v2"
 
 	"github.com/conveyorq/conveyor/internal/backoff"
+	"github.com/conveyorq/conveyor/internal/broker"
 	"github.com/conveyorq/conveyor/internal/webhook"
 	"github.com/conveyorq/conveyor/server/api"
 )
@@ -79,6 +80,10 @@ const koanfTag = "koanf"
 
 // maxPortNumber is the highest valid TCP port.
 const maxPortNumber = 65535
+
+// maxPayloadBytesCeiling is the largest accepted broker.max_payload_bytes:
+// 1 GiB, the most a Postgres bytea value holds.
+const maxPayloadBytesCeiling = 1 << 30
 
 // Configuration defaults applied before file and environment overrides.
 const (
@@ -234,6 +239,10 @@ type BrokerConfig struct {
 	DSN string `koanf:"dsn"`
 	// Pool tunes the Postgres connection pool; the memory driver ignores it.
 	Pool PoolConfig `koanf:"pool"`
+	// MaxPayloadBytes caps one task payload, in bytes. A payload above the
+	// 1 MiB inline limit is uploaded and stored in chunks, so the cap bounds
+	// storage, not any single message. Defaults to 1 MiB; at most 1 GiB.
+	MaxPayloadBytes int `koanf:"max_payload_bytes"`
 }
 
 // PoolConfig tunes the Postgres connection pool. Every field is optional: a
@@ -447,7 +456,7 @@ type OtelConfig struct {
 func DefaultConfig() *Config {
 	return &Config{
 		Mode:   ModeStandalone,
-		Broker: BrokerConfig{Driver: BrokerPostgres},
+		Broker: BrokerConfig{Driver: BrokerPostgres, MaxPayloadBytes: broker.DefaultMaxPayloadBytes},
 		API:    APIConfig{Listen: defaultAPIListen, Dashboard: true},
 		Cluster: ClusterConfig{
 			Discovery:     DiscoveryStatic,
@@ -491,7 +500,7 @@ func DefaultConfig() *Config {
 // fixed default.
 func DevConfig() *Config {
 	config := DefaultConfig()
-	config.Broker = BrokerConfig{Driver: BrokerMemory}
+	config.Broker.Driver = BrokerMemory
 	config.Log = LogConfig{Level: LogLevelDebug, Format: LogFormatText}
 	config.Metrics = MetricsConfig{Listen: "127.0.0.1:0"}
 	// Dev runs without authentication by design; opt in explicitly so the
@@ -920,7 +929,7 @@ func (c *Config) AuthDisabled() bool {
 }
 
 // validate checks the broker block: a known driver, a DSN whenever the driver
-// needs one, and well-formed pool knobs.
+// needs one, a payload cap within bounds, and well-formed pool knobs.
 func (b *BrokerConfig) validate() error {
 	drivers := []string{BrokerPostgres, BrokerMemory}
 	if !slices.Contains(drivers, b.Driver) {
@@ -929,6 +938,10 @@ func (b *BrokerConfig) validate() error {
 
 	if b.Driver == BrokerPostgres && b.DSN == "" {
 		return fmt.Errorf("broker.dsn: required when broker.driver is %q", BrokerPostgres)
+	}
+
+	if b.MaxPayloadBytes < 1 || b.MaxPayloadBytes > maxPayloadBytesCeiling {
+		return fmt.Errorf("broker.max_payload_bytes: must be between 1 and %d, got %d", maxPayloadBytesCeiling, b.MaxPayloadBytes)
 	}
 
 	return b.Pool.validate()
