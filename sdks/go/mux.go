@@ -25,6 +25,8 @@ type Mux struct {
 	handlers map[string]HandlerFunc
 	// batchHandlers maps task type to its batch handler.
 	batchHandlers map[string]BatchHandlerFunc
+	// streamTypes holds the task types registered with HandleStreamFunc.
+	streamTypes map[string]bool
 	// middleware decorates every single-task handler, outermost first.
 	middleware []MiddlewareFunc
 	// batchMiddleware decorates every batch handler, outermost first.
@@ -36,6 +38,7 @@ func NewMux() *Mux {
 	return &Mux{
 		handlers:      make(map[string]HandlerFunc),
 		batchHandlers: make(map[string]BatchHandlerFunc),
+		streamTypes:   make(map[string]bool),
 	}
 }
 
@@ -68,6 +71,24 @@ func (m *Mux) HandleFunc(taskType string, handler HandlerFunc) {
 	m.requireUnregistered(taskType)
 
 	m.handlers[taskType] = handler
+}
+
+// HandleStreamFunc registers a handler that receives a chunked payload as it
+// arrives instead of after it is reassembled: the handler starts at once and
+// reads task.PayloadReader, while Task.Payload is nil. Use it for payloads too
+// large to hold in memory. The server sends a bounded window of chunks ahead
+// of the handler and the next ones as it reads, so a handler that reads slowly
+// holds back only its own payload. Tasks with an inline payload reach the
+// handler as usual, readable through PayloadReader too. Registration panics
+// like HandleFunc.
+func (m *Mux) HandleStreamFunc(taskType string, handler HandlerFunc) {
+	m.HandleFunc(taskType, handler)
+	m.streamTypes[taskType] = true
+}
+
+// streams reports whether taskType was registered with HandleStreamFunc.
+func (m *Mux) streams(taskType string) bool {
+	return m.streamTypes[taskType]
 }
 
 // requireUnregistered panics if the task type already has a single or batch

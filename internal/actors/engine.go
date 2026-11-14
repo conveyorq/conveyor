@@ -7,6 +7,7 @@ package actors
 import (
 	"context"
 	"fmt"
+	"iter"
 	"log/slog"
 	"sync"
 	"time"
@@ -292,6 +293,25 @@ func (e *Engine) Enqueue(ctx context.Context, task *conveyorv1.TaskEnvelope) err
 	}
 
 	if err := e.runtime.Broker().Enqueue(ctx, task); err != nil {
+		return err
+	}
+
+	e.runtime.Counters().Enqueued.Add(1)
+	e.wake(task.GetQueue())
+
+	return nil
+}
+
+// EnqueueChunked commits a task whose payload arrives as chunks, then wakes
+// its queue grain. The task is assigned a fresh ULID when it carries none. The
+// payload stays in the broker and never rides an actor message: the gateway
+// serving the task reads it from the broker on its own node.
+func (e *Engine) EnqueueChunked(ctx context.Context, task *conveyorv1.TaskEnvelope, chunks iter.Seq2[[]byte, error]) error {
+	if task.GetId() == "" {
+		task.Id = e.runtime.NewID()
+	}
+
+	if err := e.runtime.Broker().EnqueueChunked(ctx, task, chunks); err != nil {
 		return err
 	}
 

@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"iter"
 
 	"connectrpc.com/connect"
 	"go.opentelemetry.io/otel"
@@ -32,10 +33,6 @@ const defaultPriority = 4
 // maxPriority is the highest accepted task priority.
 const maxPriority = 9
 
-// maxPayloadBytes caps one task payload. Larger blobs belong in object
-// storage with a reference in the payload.
-const maxPayloadBytes = 1 << 20
-
 // maxDependencies caps how many tasks one task may depend on, bounding the
 // dependency-edge fan-in committed per enqueue and the work one resolution does.
 const maxDependencies = 1000
@@ -47,21 +44,30 @@ const maxBatchTasks = 1000
 // metadata, options) beyond the payload cap when sizing the request read limit.
 const perTaskOverheadBytes = 64 << 10
 
+// maxPayloadChunkBytes caps one chunk of an EnqueueStream upload. A producer
+// sends 1 MiB chunks; the headroom admits end-to-end encryption overhead.
+const maxPayloadChunkBytes = 2 << 20
+
 // MaxRequestBytes bounds one decoded API request, and one frame of a stream, so
 // the server rejects an oversized message before decoding it rather than after.
 // It is the largest legitimate request: a full EnqueueBatch of maxBatchTasks
-// tasks, each at the payload cap plus field overhead. The per-task payload cap
-// (maxPayloadBytes) is still enforced per task after decode.
-const MaxRequestBytes = maxBatchTasks * (maxPayloadBytes + perTaskOverheadBytes)
+// tasks, each at the inline payload limit plus field overhead. A payload above
+// the inline limit arrives through EnqueueStream in chunks far below this
+// bound. The payload limits are still enforced per task after decode.
+const MaxRequestBytes = maxBatchTasks * (broker.InlinePayloadBytes + perTaskOverheadBytes)
 
 // MaxMessageBytes bounds one decoded message that carries a single task rather
-// than a batch of them. Only EnqueueBatch legitimately arrives at
-// MaxRequestBytes, so a service that never receives a batch is held to one
-// task's worth of bytes. It is what the webhook callback service is mounted
-// with: that service authenticates per delivery with a lease token instead of a
-// bearer token, so anyone who can reach the port can post to it, and it must not
-// be handed a batch-sized decode budget.
-const MaxMessageBytes = maxPayloadBytes + perTaskOverheadBytes
+// than a batch of them: the inline payload limit plus field overhead. Only
+// EnqueueBatch legitimately arrives at MaxRequestBytes, so a service that never
+// receives a batch is held to one task's worth of bytes. It is what the webhook
+// callback service is mounted with: that service authenticates per delivery
+// with a lease token instead of a bearer token, so anyone who can reach the port
+// can post to it, and it must not be handed a batch-sized decode budget.
+const MaxMessageBytes = broker.InlinePayloadBytes + perTaskOverheadBytes
+
+// errInvalidUpload marks an EnqueueStream upload rejected for its shape or
+// size, mapped to invalid_argument.
+var errInvalidUpload = errors.New("invalid upload")
 
 // TaskService serves the enqueue-side API.
 type TaskService struct {
@@ -86,6 +92,32 @@ func NewTaskService(engine *actors.Engine, taskLog broker.Broker, timeSource clo
 		timeSource:      timeSource,
 		defaultMaxRetry: defaultMaxRetry,
 	}
+}
+
+// inlinePayloadLimit is the largest payload a request may carry inline: the
+// broker's inline limit, or its payload cap when that is lower.
+func inlinePayloadLimit(maxPayloadBytes int) int {
+	return min(maxPayloadBytes, broker.InlinePayloadBytes)
+}
+
+// checkPayloadSize rejects a payload larger than maxPayloadBytes.
+func checkPayloadSize(payload []byte, maxPayloadBytes int) error {
+	if len(payload) > maxPayloadBytes {
+		return fmt.Errorf("payload is %d bytes, the maximum is %d; store large blobs elsewhere and enqueue a reference", len(payload), maxPayloadBytes)
+	}
+
+	return nil
+}
+
+// checkInlinePayload rejects a payload above the inline limit. When the
+// payload cap would admit it, the error points at EnqueueStream.
+func checkInlinePayload(payload []byte, maxPayloadBytes int) error {
+	inlineLimit := inlinePayloadLimit(maxPayloadBytes)
+	if len(payload) > inlineLimit && len(payload) <= maxPayloadBytes {
+		return fmt.Errorf("payload is %d bytes, above the %d-byte inline limit; send it with EnqueueStream", len(payload), inlineLimit)
+	}
+
+	return checkPayloadSize(payload, inlineLimit)
 }
 
 // Enqueue durably commits one task and reports its initial state.
@@ -223,6 +255,173 @@ func (s *TaskService) GetTask(ctx context.Context, request *connect.Request[conv
 	return connect.NewResponse(&conveyorv1.GetTaskResponse{Task: taskInfo(envelope, state)}), nil
 }
 
+// EnqueueStream durably commits one task whose payload arrives in chunks after
+// its header. The chunks flow straight into the broker as they arrive, so the
+// server never holds the whole payload; the task commits only once the client
+// closes the stream.
+func (s *TaskService) EnqueueStream(ctx context.Context, stream *connect.ClientStream[conveyorv1.EnqueueStreamRequest]) (*connect.Response[conveyorv1.EnqueueResponse], error) {
+	ctx, span := otel.Tracer(tracerName).Start(ctx, "conveyor.enqueue", trace.WithSpanKind(trace.SpanKindProducer))
+	defer span.End()
+
+	envelope, err := s.streamHeader(stream)
+	if err != nil {
+		span.RecordError(err)
+
+		return nil, err
+	}
+
+	injectTaskTrace(ctx, envelope)
+
+	var received int
+
+	if err = s.engine.EnqueueChunked(ctx, envelope, receiveUpload(stream, s.taskLog.MaxPayloadBytes(), &received)); err != nil {
+		span.RecordError(err)
+
+		return nil, streamEnqueueError(err)
+	}
+
+	span.SetAttributes(
+		attribute.String("conveyor.task.id", envelope.GetId()),
+		attribute.String("conveyor.task.type", envelope.GetType()),
+		attribute.String("conveyor.queue", envelope.GetQueue()),
+		attribute.Int("conveyor.task.payload_bytes", received),
+	)
+
+	// Answer with the task as stored: for an idempotent retry of an existing
+	// id that is the original task, not this upload, which was never read.
+	// The task is committed either way, so a failed read is reported and the
+	// client's retry of the same id is a no-op.
+	stored, state, err := s.taskLog.GetTask(ctx, envelope.GetId())
+	if err != nil {
+		span.RecordError(err)
+
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+
+	return connect.NewResponse(&conveyorv1.EnqueueResponse{Task: taskInfo(stored, state)}), nil
+}
+
+// streamHeader reads and validates the first message of an EnqueueStream
+// upload: the task header, with no inline payload.
+func (s *TaskService) streamHeader(stream *connect.ClientStream[conveyorv1.EnqueueStreamRequest]) (*conveyorv1.TaskEnvelope, error) {
+	if !stream.Receive() {
+		if err := stream.Err(); err != nil {
+			return nil, err
+		}
+
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("%w: the stream carried no task header", errInvalidUpload))
+	}
+
+	header := stream.Msg().GetHeader()
+	if header == nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("%w: the first message must be the task header", errInvalidUpload))
+	}
+
+	if len(header.GetPayload()) > 0 {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("%w: the header must not carry a payload; send it as chunks", errInvalidUpload))
+	}
+
+	envelope, err := s.envelopeFromRequest(header)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+
+	return envelope, nil
+}
+
+// receiveUpload yields the chunks of an EnqueueStream upload after its header,
+// counting the bytes received into received. The upload must end with a
+// PayloadCommit whose size matches the bytes received and nothing after it;
+// otherwise, and on any invalid chunk or a broken stream, it yields an error,
+// so the broker commits nothing. Requiring the commit is what tells a complete
+// upload from one cut short: a client stream can end cleanly without the
+// producer having finished, for example when a canceled HTTP/2 request is
+// half-closed before it is reset.
+func receiveUpload(stream *connect.ClientStream[conveyorv1.EnqueueStreamRequest], maxPayloadBytes int, received *int) iter.Seq2[[]byte, error] {
+	return func(yield func([]byte, error) bool) {
+		committed := false
+
+		for stream.Receive() {
+			message := stream.Msg()
+
+			if committed {
+				yield(nil, fmt.Errorf("%w: nothing may follow the commit", errInvalidUpload))
+
+				return
+			}
+
+			if commit := message.GetCommit(); commit != nil {
+				if commit.GetSize() != uint64(*received) {
+					yield(nil, fmt.Errorf("%w: the commit states %d bytes, %d were received", errInvalidUpload, commit.GetSize(), *received))
+
+					return
+				}
+
+				committed = true
+
+				continue
+			}
+
+			chunk, err := uploadChunk(message, *received, maxPayloadBytes)
+			if err != nil {
+				yield(nil, err)
+
+				return
+			}
+
+			*received += len(chunk)
+
+			if !yield(chunk, nil) {
+				return
+			}
+		}
+
+		if err := stream.Err(); err != nil {
+			yield(nil, err)
+
+			return
+		}
+
+		if !committed {
+			yield(nil, fmt.Errorf("%w: the upload ended without a commit", errInvalidUpload))
+		}
+	}
+}
+
+// uploadChunk validates one chunk message: it must be a chunk of at most
+// maxPayloadChunkBytes that keeps the running total within the payload cap.
+func uploadChunk(message *conveyorv1.EnqueueStreamRequest, received, maxPayloadBytes int) ([]byte, error) {
+	if message.GetHeader() != nil {
+		return nil, fmt.Errorf("%w: the task header must be sent once, first", errInvalidUpload)
+	}
+
+	chunk := message.GetChunk()
+	if len(chunk) > maxPayloadChunkBytes {
+		return nil, fmt.Errorf("%w: chunk is %d bytes, the maximum is %d", errInvalidUpload, len(chunk), maxPayloadChunkBytes)
+	}
+
+	if received+len(chunk) > maxPayloadBytes {
+		return nil, fmt.Errorf("%w: payload exceeds the maximum of %d bytes; store large blobs elsewhere and enqueue a reference", errInvalidUpload, maxPayloadBytes)
+	}
+
+	return chunk, nil
+}
+
+// streamEnqueueError maps a chunked enqueue failure to an API error: a rejected
+// upload is invalid_argument, a broken client stream keeps its own code, and
+// everything else maps as for Enqueue.
+func streamEnqueueError(err error) error {
+	if errors.Is(err, errInvalidUpload) {
+		return connect.NewError(connect.CodeInvalidArgument, err)
+	}
+
+	if connectErr := new(connect.Error); errors.As(err, &connectErr) {
+		return connectErr
+	}
+
+	return enqueueError(err)
+}
+
 // envelopeFromRequest validates one enqueue request and builds the durable
 // envelope, applying the server-side defaults.
 func (s *TaskService) envelopeFromRequest(request *conveyorv1.EnqueueRequest) (*conveyorv1.TaskEnvelope, error) {
@@ -239,8 +438,8 @@ func (s *TaskService) envelopeFromRequest(request *conveyorv1.EnqueueRequest) (*
 		return nil, fmt.Errorf("invalid queue name %q", queue)
 	}
 
-	if len(request.GetPayload()) > maxPayloadBytes {
-		return nil, fmt.Errorf("payload is %d bytes, the maximum is %d; store large blobs elsewhere and enqueue a reference", len(request.GetPayload()), maxPayloadBytes)
+	if err := checkInlinePayload(request.GetPayload(), s.taskLog.MaxPayloadBytes()); err != nil {
+		return nil, err
 	}
 
 	if request.GetProcessAt().IsValid() && request.GetProcessIn().IsValid() {
@@ -375,7 +574,19 @@ func taskInfo(envelope *conveyorv1.TaskEnvelope, state conveyorv1.TaskState) *co
 		ContentType:     envelope.GetContentType(),
 		Progress:        envelope.GetProgress(),
 		ProgressMessage: envelope.GetProgressMessage(),
+		PayloadChunked:  envelope.GetPayloadChunked(),
+		PayloadSize:     payloadSize(envelope),
 	}
+}
+
+// payloadSize is the stored payload size: the recorded size of a chunked
+// payload, or the length of an inline one.
+func payloadSize(envelope *conveyorv1.TaskEnvelope) uint64 {
+	if envelope.GetPayloadChunked() {
+		return envelope.GetPayloadSize()
+	}
+
+	return uint64(len(envelope.GetPayload()))
 }
 
 // enqueueError maps engine enqueue failures to API error codes.

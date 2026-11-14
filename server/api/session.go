@@ -101,6 +101,13 @@ func (s *sessionState) check(message *conveyorv1.WorkerMessage) error {
 
 		return validateProgress(frame.Progress)
 
+	case *conveyorv1.WorkerMessage_PayloadAck:
+		if !s.helloSeen {
+			return errFrameBeforeHello
+		}
+
+		return validatePayloadAck(frame.PayloadAck)
+
 	default:
 		if !s.helloSeen {
 			return errFrameBeforeHello
@@ -179,6 +186,20 @@ func validateBatchResult(batch *conveyorv1.BatchResult) error {
 func validateProgress(progress *conveyorv1.Progress) error {
 	if progress.GetTaskId() == "" {
 		return errors.New("protocol violation: Progress without task_id")
+	}
+
+	return nil
+}
+
+// validatePayloadAck checks a chunk-credit frame: it must name a task and
+// return at least one chunk.
+func validatePayloadAck(ack *conveyorv1.PayloadAck) error {
+	if ack.GetTaskId() == "" {
+		return errors.New("protocol violation: PayloadAck without task_id")
+	}
+
+	if ack.GetChunks() == 0 {
+		return errors.New("protocol violation: PayloadAck returning no chunks")
 	}
 
 	return nil

@@ -190,6 +190,7 @@ func (w *Worker) runSession(ctx context.Context, mux *Mux) (bool, error) {
 				SdkVersion:       sdkVersion(),
 				MinServerVersion: w.minServerVersion,
 				BatchTypes:       mux.batchTypes(),
+				PayloadStreaming: true,
 			},
 		},
 	}
@@ -209,13 +210,15 @@ func (w *Worker) runSession(ctx context.Context, mux *Mux) (bool, error) {
 	}
 
 	session := &workerSession{
-		stream:     stream,
-		mux:        mux,
-		slots:      make(chan struct{}, w.concurrency),
-		cancels:    make(map[string]context.CancelCauseFunc),
-		sessionID:  welcome.GetSessionId(),
-		runContext: ctx,
-		encryptor:  w.encryptor,
+		stream:      stream,
+		mux:         mux,
+		slots:       make(chan struct{}, w.concurrency),
+		cancels:     make(map[string]context.CancelCauseFunc),
+		sessionID:   welcome.GetSessionId(),
+		runContext:  ctx,
+		encryptor:   w.encryptor,
+		payloads:    make(map[string]*payloadAssembly),
+		chunkWindow: chunkWindow(welcome),
 	}
 
 	return true, session.run(welcome.GetHeartbeatInterval().AsDuration())
@@ -243,6 +246,11 @@ type workerSession struct {
 	runContext context.Context
 	// encryptor opens encrypted payloads on dispatch; nil expects plaintext.
 	encryptor encryption.Encryptor
+	// payloads maps a task id to its chunked payload still arriving. Only the
+	// receive loop touches it, so it needs no lock.
+	payloads map[string]*payloadAssembly
+	// chunkWindow is how many unacknowledged chunks per task the server sends.
+	chunkWindow int
 }
 
 // run drives the receive loop and the heartbeat until the stream ends.
@@ -252,6 +260,7 @@ type workerSession struct {
 // close, so an abrupt disconnect reaches the same penalty-free outcome.
 func (s *workerSession) run(heartbeatInterval time.Duration) error {
 	defer s.cancelAll()
+	defer s.abortPayloads()
 
 	done := make(chan struct{})
 	defer close(done)
@@ -292,6 +301,9 @@ func (s *workerSession) run(heartbeatInterval time.Duration) error {
 
 		case *conveyorv1.ServerMessage_Cancel:
 			s.cancel(frame.Cancel.GetTaskId())
+
+		case *conveyorv1.ServerMessage_PayloadChunk:
+			s.receiveChunk(frame.PayloadChunk)
 
 		default:
 			// Welcome duplicates and Pings need no action.
@@ -349,13 +361,127 @@ func (s *workerSession) dispatch(dispatch *conveyorv1.Dispatch) {
 	s.cancels[task.GetId()] = cancel
 	s.stateMutex.Unlock()
 
-	go s.execute(executionCtx, release, task)
+	if !task.GetPayloadChunked() {
+		go s.execute(executionCtx, release, task, nil)
+
+		return
+	}
+
+	opener, err := s.chunkOpener(task)
+	if err != nil {
+		release()
+		s.finish(executionCtx, task.GetId(), err)
+
+		return
+	}
+
+	ack := s.chunkAcker(task.GetId())
+
+	// A streaming handler starts now and reads the chunks as they arrive.
+	if s.mux.streams(task.GetType()) {
+		stream := newChunkStream(s.chunkWindow, ack)
+		s.payloads[task.GetId()] = &payloadAssembly{opener: opener, stream: stream}
+
+		go s.execute(executionCtx, release, task, stream)
+
+		return
+	}
+
+	// Any other handler runs once the payload is reassembled. The task stays
+	// registered meanwhile, so heartbeats keep its lease alive.
+	s.payloads[task.GetId()] = &payloadAssembly{
+		opener: opener,
+		ack:    ack,
+		complete: func(payload []byte, err error) {
+			if err != nil {
+				release()
+				s.finish(executionCtx, task.GetId(), err)
+
+				return
+			}
+
+			task.Payload = payload
+			task.PayloadChunked = false
+
+			go s.execute(executionCtx, release, task, nil)
+		},
+	}
+}
+
+// chunkWindow returns the per-task chunk window the server advertised.
+func chunkWindow(welcome *conveyorv1.Welcome) int {
+	if window := welcome.GetPayloadChunkWindow(); window > 0 {
+		return int(window)
+	}
+
+	return defaultPayloadChunkWindow
+}
+
+// chunkAcker returns the acknowledgement for one consumed chunk of a task's
+// payload, granting the server credit for the next. A send failure means the
+// stream is gone, so it is dropped.
+func (s *workerSession) chunkAcker(taskID string) func() {
+	ack := &conveyorv1.WorkerMessage{
+		Frame: &conveyorv1.WorkerMessage_PayloadAck{PayloadAck: &conveyorv1.PayloadAck{TaskId: taskID, Chunks: 1}},
+	}
+
+	return func() { _ = s.send(ack) }
+}
+
+// chunkOpener returns the opener for an end-to-end encrypted chunked payload,
+// stripping the encryption marker since the chunks are decrypted as they
+// arrive; it returns nil for a plaintext payload. A marked payload fails when
+// the worker has no Encryptor.
+func (s *workerSession) chunkOpener(envelope *conveyorv1.TaskEnvelope) (*encryption.ChunkOpener, error) {
+	metadata := envelope.GetMetadata()
+	if metadata[encryptionMarkerKey] == "" {
+		return nil, nil
+	}
+
+	if s.encryptor == nil {
+		return nil, fmt.Errorf("conveyor: task %q is encrypted but the worker has no Encryptor (WithEncryption)", envelope.GetId())
+	}
+
+	delete(metadata, encryptionMarkerKey)
+
+	return encryption.NewChunkOpener(s.encryptor), nil
+}
+
+// abortPayloads ends every payload still arriving when the session ends: a
+// streaming handler's reader reports errSessionEnded instead of waiting for
+// chunks that will never come, and a buffered payload's task reports it. It
+// runs on the receive loop's goroutine as the loop exits.
+func (s *workerSession) abortPayloads() {
+	for taskID, assembly := range s.payloads {
+		assembly.finish(nil, errSessionEnded)
+		delete(s.payloads, taskID)
+	}
+}
+
+// receiveChunk applies one PayloadChunk frame to its task's payload. A chunk
+// for a task with no payload in progress (its dispatch failed, or its payload
+// already ended in error) is dropped.
+func (s *workerSession) receiveChunk(chunk *conveyorv1.PayloadChunk) {
+	assembly, ok := s.payloads[chunk.GetTaskId()]
+	if !ok {
+		return
+	}
+
+	if assembly.add(s.runContext, chunk) {
+		delete(s.payloads, chunk.GetTaskId())
+	}
 }
 
 // execute waits for a slot, runs the handler, and reports the result. release
-// frees the execution context once the task is done.
-func (s *workerSession) execute(ctx context.Context, release func(), envelope *conveyorv1.TaskEnvelope) {
+// frees the execution context once the task is done. stream, when set, feeds a
+// streaming handler the chunked payload; it is abandoned once the handler
+// returns, so unread chunks never stall the session.
+func (s *workerSession) execute(ctx context.Context, release func(), envelope *conveyorv1.TaskEnvelope, stream *chunkStream) {
 	defer release()
+
+	if stream != nil {
+		defer stream.abandon()
+	}
 
 	select {
 	case s.slots <- struct{}{}:
@@ -374,6 +500,9 @@ func (s *workerSession) execute(ctx context.Context, release func(), envelope *c
 	}
 
 	task := newTaskFromEnvelope(envelope)
+	if stream != nil {
+		task.payloadReader = stream
+	}
 
 	handler, ok := s.mux.handler(task.taskType)
 	if !ok {

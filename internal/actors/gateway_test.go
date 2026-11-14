@@ -170,6 +170,8 @@ type frameRecorder struct {
 	frames []*conveyorv1.ServerMessage
 	// failure, when non-nil, is returned by every Send.
 	failure error
+	// chunkFailure, when non-nil, is returned by every PayloadChunk Send.
+	chunkFailure error
 	// dispatched receives every Dispatch frame as it is sent.
 	dispatched chan *conveyorv1.Dispatch
 }
@@ -188,6 +190,10 @@ func (r *frameRecorder) Send(message *conveyorv1.ServerMessage) error {
 		return r.failure
 	}
 
+	if r.chunkFailure != nil && message.GetPayloadChunk() != nil {
+		return r.chunkFailure
+	}
+
 	r.frames = append(r.frames, message)
 
 	if dispatch := message.GetDispatch(); dispatch != nil {
@@ -203,6 +209,22 @@ func (r *frameRecorder) fail(err error) {
 	defer r.mutex.Unlock()
 
 	r.failure = err
+}
+
+// payloadChunks returns the PayloadChunk frames sent so far for one task.
+func (r *frameRecorder) payloadChunks(taskID string) []*conveyorv1.PayloadChunk {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+
+	var chunks []*conveyorv1.PayloadChunk
+
+	for _, frame := range r.frames {
+		if chunk := frame.GetPayloadChunk(); chunk != nil && chunk.GetTaskId() == taskID {
+			chunks = append(chunks, chunk)
+		}
+	}
+
+	return chunks
 }
 
 // cancels returns the task ids of all Cancel frames sent so far.

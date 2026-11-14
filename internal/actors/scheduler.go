@@ -39,6 +39,8 @@ func wakeQueue(ctx context.Context, system goakt.ActorSystem, runtime *Runtime, 
 type Scheduler struct {
 	// runtime is the engine runtime.
 	runtime *Runtime
+	// passes runs one promotion pass at a time off the mailbox turn.
+	passes passGate
 }
 
 // enforce interface compliance at compile time.
@@ -57,19 +59,27 @@ func (s *Scheduler) PreStart(ctx *goakt.Context) error {
 	}
 
 	s.runtime = runtime
+	// A restart reuses this instance; a pass that ended while it was stopped
+	// never reported, so the gate is cleared here.
+	s.passes = passGate{}
 	return nil
 }
 
-// Receive handles promotion ticks. Broker I/O runs synchronously: the
-// scheduler's mailbox carries only its own ticks, so blocking one turn
-// merely delays the next tick.
+// Receive handles promotion ticks. Each pass runs off the turn through the
+// pass gate: the mailbox carries only ticks, but a turn that waited on the
+// broker would still hold a worker of the dispatcher pool every actor and
+// grain on the node shares.
 func (s *Scheduler) Receive(ctx *goakt.ReceiveContext) {
 	switch ctx.Message().(type) {
 	case *goakt.PostStart:
 		s.scheduleTicks(ctx)
 
 	case *conveyorv1.PromoteTick:
-		s.promote(ctx)
+		system, runtime := ctx.ActorSystem(), s.runtime
+		s.passes.start(ctx, func(goCtx context.Context) { promote(goCtx, system, runtime) })
+
+	case passFinished:
+		s.passes.finish()
 
 	default:
 		ctx.Unhandled()
@@ -94,29 +104,19 @@ func (s *Scheduler) PostStop(_ *goakt.Context) error {
 }
 
 // promote runs one promotion pass and one cron materialization pass, waking
-// the queues that gained work.
-func (s *Scheduler) promote(ctx *goakt.ReceiveContext) {
-	goCtx := ctx.Context()
-
-	queues, err := s.runtime.Broker().PromoteScheduled(goCtx, s.runtime.Settings().LeaseBatchMax)
+// the queues that gained work. It is a PipeTo task body: it uses only the
+// actor system and runtime it is given.
+func promote(goCtx context.Context, system goakt.ActorSystem, runtime *Runtime) {
+	queues, err := runtime.Broker().PromoteScheduled(goCtx, runtime.Settings().LeaseBatchMax)
 	if err != nil {
-		s.failed(goCtx, metrics.PassPromoteScheduled, "promoting scheduled tasks failed", err)
+		failedPass(goCtx, runtime, metrics.PassPromoteScheduled, "promoting scheduled tasks failed", err)
 	} else {
 		for _, queue := range queues {
-			wakeQueue(goCtx, ctx.ActorSystem(), s.runtime, queue, 0)
+			wakeQueue(goCtx, system, runtime, queue, 0)
 		}
 	}
 
-	s.materializeCron(ctx)
-}
-
-// failed records one failed maintenance pass: it logs the error and counts it
-// under the pass, so a broker fault that keeps a pass from running is visible
-// beyond the log. Cron sub-steps share the cron pass, with the entry id in the
-// log line.
-func (s *Scheduler) failed(ctx context.Context, pass, message string, err error, fields ...any) {
-	s.runtime.Logger().Warn(message, append([]any{"pass", pass, "error", err}, fields...)...)
-	s.runtime.Metrics().MaintenanceFailure(ctx, pass)
+	materializeCron(goCtx, system, runtime)
 }
 
 // materializeCron fires every cron entry that is due, enqueuing a task for the
@@ -126,74 +126,73 @@ func (s *Scheduler) failed(ctx context.Context, pass, message string, err error,
 // schedulers racing the same slot during a relocation, and the compare-and-set
 // cursor advance keeps a stale scheduler from moving the cursor backward and
 // re-firing. A surviving duplicate stays within the at-least-once contract.
-func (s *Scheduler) materializeCron(ctx *goakt.ReceiveContext) {
-	goCtx := ctx.Context()
-	now := s.runtime.Clock().Now()
+func materializeCron(goCtx context.Context, system goakt.ActorSystem, runtime *Runtime) {
+	now := runtime.Clock().Now()
 
-	entries, err := s.runtime.Broker().ListDueCronEntries(goCtx, now)
+	entries, err := runtime.Broker().ListDueCronEntries(goCtx, now)
 	if err != nil {
-		s.failed(goCtx, metrics.PassCron, "listing due cron entries failed", err)
+		failedPass(goCtx, runtime, metrics.PassCron, "listing due cron entries failed", err)
 
 		return
 	}
 
 	for _, entry := range entries {
 		if entry.NextRunAt.IsZero() {
-			s.armCron(goCtx, entry, now)
+			armCron(goCtx, runtime, entry, now)
 
 			continue
 		}
 
-		s.fireCron(goCtx, ctx, entry, now)
+		fireCron(goCtx, system, runtime, entry, now)
 	}
 }
 
 // armCron computes a new entry's first fire time and persists it without
 // firing, so a just-created entry waits for its first real slot.
-func (s *Scheduler) armCron(ctx context.Context, entry *broker.CronEntry, now time.Time) {
+func armCron(ctx context.Context, runtime *Runtime, entry *broker.CronEntry, now time.Time) {
 	next, err := cron.NextFire(entry.Spec, now)
 	if err != nil {
-		s.failed(ctx, metrics.PassCron, "arming cron entry failed", err, "id", entry.ID)
+		failedPass(ctx, runtime, metrics.PassCron, "arming cron entry failed", err, "id", entry.ID)
 
 		return
 	}
 
 	// Expected is the zero time: arm only while the entry is still unarmed.
-	if err := s.runtime.Broker().UpdateCronNextRun(ctx, entry.ID, time.Time{}, next); err != nil {
-		s.failed(ctx, metrics.PassCron, "persisting cron next run failed", err, "id", entry.ID)
+	if err := runtime.Broker().UpdateCronNextRun(ctx, entry.ID, time.Time{}, next); err != nil {
+		failedPass(ctx, runtime, metrics.PassCron, "persisting cron next run failed", err, "id", entry.ID)
 	}
 }
 
 // fireCron materializes the due slot and advances the cursor past now. A
 // duplicate-task outcome is success: another scheduler already fired the slot.
 // A real enqueue error leaves the cursor unchanged so the next tick retries.
-func (s *Scheduler) fireCron(goCtx context.Context, ctx *goakt.ReceiveContext, entry *broker.CronEntry, now time.Time) {
-	task := cron.MaterializeTask(entry, entry.NextRunAt, s.runtime.NewID())
+func fireCron(goCtx context.Context, system goakt.ActorSystem, runtime *Runtime, entry *broker.CronEntry, now time.Time) {
+	task := cron.MaterializeTask(entry, entry.NextRunAt, runtime.NewID())
 
-	switch err := s.runtime.Broker().Enqueue(goCtx, task); {
+	switch err := runtime.Broker().Enqueue(goCtx, task); {
 	case err == nil:
-		s.runtime.Counters().Enqueued.Add(1)
-		wakeQueue(goCtx, ctx.ActorSystem(), s.runtime, entry.Queue, 0)
+		runtime.Counters().Enqueued.Add(1)
+		wakeQueue(goCtx, system, runtime, entry.Queue, 0)
 
 	case errors.Is(err, broker.ErrDuplicateTask):
 		// Slot already materialized (failover/double-tick); advancing is safe.
 
 	default:
-		s.failed(goCtx, metrics.PassCron, "materializing cron task failed", err, "id", entry.ID)
+		failedPass(goCtx, runtime, metrics.PassCron, "materializing cron task failed", err, "id", entry.ID)
 
 		return
 	}
 
 	next, err := cron.NextFire(entry.Spec, now)
 	if err != nil {
-		s.failed(goCtx, metrics.PassCron, "advancing cron entry failed", err, "id", entry.ID)
+		failedPass(goCtx, runtime, metrics.PassCron, "advancing cron entry failed", err, "id", entry.ID)
 
 		return
 	}
 
 	// Compare-and-set on the slot we just fired: if another scheduler already
 	// advanced, this is a no-op and the cursor never moves backward.
-	if err := s.runtime.Broker().UpdateCronNextRun(goCtx, entry.ID, entry.NextRunAt, next); err != nil {
-		s.failed(goCtx, metrics.PassCron, "persisting cron next run failed", err, "id", entry.ID)
+	if err := runtime.Broker().UpdateCronNextRun(goCtx, entry.ID, entry.NextRunAt, next); err != nil {
+		failedPass(goCtx, runtime, metrics.PassCron, "persisting cron next run failed", err, "id", entry.ID)
 	}
 }

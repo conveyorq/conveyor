@@ -15,6 +15,7 @@ import (
 
 	goakt "github.com/tochemey/goakt/v4/actor"
 	"github.com/tochemey/goakt/v4/breaker"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/conveyorq/conveyor/internal/backoff"
@@ -115,6 +116,10 @@ type GatewaySession struct {
 	// BatchTypes are the task types this worker handles as batches, advertised
 	// to queue grains so a fired group dispatches only to a capable gateway.
 	BatchTypes []string
+	// PayloadStreaming records that the worker accepts chunked payloads as
+	// PayloadChunk frames. A worker without it receives chunked payloads
+	// reassembled inline.
+	PayloadStreaming bool
 }
 
 // inflightTask is the gateway's record of one dispatched, unresolved task.
@@ -171,6 +176,17 @@ type Gateway struct {
 	capacities map[string]int32
 	// inflight tracks dispatched tasks by id until their result arrives.
 	inflight map[string]*inflightTask
+	// payloadStreams tracks each chunked payload still being streamed to the
+	// worker, by task id.
+	payloadStreams map[string]*payloadStream
+	// nextStreamID is the id given to the most recent payload stream.
+	nextStreamID uint64
+	// outbox holds frames waiting for the worker, in send order.
+	outbox []outboundFrame
+	// flushing records that an outbox flush is in flight.
+	flushing bool
+	// nextFlushID is the id given to the most recent outbox flush.
+	nextFlushID uint64
 	// batches maps a batch lease id to its member task ids, so a BatchResult
 	// can resolve the whole group (and release members the worker omitted).
 	batches map[string][]string
@@ -210,6 +226,13 @@ func (g *Gateway) PreStart(ctx *goakt.Context) error {
 	g.capacities = splitCapacity(g.session.Concurrency, g.session.Queues, g.session.Weights)
 	g.inflight = make(map[string]*inflightTask)
 	g.batches = make(map[string][]string)
+	g.payloadStreams = make(map[string]*payloadStream)
+	// A restart reuses this instance, so in-flight markers are cleared here: a
+	// completion that reached the stopped incarnation was dropped and would
+	// otherwise leave them set for good. nextStreamID and nextFlushID keep
+	// counting, so a late report from before the restart never matches.
+	g.outbox = nil
+	g.flushing = false
 	g.breakers = make(map[string]*breaker.CircuitBreaker)
 	g.draining = false
 
@@ -315,10 +338,10 @@ func (g *Gateway) Receive(ctx *goakt.ReceiveContext) {
 		ctx.Response(sessionDrained{queues: g.session.Queues})
 
 	case *conveyorv1.ExecuteTask:
-		g.dispatch(message)
+		g.dispatch(ctx, message)
 
 	case *conveyorv1.ExecuteBatch:
-		g.dispatchBatch(message)
+		g.dispatchBatch(ctx, message)
 
 	case *conveyorv1.Result:
 		g.result(ctx, message)
@@ -336,10 +359,34 @@ func (g *Gateway) Receive(ctx *goakt.ReceiveContext) {
 		g.credit(ctx, message)
 
 	case *conveyorv1.CancelActive:
-		g.cancelActive(message)
+		g.cancelActive(ctx, message)
 
 	case deferredCompletion:
 		g.reportCompletion(ctx, message.queue, message.taskID, message.success)
+
+	case assembledDispatch:
+		g.enqueueFrame(ctx, message.frame)
+
+	case framesFlushed:
+		g.outboxFlushed(ctx, message)
+
+	case outcomeApplied:
+		g.outcomeApplied(ctx, message)
+
+	case batchOutcomeApplied:
+		g.batchOutcomeApplied(ctx, message)
+
+	case leasesExtended:
+		g.leasesExtended(ctx, message)
+
+	case brokerWritten:
+		// Best-effort broker writes finished; their failures were logged.
+
+	case chunksSent:
+		g.payloadSent(ctx, message)
+
+	case *conveyorv1.PayloadAck:
+		g.payloadAck(ctx, message)
 
 	default:
 		ctx.Unhandled()
@@ -361,21 +408,22 @@ func (g *Gateway) PostStop(_ *goakt.Context) error {
 // worker shutdown and worker crashes alike: the session handler requests
 // it whenever the stream ends, for any reason.
 func (g *Gateway) drain(ctx *goakt.ReceiveContext) {
-	goCtx := ctx.Context()
-	taskLog := g.runtime.Broker()
+	refs := make([]leaseRef, 0, len(g.inflight))
 
 	for taskID, entry := range g.inflight {
-		err := taskLog.Release(goCtx, taskID, entry.leaseID)
-		if err != nil && !errors.Is(err, broker.ErrLeaseLost) {
-			g.runtime.Logger().Warn("releasing in-flight task on session close failed", "task_id", taskID, "error", err)
-		}
-
+		refs = append(refs, leaseRef{taskID: taskID, leaseID: entry.leaseID})
 		g.runtime.Counters().Active.Add(-1)
 	}
 
 	g.inflight = make(map[string]*inflightTask)
 	g.batches = make(map[string][]string)
+	g.payloadStreams = make(map[string]*payloadStream)
+	g.outbox = nil
 	g.draining = true
+
+	// Tracking is cleared in this turn, so nothing later can act on these
+	// deliveries; the leases themselves are handed back off the turn.
+	pipeLeaseReleases(ctx, g.runtime, refs, "releasing in-flight task on session close failed")
 	g.runtime.Logger().Debug("gateway drained", "gateway", g.name, "session_id", g.session.SessionID)
 }
 
@@ -409,8 +457,10 @@ func (g *Gateway) serves(queue string) bool {
 // dispatch forwards one leased task down the worker stream and tracks it
 // until its result arrives. A send failure means the stream is broken: the
 // task is released immediately instead of waiting for lease expiry; the
-// session handler is about to stop this gateway.
-func (g *Gateway) dispatch(message *conveyorv1.ExecuteTask) {
+// session handler is about to stop this gateway. A chunked payload follows
+// the Dispatch as PayloadChunk frames, or is reassembled inline first for a
+// worker that does not stream payloads; either way off the mailbox turn.
+func (g *Gateway) dispatch(ctx *goakt.ReceiveContext, message *conveyorv1.ExecuteTask) {
 	task := message.GetTask()
 
 	now := g.runtime.Clock().Now()
@@ -430,27 +480,20 @@ func (g *Gateway) dispatch(message *conveyorv1.ExecuteTask) {
 		g.runtime.Metrics().RecordQueueLatency(context.Background(), now.Sub(enqueuedAt.AsTime()).Seconds(), task.GetQueue())
 	}
 
-	frame := &conveyorv1.ServerMessage{
-		Frame: &conveyorv1.ServerMessage_Dispatch{
-			Dispatch: &conveyorv1.Dispatch{
-				Task:     task,
-				Deadline: g.executionDeadline(message),
+	deadline := g.executionDeadline(message)
+	build := func(tasks []*conveyorv1.TaskEnvelope) *conveyorv1.ServerMessage {
+		return &conveyorv1.ServerMessage{
+			Frame: &conveyorv1.ServerMessage_Dispatch{
+				Dispatch: &conveyorv1.Dispatch{Task: tasks[0], Deadline: deadline},
 			},
-		},
-	}
-
-	if err := g.sender.Send(frame); err != nil {
-		delete(g.inflight, task.GetId())
-
-		releaseErr := g.runtime.Broker().Release(context.Background(), task.GetId(), message.GetLeaseId())
-		if releaseErr != nil && !errors.Is(releaseErr, broker.ErrLeaseLost) {
-			g.runtime.Logger().Warn("releasing undeliverable task failed", "task_id", task.GetId(), "error", releaseErr)
 		}
-
-		g.runtime.Counters().Active.Add(-1)
-		g.runtime.Counters().Released.Add(1)
-		g.runtime.Logger().Warn("dispatch send failed; task released", "task_id", task.GetId(), "error", err)
 	}
+
+	taskID := task.GetId()
+	delivery := &outboundDelivery{leaseID: message.GetLeaseId(), taskIDs: []string{taskID}}
+
+	g.sendDispatch(ctx, delivery, []*conveyorv1.TaskEnvelope{task}, build,
+		func(err error) proto.Message { return retryResult(taskID, err) })
 }
 
 // executionDeadline computes the effective deadline of one delivery:
@@ -474,22 +517,10 @@ func (g *Gateway) result(ctx *goakt.ReceiveContext, message *conveyorv1.Result) 
 	}
 
 	delete(g.inflight, message.GetTaskId())
-
-	success, terminal := applyOutcome(ctx.Context(), g.runtime, entry, message)
+	g.endPayloadStreams(message.GetTaskId())
 	g.recordOutcome(entry.taskType, message.GetOutcome())
 
-	if terminal {
-		g.resolveDependents(ctx, message.GetTaskId())
-	}
-
-	if g.breakerFor(entry.taskType).State() == breaker.Open {
-		g.runtime.Metrics().BreakerOpen(context.Background())
-		g.deferCompletion(ctx, entry.queue, message.GetTaskId(), success)
-
-		return
-	}
-
-	g.reportCompletion(ctx, entry.queue, message.GetTaskId(), success)
+	pipeOutcome(ctx, g.runtime, message.GetTaskId(), entry, message)
 }
 
 // progress records a running task's latest reported progress under its lease.
@@ -504,9 +535,17 @@ func (g *Gateway) progress(ctx *goakt.ReceiveContext, message *conveyorv1.Progre
 		return
 	}
 
-	if err := g.runtime.Broker().SetProgress(ctx.Context(), message.GetTaskId(), entry.leaseID, message.GetPercent(), message.GetMessage()); err != nil {
-		g.runtime.Logger().Debug("recording task progress failed", "task_id", message.GetTaskId(), "error", err)
-	}
+	leaseID := entry.leaseID
+	taskLog := g.runtime.Broker()
+	logger := g.runtime.Logger()
+
+	ctx.PipeTo(ctx.Self(), func() (any, error) {
+		if err := taskLog.SetProgress(context.Background(), message.GetTaskId(), leaseID, message.GetPercent(), message.GetMessage()); err != nil {
+			logger.Debug("recording task progress failed", "task_id", message.GetTaskId(), "error", err)
+		}
+
+		return brokerWritten{}, nil
+	})
 }
 
 // strategyFor resolves the retry backoff for a dispatched task: its own policy
@@ -721,41 +760,19 @@ func (g *Gateway) deferCompletion(ctx *goakt.ReceiveContext, queue, taskID strin
 // grain, since the worker's eventual result for it is dropped as unknown and
 // would otherwise never refill it.
 func (g *Gateway) heartbeat(ctx *goakt.ReceiveContext, message *conveyorv1.Heartbeat) {
-	goCtx := ctx.Context()
-	taskLog := g.runtime.Broker()
-	ttl := g.runtime.Settings().LeaseTTL
+	refs := make([]leaseRef, 0, len(message.GetActiveTaskIds()))
 
 	for _, taskID := range message.GetActiveTaskIds() {
-		entry, ok := g.inflight[taskID]
-		if !ok {
-			continue
+		if entry, ok := g.inflight[taskID]; ok {
+			refs = append(refs, leaseRef{taskID: taskID, leaseID: entry.leaseID})
 		}
-
-		err := taskLog.ExtendLease(goCtx, taskID, entry.leaseID, ttl)
-		if err == nil {
-			continue
-		}
-
-		if !errors.Is(err, broker.ErrLeaseLost) {
-			g.runtime.Logger().Warn("lease extension failed", "task_id", taskID, "error", err)
-
-			continue
-		}
-
-		delete(g.inflight, taskID)
-		g.runtime.Counters().Active.Add(-1)
-		g.refundLostLease(ctx, entry)
-
-		cancel := &conveyorv1.ServerMessage{
-			Frame: &conveyorv1.ServerMessage_Cancel{Cancel: &conveyorv1.Cancel{TaskId: taskID}},
-		}
-
-		if sendErr := g.sender.Send(cancel); sendErr != nil {
-			g.runtime.Logger().Warn("cancel frame send failed", "task_id", taskID, "error", sendErr)
-		}
-
-		g.runtime.Logger().Debug("lease lost; worker canceled", "task_id", taskID, "gateway", g.name)
 	}
+
+	if len(refs) == 0 {
+		return
+	}
+
+	pipeLeaseExtensions(ctx, g.runtime, refs)
 }
 
 // refundLostLease returns the dispatch credit a delivery held when its lease
@@ -796,25 +813,15 @@ func (g *Gateway) refillCredit(ctx *goakt.ReceiveContext, queue string) {
 // and is dropped. The delivery is marked so the handler's aborted attempt
 // archives instead of earning a retry; only a genuine success outcome
 // still completes the task.
-func (g *Gateway) cancelActive(message *conveyorv1.CancelActive) {
+func (g *Gateway) cancelActive(ctx *goakt.ReceiveContext, message *conveyorv1.CancelActive) {
 	entry, ok := g.inflight[message.GetTaskId()]
 	if !ok {
 		return
 	}
 
 	entry.cancelRequested = true
-
-	cancel := &conveyorv1.ServerMessage{
-		Frame: &conveyorv1.ServerMessage_Cancel{Cancel: &conveyorv1.Cancel{TaskId: message.GetTaskId()}},
-	}
-
-	if err := g.sender.Send(cancel); err != nil {
-		g.runtime.Logger().Warn("admin cancel frame send failed", "task_id", message.GetTaskId(), "error", err)
-
-		return
-	}
-
-	g.runtime.Logger().Debug("admin cancel forwarded to worker", "task_id", message.GetTaskId(), "gateway", g.name)
+	g.enqueueFrame(ctx, cancelFrame(message.GetTaskId()))
+	g.runtime.Logger().Debug("admin cancel queued for worker", "task_id", message.GetTaskId(), "gateway", g.name)
 }
 
 // credit forwards worker-opened slots to every declared queue grain. The

@@ -6,6 +6,7 @@ package actors
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	goakt "github.com/tochemey/goakt/v4/actor"
 	goaktlog "github.com/tochemey/goakt/v4/log"
 
+	"github.com/conveyorq/conveyor/internal/broker"
 	"github.com/conveyorq/conveyor/internal/broker/memory"
 	"github.com/conveyorq/conveyor/internal/clock"
 	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
@@ -185,4 +187,79 @@ func TestDependencyContinuesAfterDependencyFailure(t *testing.T) {
 
 		return archiveErr == nil && archived == 1
 	}, time.Minute, 20*time.Millisecond, "the failed dependency stays archived")
+}
+
+// blockingResolveBroker blocks every ResolveDependents until released and
+// tracks how many run at once.
+type blockingResolveBroker struct {
+	broker.Broker
+	// running counts resolutions in progress.
+	running atomic.Int32
+	// peak is the highest number of resolutions seen in progress at once.
+	peak atomic.Int32
+	// calls counts resolutions started.
+	calls atomic.Int32
+	// release unblocks one resolution per receive.
+	release chan struct{}
+}
+
+// ResolveDependents blocks until released, recording concurrency.
+func (b *blockingResolveBroker) ResolveDependents(_ context.Context, _ string) ([]string, error) {
+	b.calls.Add(1)
+	now := b.running.Add(1)
+
+	for {
+		peak := b.peak.Load()
+		if now <= peak || b.peak.CompareAndSwap(peak, now) {
+			break
+		}
+	}
+
+	<-b.release
+	b.running.Add(-1)
+
+	return nil, nil
+}
+
+func TestDependencyResolverRunsOneResolutionAtATime(t *testing.T) {
+	ctx := context.Background()
+	blocking := &blockingResolveBroker{Broker: memory.New(clock.System()), release: make(chan struct{})}
+	engine := startEngine(t, blocking)
+
+	pid, err := engine.System().Spawn(ctx, "resolver-one-at-a-time", NewDependencyResolver())
+	require.NoError(t, err)
+
+	for _, id := range []string{"task-1", "task-2", "task-3"} {
+		require.NoError(t, goakt.Tell(ctx, pid, &conveyorv1.ResolveDependents{TaskId: id}))
+	}
+
+	require.Eventually(t, func() bool { return blocking.calls.Load() == 1 }, 5*time.Second, 10*time.Millisecond)
+	require.Never(t, func() bool { return blocking.calls.Load() > 1 }, 200*time.Millisecond, 20*time.Millisecond,
+		"a routee queues requests while one resolution is in flight")
+
+	for range 3 {
+		blocking.release <- struct{}{}
+	}
+
+	require.Eventually(t, func() bool { return blocking.calls.Load() == 3 && blocking.running.Load() == 0 },
+		5*time.Second, 10*time.Millisecond, "the queued requests run in turn")
+	require.EqualValues(t, 1, blocking.peak.Load())
+}
+
+func TestDependencyResolverClearsInFlightStateOnStart(t *testing.T) {
+	ctx := context.Background()
+	counting := &callCountingBroker{Broker: memory.New(clock.System())}
+	system := startBareSystem(t, counting)
+
+	// As a restart that lost a resolution's completion would leave it.
+	resolver := &DependencyResolver{resolving: true, pending: []string{"task-stale"}}
+
+	pid, err := system.Spawn(ctx, "resolver-restarted", resolver)
+	require.NoError(t, err)
+	require.NoError(t, goakt.Tell(ctx, pid, &conveyorv1.ResolveDependents{TaskId: "task-1"}))
+
+	require.Eventually(t, func() bool { return counting.resolutions.Load() == 1 },
+		5*time.Second, 10*time.Millisecond, "a request after start is resolved")
+	require.Never(t, func() bool { return counting.resolutions.Load() > 1 },
+		200*time.Millisecond, 20*time.Millisecond, "requests queued before the restart died with its mailbox")
 }

@@ -26,6 +26,8 @@ const reapScheduleRef = "conveyor-reaper-reap"
 type Reaper struct {
 	// runtime is the engine runtime.
 	runtime *Runtime
+	// passes runs one maintenance pass at a time off the mailbox turn.
+	passes passGate
 }
 
 // enforce interface compliance at compile time.
@@ -44,18 +46,25 @@ func (r *Reaper) PreStart(ctx *goakt.Context) error {
 	}
 
 	r.runtime = runtime
+	// A restart reuses this instance; a pass that ended while it was stopped
+	// never reported, so the gate is cleared here.
+	r.passes = passGate{}
 	return nil
 }
 
-// Receive handles maintenance ticks. Broker I/O runs synchronously for the
-// same reason as the scheduler: the mailbox carries only ticks.
+// Receive handles maintenance ticks. Each pass runs off the turn through the
+// pass gate, so its broker round trips never hold a dispatcher worker.
 func (r *Reaper) Receive(ctx *goakt.ReceiveContext) {
 	switch ctx.Message().(type) {
 	case *goakt.PostStart:
 		r.scheduleTicks(ctx)
 
 	case *conveyorv1.ReapTick:
-		r.maintain(ctx)
+		system, runtime := ctx.ActorSystem(), r.runtime
+		r.passes.start(ctx, func(goCtx context.Context) { maintain(goCtx, system, runtime) })
+
+	case passFinished:
+		r.passes.finish()
 
 	default:
 		ctx.Unhandled()
@@ -79,32 +88,32 @@ func (r *Reaper) PostStop(_ *goakt.Context) error {
 	return nil
 }
 
-// maintain runs one maintenance pass: reap, purge, sweep.
-func (r *Reaper) maintain(ctx *goakt.ReceiveContext) {
-	goCtx := ctx.Context()
-	taskLog := r.runtime.Broker()
-	limit := r.runtime.Settings().LeaseBatchMax
+// maintain runs one maintenance pass: reap, purge, sweep. It is a PipeTo task
+// body: it uses only the actor system and runtime it is given.
+func maintain(goCtx context.Context, system goakt.ActorSystem, runtime *Runtime) {
+	taskLog := runtime.Broker()
+	limit := runtime.Settings().LeaseBatchMax
 
 	reaped, err := taskLog.ReapExpiredLeases(goCtx, limit)
 	if err != nil {
-		r.failed(goCtx, metrics.PassReap, "reaping expired leases failed", err)
+		failedPass(goCtx, runtime, metrics.PassReap, "reaping expired leases failed", err)
 	}
 
 	if len(reaped) > 0 {
-		r.runtime.Metrics().LeaseExpired(goCtx, len(reaped))
+		runtime.Metrics().LeaseExpired(goCtx, len(reaped))
 	}
 
 	for _, queue := range reaped {
-		r.runtime.Logger().Debug("expired leases reclaimed", "queue", queue)
-		wakeQueue(goCtx, ctx.ActorSystem(), r.runtime, queue, 0)
+		runtime.Logger().Debug("expired leases reclaimed", "queue", queue)
+		wakeQueue(goCtx, system, runtime, queue, 0)
 	}
 
-	if _, err = taskLog.PurgeTerminal(goCtx, r.runtime.Settings().ArchiveRetention, limit); err != nil {
-		r.failed(goCtx, metrics.PassPurge, "purging terminal tasks failed", err)
+	if _, err = taskLog.PurgeTerminal(goCtx, runtime.Settings().ArchiveRetention, limit); err != nil {
+		failedPass(goCtx, runtime, metrics.PassPurge, "purging terminal tasks failed", err)
 	}
 
 	if _, err = taskLog.ArchiveExpired(goCtx, limit); err != nil {
-		r.failed(goCtx, metrics.PassArchiveExpired, "archiving expired tasks failed", err)
+		failedPass(goCtx, runtime, metrics.PassArchiveExpired, "archiving expired tasks failed", err)
 	}
 
 	// Dependency safety net: promote any task whose dependencies have since
@@ -113,11 +122,11 @@ func (r *Reaper) maintain(ctx *goakt.ReceiveContext) {
 	// that received the freed work.
 	promoted, err := taskLog.PromoteReadyDependents(goCtx, limit)
 	if err != nil {
-		r.failed(goCtx, metrics.PassPromoteDependents, "promoting ready dependents failed", err)
+		failedPass(goCtx, runtime, metrics.PassPromoteDependents, "promoting ready dependents failed", err)
 	}
 
 	for _, queue := range promoted {
-		wakeQueue(goCtx, ctx.ActorSystem(), r.runtime, queue, 0)
+		wakeQueue(goCtx, system, runtime, queue, 0)
 	}
 
 	pending, err := taskLog.PendingCount(goCtx)
@@ -126,7 +135,7 @@ func (r *Reaper) maintain(ctx *goakt.ReceiveContext) {
 		// default Stop directive, so escalating a transient broker failure
 		// would stop the actor permanently and end all maintenance. Skipping
 		// the sweep is safe because the next ReapTick retries it.
-		r.failed(goCtx, metrics.PassPendingSweep, "sweeping pending counts failed", err)
+		failedPass(goCtx, runtime, metrics.PassPendingSweep, "sweeping pending counts failed", err)
 
 		return
 	}
@@ -135,20 +144,21 @@ func (r *Reaper) maintain(ctx *goakt.ReceiveContext) {
 
 	for queue, count := range pending {
 		if count > 0 {
-			wakeQueue(goCtx, ctx.ActorSystem(), r.runtime, queue, count)
+			wakeQueue(goCtx, system, runtime, queue, count)
 			swept++
 		}
 	}
 
 	if swept > 0 {
-		r.runtime.Metrics().WakeupsSwept(goCtx, swept)
+		runtime.Metrics().WakeupsSwept(goCtx, swept)
 	}
 }
 
-// failed records one failed maintenance pass: it logs the error and counts it
-// under the pass, so a broker fault that keeps a pass from running is visible
-// beyond the log.
-func (r *Reaper) failed(ctx context.Context, pass, message string, err error) {
-	r.runtime.Logger().Warn(message, "pass", pass, "error", err)
-	r.runtime.Metrics().MaintenanceFailure(ctx, pass)
+// failedPass records one failed maintenance pass: it logs the error and counts
+// it under the pass, so a broker fault that keeps a pass from running is
+// visible beyond the log. Extra fields, such as a cron entry id, join the log
+// line.
+func failedPass(ctx context.Context, runtime *Runtime, pass, message string, err error, fields ...any) {
+	runtime.Logger().Warn(message, append([]any{"pass", pass, "error", err}, fields...)...)
+	runtime.Metrics().MaintenanceFailure(ctx, pass)
 }

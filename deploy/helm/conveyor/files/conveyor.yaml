@@ -17,6 +17,8 @@ mode: {{ .Values.mode }}
 broker:
   # Broker driver: postgres or memory. The DSN arrives via CONVEYOR_BROKER__DSN.
   driver: {{ .Values.broker.driver }}
+  # Largest task or cron payload in bytes; at most 1 GiB.
+  max_payload_bytes: {{ int .Values.broker.maxPayloadBytes }}
   # Postgres connection pool. Zero keeps the driver default; the database must
   # admit replicaCount × max_conns because every node opens its own pool.
   pool:

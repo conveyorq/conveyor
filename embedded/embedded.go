@@ -140,7 +140,8 @@ func buildServerConfig(config Config) (*server.Config, error) {
 	}
 
 	serverConfig := server.DefaultConfig()
-	serverConfig.Broker = server.BrokerConfig{Driver: driver, DSN: config.Broker.dsn}
+	serverConfig.Broker.Driver = driver
+	serverConfig.Broker.DSN = config.Broker.dsn
 	serverConfig.API.Listen = loopbackAnyPort
 	// The embedded API binds an ephemeral loopback port for the in-process host
 	// only, so it runs without bearer-token auth.

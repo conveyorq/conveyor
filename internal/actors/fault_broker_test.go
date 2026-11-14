@@ -6,6 +6,7 @@ package actors
 
 import (
 	"context"
+	"iter"
 	"sync"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 // constants rather than bare strings.
 const (
 	methodEnqueue            = "Enqueue"
+	methodReadPayload        = "ReadPayload"
 	methodRelease            = "Release"
 	methodSetQueuePaused     = "SetQueuePaused"
 	methodReapExpiredLeases  = "ReapExpiredLeases"
@@ -89,6 +91,17 @@ func (f *faultBroker) Enqueue(ctx context.Context, task *conveyorv1.TaskEnvelope
 	}
 
 	return f.Broker.Enqueue(ctx, task)
+}
+
+// ReadPayload yields the armed error when armed, otherwise delegates.
+func (f *faultBroker) ReadPayload(ctx context.Context, taskID string, from, count int) iter.Seq2[[]byte, error] {
+	if err := f.armed(methodReadPayload); err != nil {
+		return func(yield func([]byte, error) bool) {
+			yield(nil, err)
+		}
+	}
+
+	return f.Broker.ReadPayload(ctx, taskID, from, count)
 }
 
 // Release fails when armed, otherwise delegates.

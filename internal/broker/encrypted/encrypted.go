@@ -22,6 +22,7 @@ package encrypted
 import (
 	"context"
 	"fmt"
+	"iter"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -80,6 +81,48 @@ func (e *encryptedBroker) EnqueueBatch(ctx context.Context, tasks []*conveyorv1.
 	}
 
 	return e.inner.EnqueueBatch(ctx, sealed)
+}
+
+// EnqueueChunked seals each payload chunk on its own with
+// encryption.SealChunks, then commits the task. An empty upload is stored as
+// one sealed empty chunk, so truncation is always detectable on read.
+func (e *encryptedBroker) EnqueueChunked(ctx context.Context, task *conveyorv1.TaskEnvelope, chunks iter.Seq2[[]byte, error]) error {
+	return e.inner.EnqueueChunked(ctx, task, encryption.SealChunks(ctx, e.encryptor, chunks))
+}
+
+// ReadPayload opens each chunk of the range in order with
+// encryption.ChunkOpener, failing on a reordered chunk, a chunk after the one
+// marked last, or a range the wrapped broker returns short.
+func (e *encryptedBroker) ReadPayload(ctx context.Context, taskID string, from, count int) iter.Seq2[[]byte, error] {
+	return func(yield func([]byte, error) bool) {
+		opener := encryption.NewChunkOpenerFrom(e.encryptor, uint64(from))
+		opened := 0
+
+		for sealed, err := range e.inner.ReadPayload(ctx, taskID, from, count) {
+			if err != nil {
+				yield(nil, err)
+
+				return
+			}
+
+			data, openErr := opener.Open(ctx, sealed)
+			if openErr != nil {
+				yield(nil, fmt.Errorf("broker/encrypted: decrypting payload chunk: %w", openErr))
+
+				return
+			}
+
+			opened++
+
+			if !yield(data, nil) {
+				return
+			}
+		}
+
+		if opened < count {
+			yield(nil, fmt.Errorf("broker/encrypted: decrypting payload: %w", encryption.ErrChunkTruncated))
+		}
+	}
 }
 
 // sealEnvelope returns task with its payload encrypted, on a clone so the
@@ -373,6 +416,13 @@ func (e *encryptedBroker) GroupConfigs(ctx context.Context) ([]broker.GroupConfi
 // Info delegates to the wrapped broker.
 func (e *encryptedBroker) Info(ctx context.Context) (broker.Info, error) {
 	return e.inner.Info(ctx)
+}
+
+// MaxPayloadBytes delegates to the wrapped broker. The cap applies to the
+// plaintext payload the API validates; the ciphertext's few extra bytes fall
+// within the API's per-task field allowance.
+func (e *encryptedBroker) MaxPayloadBytes() int {
+	return e.inner.MaxPayloadBytes()
 }
 
 // CancelTask delegates to the wrapped broker.

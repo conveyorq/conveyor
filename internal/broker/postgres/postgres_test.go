@@ -11,6 +11,7 @@ import (
 	"log"
 	"os"
 	"reflect"
+	"strconv"
 	"testing"
 	"time"
 
@@ -413,7 +414,7 @@ func truncateAll(tb testing.TB) {
 
 	defer func() { _ = connection.Close(ctx) }()
 
-	if _, err = connection.Exec(ctx, "TRUNCATE conveyor_tasks, conveyor_task_deps, conveyor_queue_state, conveyor_cron_entries, conveyor_rate_limits, conveyor_concurrency_limits, conveyor_group_configs, conveyor_webhook_workers"); err != nil {
+	if _, err = connection.Exec(ctx, "TRUNCATE conveyor_tasks, conveyor_task_payload_chunks, conveyor_task_deps, conveyor_queue_state, conveyor_cron_entries, conveyor_rate_limits, conveyor_concurrency_limits, conveyor_group_configs, conveyor_webhook_workers"); err != nil {
 		tb.Fatalf("truncate: %v", err)
 	}
 }
@@ -436,6 +437,28 @@ func newBroker(t *testing.T, timeSource clock.Clock) broker.Broker {
 
 func TestConformance(t *testing.T) {
 	brokertest.Run(t, newBroker)
+}
+
+// TestNewWithSettingsPayloadCap checks that a set payload cap is reported by
+// MaxPayloadBytes and Info, and that a zero cap keeps the default.
+func TestNewWithSettingsPayloadCap(t *testing.T) {
+	const payloadCap = 4096
+
+	ctx := context.Background()
+
+	defaulted, err := NewWithSettings(ctx, testDSN(), clock.System(), Settings{})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = defaulted.Close() })
+	require.Equal(t, broker.DefaultMaxPayloadBytes, defaulted.MaxPayloadBytes())
+
+	configured, err := NewWithSettings(ctx, testDSN(), clock.System(), Settings{MaxPayloadBytes: payloadCap})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = configured.Close() })
+	require.Equal(t, payloadCap, configured.MaxPayloadBytes())
+
+	info, err := configured.Info(ctx)
+	require.NoError(t, err)
+	require.Equal(t, strconv.Itoa(payloadCap), info.Metrics[broker.MaxPayloadBytesMetric])
 }
 
 // TestPoolErrorPropagation drives a database failure into the first statement
@@ -1229,4 +1252,209 @@ func TestAckBatchQueryError(t *testing.T) {
 	_, err := b.AckBatch(context.Background(), []broker.AckItem{{TaskID: "t", LeaseID: "l"}})
 	require.ErrorIs(t, err, errBoom)
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestEnqueueChunkedPaths drives every statement of a chunked enqueue through
+// a mocked pool: the existence check, the transaction, each chunk insert, the
+// task insert, and the commit.
+func TestEnqueueChunkedPaths(t *testing.T) {
+	ctx := context.Background()
+	task := &conveyorv1.TaskEnvelope{Id: "t", Queue: "q", Type: "demo"}
+	notExisting := func() *fakeRows { return newRows([]string{"exists"}).AddRow(false) }
+	oneChunk := func(yield func([]byte, error) bool) { yield([]byte("data"), nil) }
+	chunkConflict := &pgconn.PgError{Code: uniqueViolationCode, ConstraintName: payloadChunksPrimaryKey}
+	uniqueViolation := &pgconn.PgError{Code: uniqueViolationCode, ConstraintName: uniqueIndexName}
+
+	t.Run("existence check error", func(t *testing.T) {
+		b, mock := newMockBroker(t)
+		mock.ExpectQuery().WithArgCount(1).WillReturnError(errBoom)
+
+		require.ErrorIs(t, b.EnqueueChunked(ctx, task, oneChunk), errBoom)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("existing id is a no-op", func(t *testing.T) {
+		b, mock := newMockBroker(t)
+		mock.ExpectQuery().WithArgCount(1).WillReturnRows(newRows([]string{"exists"}).AddRow(true))
+
+		require.NoError(t, b.EnqueueChunked(ctx, task, oneChunk))
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("begin error", func(t *testing.T) {
+		b, mock := newMockBroker(t)
+		mock.ExpectQuery().WithArgCount(1).WillReturnRows(notExisting())
+		mock.ExpectBegin().WillReturnError(errBoom)
+
+		require.ErrorIs(t, b.EnqueueChunked(ctx, task, oneChunk), errBoom)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("idle timeout error", func(t *testing.T) {
+		b, mock := newMockBroker(t)
+		mock.ExpectQuery().WithArgCount(1).WillReturnRows(notExisting())
+		mock.ExpectBegin()
+		mock.ExpectExec().WithArgCount(1).WillReturnError(errBoom)
+		mock.ExpectRollback()
+
+		require.ErrorIs(t, b.EnqueueChunked(ctx, task, oneChunk), errBoom)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("chunk insert error", func(t *testing.T) {
+		b, mock := newMockBroker(t)
+		mock.ExpectQuery().WithArgCount(1).WillReturnRows(notExisting())
+		mock.ExpectBegin()
+		mock.ExpectExec().WithArgCount(1).WillReturnResult(pgconn.NewCommandTag("SELECT 1"))
+		mock.ExpectExec().WithArgCount(3).WillReturnError(errBoom)
+		mock.ExpectRollback()
+
+		require.ErrorIs(t, b.EnqueueChunked(ctx, task, oneChunk), errBoom)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("concurrent duplicate upload is a no-op", func(t *testing.T) {
+		b, mock := newMockBroker(t)
+		mock.ExpectQuery().WithArgCount(1).WillReturnRows(notExisting())
+		mock.ExpectBegin()
+		mock.ExpectExec().WithArgCount(1).WillReturnResult(pgconn.NewCommandTag("SELECT 1"))
+		mock.ExpectExec().WithArgCount(3).WillReturnError(chunkConflict)
+		mock.ExpectRollback()
+
+		require.NoError(t, b.EnqueueChunked(ctx, task, oneChunk))
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("task insert error", func(t *testing.T) {
+		b, mock := newMockBroker(t)
+		mock.ExpectQuery().WithArgCount(1).WillReturnRows(notExisting())
+		mock.ExpectBegin()
+		mock.ExpectExec().WithArgCount(1).WillReturnResult(pgconn.NewCommandTag("SELECT 1"))
+		mock.ExpectExec().WithArgCount(3).WillReturnResult(pgconn.NewCommandTag("INSERT 1"))
+		mock.ExpectExec().WithArgCount(18).WillReturnError(errBoom)
+		mock.ExpectRollback()
+
+		require.ErrorIs(t, b.EnqueueChunked(ctx, task, oneChunk), errBoom)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("commit unique violation", func(t *testing.T) {
+		b, mock := newMockBroker(t)
+		mock.ExpectQuery().WithArgCount(1).WillReturnRows(notExisting())
+		mock.ExpectBegin()
+		mock.ExpectExec().WithArgCount(1).WillReturnResult(pgconn.NewCommandTag("SELECT 1"))
+		mock.ExpectExec().WithArgCount(3).WillReturnResult(pgconn.NewCommandTag("INSERT 1"))
+		mock.ExpectExec().WithArgCount(18).WillReturnResult(pgconn.NewCommandTag("INSERT 1"))
+		mock.ExpectCommit().WillReturnError(uniqueViolation)
+		mock.ExpectRollback()
+
+		require.ErrorIs(t, b.EnqueueChunked(ctx, task, oneChunk), broker.ErrDuplicateTask)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("commit error", func(t *testing.T) {
+		b, mock := newMockBroker(t)
+		mock.ExpectQuery().WithArgCount(1).WillReturnRows(notExisting())
+		mock.ExpectBegin()
+		mock.ExpectExec().WithArgCount(1).WillReturnResult(pgconn.NewCommandTag("SELECT 1"))
+		mock.ExpectExec().WithArgCount(3).WillReturnResult(pgconn.NewCommandTag("INSERT 1"))
+		mock.ExpectExec().WithArgCount(18).WillReturnResult(pgconn.NewCommandTag("INSERT 1"))
+		mock.ExpectCommit().WillReturnError(errBoom)
+		mock.ExpectRollback()
+
+		require.ErrorIs(t, b.EnqueueChunked(ctx, task, oneChunk), errBoom)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+// TestReadPayloadPaths drives the paged chunk read through a mocked pool: a
+// full page followed by a short one, and each failure point.
+func TestReadPayloadPaths(t *testing.T) {
+	ctx := context.Background()
+	chunkRows := func(chunks ...string) *fakeRows {
+		rows := newRows([]string{"data"})
+		for _, chunk := range chunks {
+			rows.AddRow([]byte(chunk))
+		}
+
+		return rows
+	}
+
+	collect := func(b *Broker, count int) ([]string, error) {
+		var chunks []string
+
+		for data, err := range b.ReadPayload(ctx, "t", 0, count) {
+			if err != nil {
+				return chunks, err
+			}
+
+			chunks = append(chunks, string(data))
+		}
+
+		return chunks, nil
+	}
+
+	t.Run("pages until a short page", func(t *testing.T) {
+		b, mock := newMockBroker(t)
+		mock.ExpectQuery().WithArgCount(3).WillReturnRows(chunkRows("a", "b", "c", "d"))
+		mock.ExpectQuery().WithArgCount(3).WillReturnRows(chunkRows("e"))
+
+		chunks, err := collect(b, 5)
+		require.NoError(t, err)
+		require.Equal(t, []string{"a", "b", "c", "d", "e"}, chunks)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("stops when the consumer stops", func(t *testing.T) {
+		b, mock := newMockBroker(t)
+		mock.ExpectQuery().WithArgCount(3).WillReturnRows(chunkRows("a", "b"))
+
+		for range b.ReadPayload(ctx, "t", 0, 2) {
+			break
+		}
+
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("short page reports truncation", func(t *testing.T) {
+		b, mock := newMockBroker(t)
+		mock.ExpectQuery().WithArgCount(3).WillReturnRows(chunkRows("a"))
+
+		chunks, err := collect(b, 2)
+		require.Equal(t, []string{"a"}, chunks)
+		require.ErrorIs(t, err, broker.ErrPayloadTruncated)
+	})
+
+	t.Run("an empty range runs no query", func(t *testing.T) {
+		b, mock := newMockBroker(t)
+
+		chunks, err := collect(b, 0)
+		require.NoError(t, err)
+		require.Empty(t, chunks)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("query error", func(t *testing.T) {
+		b, mock := newMockBroker(t)
+		mock.ExpectQuery().WithArgCount(3).WillReturnError(errBoom)
+
+		_, err := collect(b, 1)
+		require.ErrorIs(t, err, errBoom)
+	})
+
+	t.Run("scan error", func(t *testing.T) {
+		b, mock := newMockBroker(t)
+		mock.ExpectQuery().WithArgCount(3).WillReturnRows(newRows([]string{"data", "extra"}).AddRow([]byte("a"), 1))
+
+		_, err := collect(b, 1)
+		require.Error(t, err)
+	})
+
+	t.Run("rows error", func(t *testing.T) {
+		b, mock := newMockBroker(t)
+		mock.ExpectQuery().WithArgCount(3).WillReturnRows(chunkRows("a").CloseError(errBoom))
+
+		_, err := collect(b, 1)
+		require.ErrorIs(t, err, errBoom)
+	})
 }

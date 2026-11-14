@@ -5,8 +5,10 @@
 package conveyor
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 
 	"google.golang.org/protobuf/proto"
 )
@@ -23,6 +25,10 @@ type Task struct {
 	taskType string
 	// payload is the encoded payload.
 	payload []byte
+	// payloadReader supplies a streamed payload: on the enqueue side, the
+	// reader given to Stream; on the handler side, the chunks of a payload
+	// delivered to a streaming handler.
+	payloadReader io.Reader
 	// contentType describes the payload encoding.
 	contentType string
 	// metadata carries user tags and trace propagation.
@@ -39,10 +45,11 @@ type Task struct {
 // failure is carried inside and surfaces from Client.Enqueue.
 func NewTask(taskType string, payload Payload) *Task {
 	return &Task{
-		taskType:    taskType,
-		payload:     payload.data,
-		contentType: payload.contentType,
-		payloadErr:  payload.err,
+		taskType:      taskType,
+		payload:       payload.data,
+		payloadReader: payload.reader,
+		contentType:   payload.contentType,
+		payloadErr:    payload.err,
 	}
 }
 
@@ -55,8 +62,19 @@ func (t *Task) Type() string { return t.taskType }
 // Queue returns the queue the task belongs to; empty before enqueue.
 func (t *Task) Queue() string { return t.queue }
 
-// Payload returns the raw encoded payload.
+// Payload returns the raw encoded payload. It is nil for a payload a streaming
+// handler receives (see Mux.HandleStreamFunc); read PayloadReader instead.
 func (t *Task) Payload() []byte { return t.payload }
+
+// PayloadReader returns the payload as a reader. A streaming handler reads a
+// chunked payload here as it arrives; for any other task it reads Payload.
+func (t *Task) PayloadReader() io.Reader {
+	if t.payloadReader != nil {
+		return t.payloadReader
+	}
+
+	return bytes.NewReader(t.payload)
+}
 
 // ContentType returns the payload encoding, e.g. "application/json".
 func (t *Task) ContentType() string { return t.contentType }
@@ -108,4 +126,10 @@ func (t *Task) Bind(v any) error {
 	default:
 		return fmt.Errorf("conveyor: no codec for content type %q", t.contentType)
 	}
+}
+
+// streamed reports whether the task is enqueued through the streaming upload:
+// its payload is a reader, or too large to send inline.
+func (t *Task) streamed() bool {
+	return t.payloadReader != nil || len(t.payload) > inlinePayloadBytes
 }

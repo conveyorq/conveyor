@@ -7,6 +7,7 @@ package conveyor
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 )
@@ -53,6 +54,10 @@ func (c *Client) EnqueueTx(ctx context.Context, tasks []TxTask) ([]*TaskInfo, er
 		settings, uniqueKey, err := resolveEnqueueOptions(item.Task, item.Options...)
 		if err != nil {
 			return nil, err
+		}
+
+		if item.Task.streamed() {
+			return nil, fmt.Errorf("conveyor: task %d has a streamed or larger-than-inline payload, which EnqueueTx cannot carry; use Enqueue", i)
 		}
 
 		request, err := c.buildEnqueueRequest(ctx, item.Task, settings, uniqueKey)

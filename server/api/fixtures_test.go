@@ -46,7 +46,14 @@ func freeTestPorts(t *testing.T, n int) []int {
 func startTestEngine(t *testing.T) (*actors.Engine, broker.Broker) {
 	t.Helper()
 
-	taskLog := memory.New(clock.System())
+	return startTestEngineWithBroker(t, memory.New(clock.System()))
+}
+
+// startTestEngineWithBroker boots an engine node with fast settings on the
+// given broker.
+func startTestEngineWithBroker(t *testing.T, taskLog broker.Broker) (*actors.Engine, broker.Broker) {
+	t.Helper()
+
 	ports := freeTestPorts(t, 3)
 	self := fmt.Sprintf("%s:%d", testLoopback, ports[1])
 

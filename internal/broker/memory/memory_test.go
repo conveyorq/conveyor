@@ -6,6 +6,7 @@ package memory
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
@@ -16,6 +17,10 @@ import (
 	"github.com/conveyorq/conveyor/internal/clock"
 	conveyorv1 "github.com/conveyorq/conveyor/internal/proto/conveyor/v1"
 )
+
+// testPayloadCap is a non-default payload cap used to check that the
+// configured value is reported.
+const testPayloadCap = 4096
 
 // fakeStart is the fixed wall clock the coverage broker reads from.
 var fakeStart = time.Unix(1_700_000_000, 0).UTC()
@@ -32,6 +37,17 @@ func TestConformance(t *testing.T) {
 
 		return instance
 	})
+}
+
+func TestMaxPayloadBytes(t *testing.T) {
+	require.Equal(t, broker.DefaultMaxPayloadBytes, New(clock.System()).MaxPayloadBytes())
+
+	instance := NewWithMaxPayload(clock.System(), testPayloadCap)
+	require.Equal(t, testPayloadCap, instance.MaxPayloadBytes())
+
+	info, err := instance.Info(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, strconv.Itoa(testPayloadCap), info.Metrics[broker.MaxPayloadBytesMetric])
 }
 
 // newCoverageBroker returns an empty broker and its fake clock.

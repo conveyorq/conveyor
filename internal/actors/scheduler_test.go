@@ -234,11 +234,10 @@ func TestSchedulerSkipsPausedCron(t *testing.T) {
 // entry never becomes due rather than crashing the promotion loop.
 func TestSchedulerArmCronInvalidSpecIsSkipped(t *testing.T) {
 	runtime := newTestRuntime(t)
-	scheduler := &Scheduler{runtime: runtime}
 
 	entry := &broker.CronEntry{ID: "cron-bad", Spec: "this is not a cron spec", Queue: "q"}
 
-	scheduler.armCron(context.Background(), entry, runtime.Clock().Now())
+	armCron(context.Background(), runtime, entry, runtime.Clock().Now())
 
 	due, err := runtime.Broker().ListDueCronEntries(context.Background(), runtime.Clock().Now())
 	require.NoError(t, err)
@@ -256,13 +255,12 @@ func TestSchedulerArmCronPersistErrorLeavesEntryUnarmed(t *testing.T) {
 
 	taskLog := newFaultBroker(inner)
 	runtime := NewRuntime(taskLog, clock.System(), testSettings, quietLogger())
-	scheduler := &Scheduler{runtime: runtime}
 
 	entry := &broker.CronEntry{ID: "cron-persist", Spec: "* * * * * *", TaskType: "test:ok", Queue: "q"}
 	require.NoError(t, inner.UpsertCronEntry(ctx, entry))
 
 	taskLog.fault(methodUpdateCronNextRun, errors.New("persist down"))
-	scheduler.armCron(ctx, entry, runtime.Clock().Now())
+	armCron(ctx, runtime, entry, runtime.Clock().Now())
 
 	stored, err := inner.ListCronEntries(ctx)
 	require.NoError(t, err)

@@ -137,7 +137,75 @@ func (s *workerSession) dispatchBatch(batch *conveyorv1.BatchDispatch) {
 	}
 	s.stateMutex.Unlock()
 
-	go s.executeBatch(executionCtx, release, batch)
+	s.assembleBatch(executionCtx, release, batch)
+}
+
+// assembleBatch starts the batch once every chunked member's payload has
+// arrived; a batch with none starts at once. Batch handlers receive whole
+// tasks, so chunked members are reassembled, never streamed. A member whose
+// payload fails retries the whole batch, and the other members' remaining
+// chunks are dropped.
+func (s *workerSession) assembleBatch(ctx context.Context, release func(), batch *conveyorv1.BatchDispatch) {
+	var chunked []*conveyorv1.TaskEnvelope
+
+	for _, task := range batch.GetTasks() {
+		if task.GetPayloadChunked() {
+			chunked = append(chunked, task)
+		}
+	}
+
+	if len(chunked) == 0 {
+		go s.executeBatch(ctx, release, batch)
+
+		return
+	}
+
+	remaining := len(chunked)
+	failed := false
+
+	fail := func(err error) {
+		failed = true
+
+		for _, member := range chunked {
+			delete(s.payloads, member.GetId())
+		}
+
+		release()
+		s.finishBatch(ctx, batch, err)
+	}
+
+	for _, task := range chunked {
+		opener, err := s.chunkOpener(task)
+		if err != nil {
+			fail(err)
+
+			return
+		}
+
+		s.payloads[task.GetId()] = &payloadAssembly{
+			opener: opener,
+			ack:    s.chunkAcker(task.GetId()),
+			complete: func(payload []byte, err error) {
+				if failed {
+					return
+				}
+
+				if err != nil {
+					fail(err)
+
+					return
+				}
+
+				task.Payload = payload
+				task.PayloadChunked = false
+				remaining--
+
+				if remaining == 0 {
+					go s.executeBatch(ctx, release, batch)
+				}
+			},
+		}
+	}
 }
 
 // executeBatch waits for a slot, runs the batch handler over all members in one

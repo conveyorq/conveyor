@@ -264,11 +264,12 @@ func (s *WorkerService) Session(ctx context.Context, stream *connect.BidiStream[
 	sender := &streamSender{stream: stream}
 
 	session := actors.GatewaySession{
-		SessionID:   sessionID,
-		Queues:      queues,
-		Weights:     hello.GetQueues(),
-		Concurrency: hello.GetConcurrency(),
-		BatchTypes:  hello.GetBatchTypes(),
+		SessionID:        sessionID,
+		Queues:           queues,
+		Weights:          hello.GetQueues(),
+		Concurrency:      hello.GetConcurrency(),
+		BatchTypes:       hello.GetBatchTypes(),
+		PayloadStreaming: hello.GetPayloadStreaming(),
 	}
 
 	sessionCtx, sessionCancel := context.WithCancel(ctx)
@@ -311,11 +312,12 @@ func (s *WorkerService) Session(ctx context.Context, stream *connect.BidiStream[
 	welcome := &conveyorv1.ServerMessage{
 		Frame: &conveyorv1.ServerMessage_Welcome{
 			Welcome: &conveyorv1.Welcome{
-				SessionId:         sessionID,
-				LeaseTtl:          durationpb.New(leaseTTL),
-				HeartbeatInterval: durationpb.New(leaseTTL / heartbeatDivisor),
-				ServerVersion:     serverVersion,
-				MinSdkVersion:     minSDKVersion,
+				SessionId:          sessionID,
+				LeaseTtl:           durationpb.New(leaseTTL),
+				HeartbeatInterval:  durationpb.New(leaseTTL / heartbeatDivisor),
+				ServerVersion:      serverVersion,
+				MinSdkVersion:      minSDKVersion,
+				PayloadChunkWindow: actors.PayloadChunkWindow,
 			},
 		},
 	}
@@ -448,6 +450,9 @@ func (s *WorkerService) forward(ctx context.Context, handle *actors.GatewayHandl
 
 	case *conveyorv1.WorkerMessage_Progress:
 		return handle.Tell(ctx, frame.Progress)
+
+	case *conveyorv1.WorkerMessage_PayloadAck:
+		return handle.Tell(ctx, frame.PayloadAck)
 
 	default:
 		// The state machine admits no other frame past Hello.

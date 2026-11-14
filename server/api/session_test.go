@@ -116,6 +116,23 @@ func TestSessionResultValidation(t *testing.T) {
 	require.ErrorContains(t, state.check(resultFrame("task-1", conveyorv1.TaskOutcome(99))), "undefined task outcome")
 }
 
+// payloadAckFrame builds a PayloadAck frame returning chunks for a task.
+func payloadAckFrame(taskID string, chunks uint32) *conveyorv1.WorkerMessage {
+	return &conveyorv1.WorkerMessage{
+		Frame: &conveyorv1.WorkerMessage_PayloadAck{PayloadAck: &conveyorv1.PayloadAck{TaskId: taskID, Chunks: chunks}},
+	}
+}
+
+func TestSessionPayloadAckValidation(t *testing.T) {
+	require.ErrorIs(t, (&sessionState{}).check(payloadAckFrame("task-1", 1)), errFrameBeforeHello)
+
+	state := validOpen(t)
+
+	require.NoError(t, state.check(payloadAckFrame("task-1", 4)))
+	require.ErrorContains(t, state.check(payloadAckFrame("", 1)), "without task_id")
+	require.ErrorContains(t, state.check(payloadAckFrame("task-1", 0)), "returning no chunks")
+}
+
 func TestSessionRejectsEmptyFrameAfterHello(t *testing.T) {
 	state := validOpen(t)
 

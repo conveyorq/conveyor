@@ -263,15 +263,18 @@ func (s *Server) Start(ctx context.Context) error {
 func (s *Server) buildBroker(ctx context.Context) (broker.Broker, error) {
 	switch s.config.Broker.Driver {
 	case BrokerMemory:
-		return memory.New(clock.System()), nil
+		return memory.NewWithMaxPayload(clock.System(), s.config.Broker.MaxPayloadBytes), nil
 
 	case BrokerPostgres:
 		pool := s.config.Broker.Pool
-		taskLog, err := postgres.NewWithPool(ctx, s.config.Broker.DSN, clock.System(), postgres.PoolSettings{
-			MaxConns:         pool.MaxConns,
-			MinConns:         pool.MinConns,
-			ConnectTimeout:   pool.ConnectTimeout,
-			StatementTimeout: pool.StatementTimeout,
+		taskLog, err := postgres.NewWithSettings(ctx, s.config.Broker.DSN, clock.System(), postgres.Settings{
+			Pool: postgres.PoolSettings{
+				MaxConns:         pool.MaxConns,
+				MinConns:         pool.MinConns,
+				ConnectTimeout:   pool.ConnectTimeout,
+				StatementTimeout: pool.StatementTimeout,
+			},
+			MaxPayloadBytes: s.config.Broker.MaxPayloadBytes,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("connecting postgres broker: %w", err)

@@ -7,9 +7,14 @@ package server
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/conveyorq/conveyor/internal/broker"
 )
 
 // writeConfigFile drops a YAML config into a temp dir and returns its path.
@@ -230,6 +235,28 @@ func TestLoadConfigMissingFile(t *testing.T) {
 	}
 }
 
+func TestMaxPayloadBytesDefaults(t *testing.T) {
+	require.Equal(t, broker.DefaultMaxPayloadBytes, DefaultConfig().Broker.MaxPayloadBytes)
+	require.Equal(t, broker.DefaultMaxPayloadBytes, DevConfig().Broker.MaxPayloadBytes)
+}
+
+func TestValidateAcceptsMaxPayloadBytesAtCeiling(t *testing.T) {
+	config := DevConfig()
+	config.Broker.MaxPayloadBytes = maxPayloadBytesCeiling
+
+	require.NoError(t, config.Validate())
+}
+
+func TestLoadConfigMaxPayloadBytesEnvOverride(t *testing.T) {
+	const sixteenMiB = 16 << 20
+
+	t.Setenv("CONVEYOR_BROKER__MAX_PAYLOAD_BYTES", strconv.Itoa(sixteenMiB))
+
+	config, err := LoadDevConfig()
+	require.NoError(t, err)
+	require.Equal(t, sixteenMiB, config.Broker.MaxPayloadBytes)
+}
+
 func TestArchiveRetentionDefaultKeepsDeadLettersAWeek(t *testing.T) {
 	if got := DefaultConfig().Engine.ArchiveRetention; got != 7*24*time.Hour {
 		t.Errorf("archive_retention default = %s, want 168h so dead-lettered tasks stay inspectable before purge", got)
@@ -272,6 +299,8 @@ func TestValidateRejections(t *testing.T) {
 		{"zero batch", func(c *Config) { c.Engine.LeaseBatchMax = 0 }, "engine.lease_batch_max"},
 		{"negative retry", func(c *Config) { c.Engine.DefaultMaxRetry = -1 }, "engine.default_max_retry"},
 		{"negative archive retention", func(c *Config) { c.Engine.ArchiveRetention = -time.Second }, "engine.archive_retention"},
+		{"zero max payload", func(c *Config) { c.Broker.MaxPayloadBytes = 0 }, "broker.max_payload_bytes"},
+		{"max payload above ceiling", func(c *Config) { c.Broker.MaxPayloadBytes = maxPayloadBytesCeiling + 1 }, "broker.max_payload_bytes"},
 		{"negative pool max", func(c *Config) { c.Broker.Pool.MaxConns = -1 }, "broker.pool.max_conns"},
 		{"negative pool min", func(c *Config) { c.Broker.Pool.MinConns = -1 }, "broker.pool.min_conns"},
 		{"pool min above max", func(c *Config) { c.Broker.Pool = PoolConfig{MaxConns: 2, MinConns: 3} }, "broker.pool.min_conns"},

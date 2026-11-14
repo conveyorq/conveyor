@@ -10,6 +10,7 @@ package memory
 
 import (
 	"context"
+	"iter"
 	"maps"
 	"slices"
 	"strconv"
@@ -60,6 +61,9 @@ type taskRow struct {
 	// progress is the latest completion estimate (0..100) the running worker
 	// reported; zero when none was reported.
 	progress uint32
+	// chunks holds a chunked payload's chunks in order; nil for an inline
+	// payload. They are dropped with the row.
+	chunks [][]byte
 	// progressMessage is the latest status reported alongside progress.
 	progressMessage string
 	// retention keeps the completed row for inspection before purge.
@@ -88,6 +92,8 @@ type Broker struct {
 	mutex sync.Mutex
 	// clock supplies the current time.
 	clock clock.Clock
+	// maxPayloadBytes is the payload cap reported by MaxPayloadBytes.
+	maxPayloadBytes int
 	// tasks maps task id to its row.
 	tasks map[string]*taskRow
 	// pausedQueues holds the persisted queue pause flags.
@@ -138,10 +144,18 @@ func (b *Broker) emit(oldState, newState conveyorv1.TaskState, id, queue, taskTy
 // enforce interface compliance at compile time.
 var _ broker.Broker = (*Broker)(nil)
 
-// New returns an empty in-memory broker reading time from the given clock.
+// New returns an empty in-memory broker reading time from the given clock,
+// capping payloads at broker.DefaultMaxPayloadBytes.
 func New(timeSource clock.Clock) *Broker {
+	return NewWithMaxPayload(timeSource, broker.DefaultMaxPayloadBytes)
+}
+
+// NewWithMaxPayload is New with the payload cap set to maxPayloadBytes, which
+// must be positive.
+func NewWithMaxPayload(timeSource clock.Clock, maxPayloadBytes int) *Broker {
 	return &Broker{
 		clock:             timeSource,
+		maxPayloadBytes:   maxPayloadBytes,
 		tasks:             make(map[string]*taskRow),
 		pausedQueues:      make(map[string]bool),
 		rateLimits:        make(map[string]broker.RateLimit),
@@ -215,6 +229,96 @@ func (b *Broker) Enqueue(_ context.Context, task *conveyorv1.TaskEnvelope) error
 	b.applyStaged(staged, now)
 
 	return nil
+}
+
+// EnqueueChunked commits a task whose payload arrives in chunks; see
+// broker.Broker. Chunks are gathered before the mutex is taken, so a slow
+// producer never blocks other callers.
+func (b *Broker) EnqueueChunked(_ context.Context, task *conveyorv1.TaskEnvelope, chunks iter.Seq2[[]byte, error]) error {
+	if b.taskExists(task.GetId()) {
+		return nil
+	}
+
+	var (
+		stored [][]byte
+		size   uint64
+	)
+
+	for data, err := range chunks {
+		if err != nil {
+			return err
+		}
+
+		stored = append(stored, data)
+		size += uint64(len(data))
+	}
+
+	chunked := proto.Clone(task).(*conveyorv1.TaskEnvelope)
+	chunked.Payload = nil
+	chunked.PayloadChunked = true
+	chunked.PayloadSize = size
+	chunked.PayloadChunks = uint32(len(stored))
+
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	now := b.clock.Now()
+
+	staged, skip, err := b.stageEnqueue(chunked, now, nil, nil)
+	if err != nil {
+		return err
+	}
+
+	if skip {
+		return nil
+	}
+
+	staged.row.chunks = stored
+	b.applyStaged(staged, now)
+
+	return nil
+}
+
+// taskExists reports whether a task with the given id is stored.
+func (b *Broker) taskExists(id string) bool {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	_, exists := b.tasks[id]
+
+	return exists
+}
+
+// ReadPayload yields a range of a chunked task's stored chunks; see
+// broker.Broker. The chunk list is captured under the mutex and yielded
+// without it, so a slow consumer never blocks other callers.
+func (b *Broker) ReadPayload(_ context.Context, taskID string, from, count int) iter.Seq2[[]byte, error] {
+	return func(yield func([]byte, error) bool) {
+		if count <= 0 {
+			return
+		}
+
+		b.mutex.Lock()
+
+		var chunks [][]byte
+		if row, ok := b.tasks[taskID]; ok {
+			chunks = row.chunks
+		}
+
+		b.mutex.Unlock()
+
+		end := min(from+count, len(chunks))
+
+		for sequence := from; sequence < end; sequence++ {
+			if !yield(chunks[sequence], nil) {
+				return
+			}
+		}
+
+		if from+count > len(chunks) {
+			yield(nil, broker.ErrPayloadTruncated)
+		}
+	}
 }
 
 // EnqueueBatch atomically commits every task or none; see broker.Broker.
@@ -1494,13 +1598,19 @@ func (b *Broker) Info(_ context.Context) (broker.Info, error) {
 	return broker.Info{
 		Driver: "memory",
 		Metrics: map[string]string{
-			"tasks":              strconv.Itoa(len(b.tasks)),
-			"cron_entries":       strconv.Itoa(len(b.cronEntries)),
-			"paused_queues":      strconv.Itoa(len(b.pausedQueues)),
-			"rate_limits":        strconv.Itoa(len(b.rateLimits)),
-			"concurrency_limits": strconv.Itoa(len(b.concurrencyLimits)),
+			"tasks":                      strconv.Itoa(len(b.tasks)),
+			"cron_entries":               strconv.Itoa(len(b.cronEntries)),
+			"paused_queues":              strconv.Itoa(len(b.pausedQueues)),
+			"rate_limits":                strconv.Itoa(len(b.rateLimits)),
+			"concurrency_limits":         strconv.Itoa(len(b.concurrencyLimits)),
+			broker.MaxPayloadBytesMetric: strconv.Itoa(b.maxPayloadBytes),
 		},
 	}, nil
+}
+
+// MaxPayloadBytes reports the configured payload cap; see broker.Broker.
+func (b *Broker) MaxPayloadBytes() int {
+	return b.maxPayloadBytes
 }
 
 // GetTask returns one task and its state; see broker.Broker.

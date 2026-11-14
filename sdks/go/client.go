@@ -74,6 +74,12 @@ type TaskInfo struct {
 	Progress uint32
 	// ProgressMessage is the latest status reported alongside Progress.
 	ProgressMessage string
+	// PayloadSize is the stored payload size in bytes (ciphertext when
+	// encrypted).
+	PayloadSize uint64
+	// PayloadChunked reports a payload stored in chunks, as a streamed or
+	// larger-than-inline payload is.
+	PayloadChunked bool
 }
 
 // EnqueueFunc commits one task and returns its initial state. It is the core
@@ -127,6 +133,10 @@ func (c *Client) Enqueue(ctx context.Context, task *Task, opts ...EnqueueOption)
 	// core builds the wire request from the (possibly middleware-adjusted) task
 	// and the resolved options, then commits it. Middleware decorates this.
 	core := func(ctx context.Context, task *Task) (*TaskInfo, error) {
+		if task.streamed() {
+			return c.enqueueStream(ctx, task, settings, uniqueKey)
+		}
+
 		request, err := c.buildEnqueueRequest(ctx, task, settings, uniqueKey)
 		if err != nil {
 			return nil, err
@@ -181,6 +191,10 @@ func resolveEnqueueOptions(task *Task, opts ...EnqueueOption) (*enqueueOptions, 
 
 	uniqueKey := settings.uniqueKey
 	if uniqueKey == "" && settings.uniqueTTL > 0 {
+		if task.payloadReader != nil {
+			return nil, "", errors.New("conveyor: Unique on a Stream payload needs an explicit UniqueKey")
+		}
+
 		uniqueKey = derivedUniqueKey(task.taskType, task.payload)
 	}
 
@@ -264,6 +278,28 @@ func (c *Client) buildEnqueueRequest(ctx context.Context, task *Task, settings *
 	return request, nil
 }
 
+// enqueueStream uploads a task whose payload is a reader or exceeds the inline
+// limit through the server's streaming enqueue, in chunks of at most
+// payloadChunkBytes. With encryption configured, each chunk is sealed on its
+// own, so the payload is never held whole.
+func (c *Client) enqueueStream(ctx context.Context, task *Task, settings *enqueueOptions, uniqueKey string) (*TaskInfo, error) {
+	header, err := c.buildEnqueueRequest(ctx, &Task{taskType: task.taskType, contentType: task.contentType, metadata: task.metadata}, settings, uniqueKey)
+	if err != nil {
+		return nil, err
+	}
+
+	if c.encryptor != nil {
+		header.Metadata = withEncryptionMarker(header.GetMetadata())
+	}
+
+	info, err := c.wire.EnqueueStream(ctx, header, uploadChunks(ctx, task.payload, task.payloadReader, c.encryptor))
+	if err != nil {
+		return nil, wireError(err)
+	}
+
+	return taskInfoFromProto(info), nil
+}
+
 // GetTask returns the current state of one task.
 func (c *Client) GetTask(ctx context.Context, id string) (*TaskInfo, error) {
 	if id == "" {
@@ -317,6 +353,8 @@ func taskInfoFromProto(info *conveyorv1.TaskInfo) *TaskInfo {
 		LastError:       info.GetLastError(),
 		Progress:        info.GetProgress(),
 		ProgressMessage: info.GetProgressMessage(),
+		PayloadSize:     info.GetPayloadSize(),
+		PayloadChunked:  info.GetPayloadChunked(),
 	}
 
 	if info.GetEnqueuedAt().IsValid() {
