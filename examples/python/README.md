@@ -1,4 +1,4 @@
-# Conveyor Python example — email delivery
+# Conveyor Python example: email delivery
 
 A minimal but realistic use of the `conveyorq` SDK: a producer enqueues welcome
 and reminder emails, and a worker delivers them. It mirrors the
@@ -25,7 +25,7 @@ uv run client.py reminder ada@example.com "Pay invoice" 1
 ```
 
 The worker prints each delivery; the producer prints the enqueued task id. Stop
-the worker with Ctrl-C — it drains in-flight work gracefully.
+the worker with Ctrl-C and it drains in-flight work gracefully.
 
 ## Configuration
 
@@ -41,7 +41,7 @@ Both programs read the environment:
 
 - **`tasks.py` is the contract.** The producer and worker share the task-type
   names and payload shapes; that agreement on the JSON bytes is all the queue
-  requires of two peers — they could be in different languages.
+  requires of two peers, which could be in different languages.
 - **`welcome` is idempotent.** It enqueues with a `unique_key` and a 24h TTL, so
   a retry or a double submit never sends two welcomes.
 - **`reminder` is delayed.** `process_in` schedules it for the future.

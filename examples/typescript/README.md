@@ -1,7 +1,7 @@
-# Email delivery — Conveyor TypeScript example
+# Email delivery: Conveyor TypeScript example
 
 A production-shaped **email-delivery service** built on the
-[Conveyor TypeScript SDK](../../sdks/typescript) — the canonical task-queue use
+[Conveyor TypeScript SDK](../../sdks/typescript), the canonical task-queue use
 case (the one asynq and River lead with). A **producer** enqueues welcome and
 reminder emails; a **worker** sends them through a provider with retries,
 dead-lettering, per-attempt timeouts, idempotent dedup, structured logging, and
@@ -11,16 +11,16 @@ graceful shutdown.
 
 - **Two task types** sharing a contract (`src/tasks.ts`) so producer and worker
   agree on the JSON payloads.
-- **Retries vs. dead-lettering** — a transient provider error (simulated 503) is
+- **Retries vs. dead-lettering**: a transient provider error (simulated 503) is
   re-thrown so Conveyor retries with backoff; an invalid recipient throws
   `skipRetry(...)` and is dead-lettered immediately, no wasted retries.
-- **Idempotent enqueue** — a welcome uses a unique key (`welcome:<to>`) with a
+- **Idempotent enqueue**: a welcome uses a unique key (`welcome:<to>`) with a
   24h TTL, so a double-submit never sends two emails (`DuplicateTaskError` is
   handled).
-- **Per-attempt timeout** — each task carries a `timeout`; the handler's
+- **Per-attempt timeout**: each task carries a `timeout`; the handler's
   `AbortSignal` cancels a provider call that overruns it.
-- **Scheduled work** — reminders can be delayed with `processIn`.
-- **Graceful drain** — on `SIGTERM`/`SIGINT` the worker stops accepting new work
+- **Scheduled work**: reminders can be delayed with `processIn`.
+- **Graceful drain**: on `SIGTERM`/`SIGINT` the worker stops accepting new work
   and lets in-flight sends finish before the stream closes.
 - **Structured JSON logging** (`src/logger.ts`) ready for a log pipeline.
 

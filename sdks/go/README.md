@@ -3,17 +3,17 @@
 `github.com/conveyorq/conveyor/sdks/go` is the Go SDK for
 [Conveyor](../../README.md), a distributed, push-based task queue. It provides a
 producer `Client` for enqueuing tasks and a `Worker` for processing them, and
-speaks the same wire protocol as the TypeScript and Python SDKs — so producers
+speaks the same wire protocol as the TypeScript and Python SDKs, so producers
 and workers written in any of the three interoperate on the same queues.
 
-Requires Go 1.26+. The worker opens a bidirectional gRPC stream to a running
+Requires Go 1.27+. The worker opens a bidirectional gRPC stream to a running
 Conveyor server (`conveyord`); see the [project README](../../README.md) to
 start one.
 
 ## Install
 
-The SDK is distributed as a Go module, so no package registry is involved —
-`go get` resolves it straight from the repository:
+The SDK is distributed as a Go module, so no package registry is involved:
+`go get` resolves it straight from the repository.
 
 ```sh
 go get github.com/conveyorq/conveyor/sdks/go
@@ -113,6 +113,35 @@ protobuf message. Decode a received task with `task.Bind(&v)`, or read
 `task.Payload()` and `task.ContentType()` for the raw bytes. Producer and
 consumer must agree on the JSON shape of a given task type; the bytes are
 interoperable across the Go, TypeScript, and Python SDKs.
+
+## Large payloads
+
+A payload over 1 MiB is uploaded in 1 MiB chunks automatically, up to the
+server's payload cap (`broker.max_payload_bytes`). To enqueue one without holding
+it in memory, build it with `conveyor.Stream` from any `io.Reader`:
+
+```go
+file, _ := os.Open("report.pdf")
+defer file.Close()
+
+_, err := client.Enqueue(ctx, conveyor.NewTask("report:index", conveyor.Stream(file, "application/pdf")))
+```
+
+A streamed payload cannot go through `EnqueueTx`, and `Unique` needs an explicit
+`UniqueKey`. Workers receive large payloads reassembled in `task.Payload()` by
+default. Register a handler with `mux.HandleStreamFunc` to read the payload as it
+arrives instead, through `task.PayloadReader()`:
+
+```go
+mux.HandleStreamFunc("report:index", func(ctx context.Context, t *conveyor.Task) error {
+	_, err := io.Copy(index, t.PayloadReader())
+
+	return err
+})
+```
+
+The server sends chunks only as fast as the handler reads them, so a slow reader
+holds back only its own payload.
 
 ## End-to-end encryption
 

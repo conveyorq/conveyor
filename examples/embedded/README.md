@@ -1,6 +1,6 @@
 # Embedded example
 
-The whole Conveyor system — server, worker, client — inside one Go
+The whole Conveyor system (server, worker, and client) inside one Go
 process, asynq-style: zero external infrastructure.
 
 ## Run it

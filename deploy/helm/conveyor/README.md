@@ -24,13 +24,13 @@ with `--version X.Y.Z`.
 
 This chart bootstraps a `conveyord` cluster on a Kubernetes cluster using the
 Helm package manager. Nodes discover one another through the Kubernetes API
-(pod-label discovery), durable state lives in Postgres, and the API — together
-with the embedded operations dashboard — is served behind a `Service`.
+(pod-label discovery), durable state lives in Postgres, and the API, together
+with the embedded operations dashboard, is served behind a `Service`.
 
 The workload is a **StatefulSet**. `conveyord` keeps no durable disk state (so
 there are no `PersistentVolumeClaim`s); the StatefulSet is chosen for stable
 pod identity and one-pod-at-a-time rollouts, because the cluster is
-membership-sensitive — queue-grain placement, singletons, and task leases
+membership-sensitive: queue-grain placement, singletons, and task leases
 rebalance on every membership change.
 
 ## Prerequisites
@@ -40,7 +40,7 @@ rebalance on every membership change.
 - A **Postgres** database reachable from the cluster. This is the default and
   only production-grade broker; the chart does **not** deploy Postgres for you.
 - Permission to create RBAC objects. The chart grants its `ServiceAccount`
-  permission to **list pods** in the release namespace — that is how peers find
+  permission to **list pods** in the release namespace, which is how peers find
   each other. To supply your own, set `rbac.create=false` and
   `serviceAccount.create=false`.
 
@@ -50,8 +50,8 @@ rebalance on every membership change.
 store tasks, and with no auth tokens it refuses to start unless you explicitly
 allow unauthenticated access. A real install supplies both via Secrets.
 
-1. Create the Secrets out-of-band (recommended — keeps credentials out of
-   release manifests and Helm history):
+1. Create the Secrets out-of-band (recommended, since it keeps credentials out
+   of release manifests and Helm history):
 
    ```sh
    kubectl create secret generic conveyor-broker \
@@ -85,7 +85,7 @@ The post-install notes print the in-cluster API URL and warn if the broker is
 
 > **Evaluation without Postgres (non-durable):**
 > `--set broker.driver=memory --set auth.allowUnauthenticated=true --set replicaCount=1`.
-> Tasks are lost on restart — never use this beyond a demo.
+> Tasks are lost on restart, so never use this beyond a demo.
 
 ## Uninstalling the chart
 
@@ -94,7 +94,7 @@ helm uninstall conveyor
 ```
 
 This removes all Kubernetes objects the chart created. Secrets you created
-out-of-band (broker DSN, auth tokens, TLS) are **not** removed — delete them
+out-of-band (broker DSN, auth tokens, TLS) are **not** removed; delete them
 separately. Task data persists in Postgres.
 
 ## Parameters
@@ -229,7 +229,7 @@ ports stay pod-to-pod via the headless service and are discovered by pod IP.
 
 > **Tip:** specify the parameters above with `--set key=value[,key=value]`, or
 > provide a YAML file with `-f my-values.yaml`. A values file is recommended for
-> anything non-trivial — it is reviewable and reusable across upgrades.
+> anything non-trivial: it is reviewable and reusable across upgrades.
 
 ## Configuration and installation details
 
@@ -291,9 +291,9 @@ helm upgrade conveyor ./deploy/helm/conveyor -f my-values.yaml
 ## Limitations
 
 - The chart targets `mode: kubernetes`. For non-Kubernetes deployments use the
-  `standalone` or `cluster` modes — see the
+  `standalone` or `cluster` modes; see the
   [operations guide](../../../docs/operations.md) and other artifacts under
   [`deploy/`](../..).
-- No Postgres subchart is bundled — bring your own database.
+- No Postgres subchart is bundled; bring your own database.
 - The `memory` broker is single-node and non-durable; never use it with
   `replicaCount > 1` or for data you cannot afford to lose on restart.

@@ -92,8 +92,8 @@ For a **worker session**, an SDK MUST classify the terminal stream error:
 A worker holds exactly one `Session` stream: `rpc Session(stream WorkerMessage) returns (stream ServerMessage)`.
 
 ```
-WorkerMessage.frame = { Hello | Credit | Result | Heartbeat | BatchResult | Progress }
-ServerMessage.frame = { Welcome | Dispatch | Cancel | Ping | BatchDispatch }
+WorkerMessage.frame = { Hello | Credit | Result | Heartbeat | BatchResult | Progress | PayloadAck }
+ServerMessage.frame = { Welcome | Dispatch | Cancel | Ping | BatchDispatch | PayloadChunk }
 ```
 
 ### 5.1 Lifecycle
@@ -123,6 +123,7 @@ The **first** frame on the stream MUST be `Hello`. Any other first frame fails t
 | `sdk_version` (`string`)        | SHOULD be set (see §8). May be any string; an empty or non-semver value is accepted.                                                                                                           |
 | `min_server_version` (`string`) | OPTIONAL. The minimum server version this worker requires, as semver (e.g. `"v1.2.0"`). Empty imposes no requirement; a non-semver value is ignored. The server fails the session with `invalid_argument` when its own version is older. See §8. |
 | `batch_types` (`repeated string`) | OPTIONAL. Task types this worker handles as **batches** (aggregation groups). The server delivers a fired group's members as one `BatchDispatch` only to a worker that advertised the group's type here; a worker advertising none never receives a batch. See §5.11. |
+| `payload_streaming` (`bool`)    | OPTIONAL. `true` declares that the worker accepts chunked payloads as `PayloadChunk` frames (§5.12). A worker that leaves it `false` receives every chunked payload reassembled inline in the envelope, bounded by its own receive limit. |
 
 A Hello that violates any MUST fails the stream with `invalid_argument`.
 
@@ -137,6 +138,7 @@ Sent once, immediately after a valid Hello. The worker MUST wait for Welcome bef
 | `heartbeat_interval` (`Duration`) | How often the worker SHOULD send `Heartbeat`. Default **lease_ttl / 3 = 20s**.           |
 | `server_version` (`string`)       | The server's build version (semver, or a non-semver dev marker). Lets a worker detect version skew. |
 | `min_sdk_version` (`string`)      | The oldest worker SDK version this server admits (semver). Surfaced so a worker can report the requirement clearly. |
+| `payload_chunk_window` (`uint32`) | How many `PayloadChunk` frames of one task the server sends ahead of the worker's `PayloadAck` credit (§5.12). Default **16**. |
 
 The worker MUST drive its heartbeat cadence from `heartbeat_interval` rather than hard-coding a value: a server MAY use a different lease TTL.
 
@@ -146,7 +148,7 @@ The server pushes one `Dispatch` per leased task. The worker does not request ta
 
 | Field                    | Meaning                                                                                                                                                             |
 |--------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `task` (`TaskEnvelope`)  | The task to execute, including `payload`, `content_type`, `metadata`, `options`, `retried`, `id`, `queue`, `type`.                                                  |
+| `task` (`TaskEnvelope`)  | The task to execute, including `payload`, `content_type`, `metadata`, `options`, `retried`, `id`, `queue`, `type`. When `payload_chunked` is set, `payload` is empty and the payload follows as `PayloadChunk` frames (§5.12). |
 | `deadline` (`Timestamp`) | The **effective** execution deadline: `min(lease expiry, task deadline if set, now + task timeout if set)`. The worker SHOULD cancel a handler that runs past this. |
 
 ### 5.5 Flow control: the credit model (READ THIS)
@@ -246,6 +248,25 @@ Rules an SDK MUST follow:
 
 A worker that advertises no `batch_types` is unaffected: it never receives a `BatchDispatch`, so grouping is fully back-compatible.
 
+### 5.12 Chunked payload delivery
+
+A task enqueued through `EnqueueStream` (§6.3) has a chunked payload: its `TaskEnvelope` carries `payload_chunked = true`, an empty `payload`, and `payload_size`, the stored size in bytes. The payload never rides the dispatch itself. How it reaches the worker depends on `Hello.payload_streaming`:
+
+- **`payload_streaming = true`:** the server sends the task's `Dispatch` (or the `BatchDispatch` that contains it), then the payload as `PayloadChunk { task_id; bytes data; bool last; string error }` frames.
+  - Chunks of one task arrive in order, exactly as the producer uploaded them. Chunks of different tasks MAY interleave with each other and with other frames.
+  - The final frame of a task has `last = true` and no data.
+  - A frame with `error` set ends the payload early: the server could not read it. The worker MUST report a `RETRY` result for that task (for a batch, every member).
+- **`payload_streaming = false`:** the server reassembles the payload into `payload` before sending the `Dispatch`, as for an inline task. The worker's receive limit must admit it.
+
+**Flow control.** Chunks are credit-based, per task. The server keeps at most `Welcome.payload_chunk_window` unacknowledged chunks of one task in flight. The worker returns credit with `PayloadAck { string task_id; uint32 chunks }` (worker → server) as it consumes chunks, and the server sends that many more. Because the server never exceeds the window, a worker can buffer every chunk it receives and MUST keep reading its stream: a slow handler holds back only its own payload, never the session.
+
+Rules an SDK that sets `payload_streaming` MUST follow:
+
+- Buffer up to `payload_chunk_window` chunks per task without ever pausing its read of the stream, and send a `PayloadAck` for each chunk once it is consumed (taken by a streaming handler, or appended to a buffered payload). A `PayloadAck` MUST name a task and return at least one chunk.
+- A task whose payload is still arriving is **in flight**: it occupies its slot and its id MUST be listed in heartbeats, so its lease does not lapse while the chunks stream in.
+- A handler MUST NOT see a partial payload as complete. An SDK either runs the handler once the `last` frame arrives, or hands the handler a stream that reports an error if the payload ends early or the session closes first.
+- An end-to-end encrypted chunked payload is sealed per chunk (see [encryption](encryption.md#chunked-payloads)); the worker opens each chunk as it arrives and MUST fail the task when the chunk order or the last-chunk flag does not check out.
+
 ---
 
 ## 6. TaskService (enqueue side)
@@ -261,7 +282,7 @@ Unary RPCs. All inputs validated server-side; violations return `invalid_argumen
 | `task_id`                   | OPTIONAL client-assigned ULID. Enqueue is **idempotent** on it: a repeat id returns `already_exists`. Omit to let the server assign one. |
 | `queue`                     | Empty → `"default"`. MUST match `^[a-zA-Z0-9][a-zA-Z0-9-_.]*$`.                                                                          |
 | `type`                      | **Required** (handler routing key). Empty → `invalid_argument`.                                                                          |
-| `payload` / `content_type`  | Opaque bytes + codec (§3). Payload MUST be ≤ **1 MiB** (`1<<20`).                                                                        |
+| `payload` / `content_type`  | Opaque bytes + codec (§3). An inline payload MUST be ≤ **1 MiB**, the inline limit (or the server's payload cap when that is lower). A larger payload, up to the server's payload cap (`max_payload_bytes` in `BrokerInfo` metrics, default 1 MiB), MUST be sent with `EnqueueStream` (§6.3). |
 | `metadata`                  | OPTIONAL `map<string,string>`; carries user tags and trace propagation (e.g. `traceparent`).                                             |
 | `max_retry`                 | `0` → server default (**25**). MUST NOT be negative.                                                                                     |
 | `timeout`                   | OPTIONAL per-attempt bound (`Duration`).                                                                                                 |
@@ -284,8 +305,21 @@ Unary RPCs. All inputs validated server-side; violations return `invalid_argumen
 
 `GetTaskRequest { id }` → `TaskInfo`. Empty id → `invalid_argument`; unknown id → `not_found`.
 
-`TaskInfo` is the externally visible task view (id, queue, type, `TaskState`, priority, retried, max_retry, last_error, timestamps, payload, content_type, started_at). `TaskState` values are stable and MUST NOT be renumbered: `SCHEDULED, PENDING, ACTIVE, RETRY, COMPLETED, ARCHIVED, CANCELED, AGGREGATING, BLOCKED`.
+`TaskInfo` is the externally visible task view (id, queue, type, `TaskState`, priority, retried, max_retry, last_error, timestamps, payload, content_type, started_at, payload_chunked, payload_size). A chunked payload is not inlined: `payload` is empty, `payload_chunked` is set, and `AdminService.GetTaskPayload` streams it. `payload_size` is the stored size (ciphertext when encrypted) for inline and chunked payloads alike. `TaskState` values are stable and MUST NOT be renumbered: `SCHEDULED, PENDING, ACTIVE, RETRY, COMPLETED, ARCHIVED, CANCELED, AGGREGATING, BLOCKED`.
 
+### 6.3 EnqueueStream
+
+`rpc EnqueueStream(stream EnqueueStreamRequest) returns (EnqueueResponse)` commits one task whose payload is too large to send inline. It is client streaming, so it needs HTTP/2 (gRPC, or the Connect protocol over h2c or TLS).
+
+- The **first** message MUST be `EnqueueStreamRequest.header`: an `EnqueueRequest` with every rule of §6.1 and an **empty** `payload`. A missing, repeated, or payload-carrying header → `invalid_argument`.
+- The following messages are `EnqueueStreamRequest.chunk`: the next slice of the payload, at most **2 MiB**. Producers SHOULD send 1 MiB chunks. The server stores and later delivers the chunks exactly as uploaded, so chunk boundaries are preserved end to end.
+- The **last** message MUST be `EnqueueStreamRequest.commit`, a `PayloadCommit { uint64 size }` stating the total of the chunk lengths. A stream that ends without a commit, a commit whose `size` differs from the bytes received, or any message after the commit → `invalid_argument`, and nothing is committed. The commit is what tells a complete upload from one cut short: a transport may end a canceled request cleanly before resetting it.
+- The running total is held to the server's payload cap; exceeding it → `invalid_argument`.
+- The task commits only once the commit arrives and the client closes the stream. A canceled or broken upload commits nothing.
+- Idempotency matches `Enqueue`: re-sending an existing `task_id` commits nothing. The server MAY answer before reading the remaining chunks; the client then stops sending and returns that answer.
+- `EnqueueResponse.task` is the task as stored: `payload_chunked = true` and its stored `payload_size`. For an idempotent retry of an existing id it is the original task, not the retried upload.
+
+`EnqueueBatch` and `EnqueueTx` carry inline payloads only.
 ---
 
 ## 7. AdminService (inspection & operations)
@@ -293,6 +327,8 @@ Unary RPCs. All inputs validated server-side; violations return `invalid_argumen
 Unary RPCs for dashboards and operators: queue listing/pause/resume, task listing (paged via `page_token`/`next_page_token`), single and batch task actions (cancel/delete/run/archive), cron CRUD and pause/resume, cluster info, worker-session listing, and broker info. These are operational surface, not required for a minimal producer/worker SDK; an SDK MAY implement only the subset it needs. Field-level details live in `protos/conveyor/v1/service.proto`.
 
 Batch actions report per-id outcomes positionally in `BatchTasksResponse.results[i] = { id, error }` (`error` empty on success).
+
+`GetTaskPayload { id }` is server streaming: it returns one task's payload as `GetTaskPayloadResponse { data }` messages, a chunked payload chunk by chunk and an inline one as a single message. Empty id → `invalid_argument`; unknown id → `not_found`.
 
 ---
 
@@ -324,7 +360,8 @@ A new worker SDK is conformant when it:
 - [ ] Reconnects with full-jitter backoff on transient errors; stops on fatal.
 - [ ] Closes the stream on shutdown (RELEASED/finish optional; server releases leases on close).
 - [ ] Produces/consumes `application/json` payloads byte-compatibly with peers.
+- [ ] Either leaves `Hello.payload_streaming` unset, or sets it and handles `PayloadChunk` frames per §5.12 (buffers the chunk window without pausing its read, acks each consumed chunk, in-flight while arriving, `RETRY` on an error frame, no partial payload seen as complete).
 
-A client (producer) SDK is conformant when it implements `Enqueue` (+ optionally `EnqueueBatch`, `EnqueueTx`, `GetTask`) with the defaults, limits, and idempotency/uniqueness semantics of §6.
+A client (producer) SDK is conformant when it implements `Enqueue` (+ optionally `EnqueueBatch`, `EnqueueTx`, `GetTask`) with the defaults, limits, and idempotency/uniqueness semantics of §6, and sends a payload above the 1 MiB inline limit through `EnqueueStream` (§6.3), ending every upload with its `PayloadCommit`.
 
 The cross-SDK **conformance suite** is the executable form of this checklist and is the real gate.

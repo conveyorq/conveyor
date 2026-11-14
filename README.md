@@ -76,6 +76,11 @@ and priorities, backed by Postgres or an in-memory broker, with **no Redis and n
 - **End-to-end encryption**: seal task payloads in the SDK/CLI
   (`WithEncryption`) so the server stores ciphertext only and holds no keys;
   built-in AES-256-GCM or bring your own KMS/HSM codec.
+- **Large payloads**: raise the payload cap up to 1 GiB, and anything over 1 MiB
+  is uploaded, stored, and delivered in chunks, so no server node or worker holds
+  it whole. The SDKs switch on their own, a file or stream can be enqueued
+  without loading it, and a streaming handler reads the payload as it arrives.
+  See [large payloads](docs/usage.md#large-payloads).
 - **Cron**: server-persisted schedules that survive restarts and failover,
   pausable at runtime.
 - **Built-in clustering / HA**: multi-node by default; a lost node's work
@@ -181,13 +186,13 @@ runs on a worker written in any other.
   [TypeScript](sdks/typescript/README.md) (Node 20+) and
   [Python](sdks/python/README.md) (3.9+, async and sync) match it
   feature-for-feature: a producer client, a worker runtime (push-based dispatch,
-  heartbeats, graceful drain), JSON/binary codecs, and AES-256-GCM end-to-end
-  encryption that is byte-compatible across all three. The SDKs are not yet
+  heartbeats, graceful drain), JSON/binary codecs, streamed large payloads, and
+  AES-256-GCM end-to-end encryption that is byte-compatible across all three. The SDKs are not yet
   published to npm or PyPI, so install from the in-repo source; each README has
   the exact commands.
 - **Plain HTTP** to produce. The server speaks HTTP/JSON on the same port, so
-  any language, cron job, or webhook can enqueue with a POST. See the
-  [HTTP API](docs/http-api.md).
+  any language, cron job, or webhook can enqueue with a POST, with payloads of up
+  to 1 MiB. See the [HTTP API](docs/http-api.md).
 - **Webhook workers** to consume, still push-based. Register an HTTP endpoint
   and Conveyor delivers each task to it as a signed JSON-RPC call, with the same
   retries, concurrency, and circuit breaking an SDK worker gets. See
@@ -273,7 +278,7 @@ VitePress (`make docs-dev` previews it locally).
 - [Use cases](docs/use-cases.md): the shapes of work Conveyor suits, from
   transactional email to AI inference jobs, and the features each leans on.
 - [Usage guide](docs/usage.md): the full worker and enqueue snippets for Go,
-  TypeScript, Python, and the CLI.
+  TypeScript, Python, and the CLI, and how to send and receive large payloads.
 
 **Interfaces**
 

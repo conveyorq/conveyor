@@ -4,18 +4,49 @@ All notable changes to Conveyor are documented here. The format is based on [Kee
 
 ## [Unreleased]
 
+This release lifts the 1 MiB payload ceiling: an operator can raise the cap to 1 GiB, and payloads over 1 MiB are streamed in chunks from producer to storage to worker, in all three SDKs. It also fixes a node-wide stall a slow database could cause and a gateway that kept receiving work after it closed, and smooths several dashboard workflows. The wire protocol gains backward-compatible messages; older workers keep working unchanged. Postgres deployments apply one new migration (`0013`) on startup.
+
+### Added
+
+- **Large payloads, streamed end to end**: `broker.max_payload_bytes` (env `CONVEYOR_BROKER__MAX_PAYLOAD_BYTES`, Helm `broker.maxPayloadBytes`) sets the largest task payload the server accepts, from 1 byte up to 1 GiB. The default stays 1 MiB, so nothing changes until you raise it. Payloads up to 1 MiB still travel inline with the task; larger ones are uploaded, stored, and delivered in chunks, so no server node, cluster hop, or worker holds one whole.
+  - **SDKs**: `Enqueue` streams a payload over 1 MiB on its own. To enqueue a file or stream without loading it, use `conveyor.Stream` (Go), `stream` (TypeScript), or `stream` (Python). A streaming handler (`Mux.HandleStreamFunc`, `Mux.handleStream`, `Mux.handle_stream`) reads the payload as it arrives; every other handler receives it reassembled, exactly like a small one.
+  - **Reliability**: an upload commits only once it is complete, so an interrupted or truncated upload stores nothing, and delivery is flow-controlled per task, so a slow streaming handler holds back only its own payload.
+  - **Encryption**: end-to-end encryption seals streamed payloads one chunk at a time, byte-compatible across the Go, TypeScript, and Python SDKs.
+  - **Inspection**: tasks report `payload_size` and `payload_chunked`, the dashboard shows the size and offers a download for a chunked payload, `AdminService.GetTaskPayload` streams a payload, and `conveyor broker info` and the dashboard's Broker view report the effective cap as `max_payload_bytes`.
+  - Plain HTTP producers keep the 1 MiB limit: the chunked upload is a streaming call that needs an SDK. See [large payloads](docs/usage.md#large-payloads).
+- **Wire protocol additions** for SDK authors, all backward compatible ([protocol spec](docs/protocol.md)): `TaskService.EnqueueStream` uploads a task header, payload chunks, and a size-checked `PayloadCommit`. A worker that sets `Hello.payload_streaming` receives a chunked payload as `PayloadChunk` frames after its dispatch and returns credit with `PayloadAck`, within the window `Welcome.payload_chunk_window` advertises. A worker that does not set it receives chunked payloads reassembled inline, so existing workers need no change. `TaskEnvelope` and `TaskInfo` gain `payload_chunked`, `payload_size`, and (on the envelope) `payload_chunks`; `AdminService.GetTaskPayload` is new.
+
+### Changed
+
+- **Cron payloads are size-checked**: `UpsertCron` rejects a payload above 1 MiB (or above the payload cap, when that is lower) with `invalid_argument`. Cron payloads stay inline. They were not size-checked before.
+- **Python client receive limit**: the Python client now accepts responses up to 64 MiB, up from gRPC's 4 MiB default, matching the worker.
+
+### Fixed
+
+- **A slow database no longer stalls a node**: gateways, the scheduler, the reaper, the group sweeper, the dependency resolver, and the webhook manager used to wait on the database, and the stream gateway on the worker's connection, inside their message handling. That work shares one small pool of workers with every other actor on the node, so a degraded database could stall dispatch node-wide. It now runs alongside instead, with the results applied in order, and the rule is documented in [architecture](docs/architecture.md).
+- **A closed gateway no longer receives work**: when a worker session closed or a webhook registration was paused or deleted, its queues still counted the gateway until a delivery to it failed, so one more task could be leased to a gateway that no longer existed. The gateway is now unregistered from its queues as it shuts down.
+- **Due time on the in-memory broker**: a task read back from the in-memory broker reported its original due time after a retry, run-now, or reschedule had moved it; it now reports the current one.
+- **Dashboard**:
+  - an action's error can be dismissed instead of lingering
+  - a confirm step names the action ("Confirm cancel" and "Back") rather than pairing "Confirm" with a second "Cancel"
+  - a validation error reads as written instead of with an `unknown` code
+  - the Tasks view keeps its queue and state filters when you switch views and back
+  - charts label their axes with round values and sample times
+  - cron schedules are labeled UTC and next runs local time
+  - the rate-limit burst field no longer appends what you type to a hidden default
+
 ### Deprecated
 
 - **`cluster.kubernetes.remoting_port_name` and `cluster.kubernetes.peers_port_name`** are ignored. The Kubernetes discovery provider now reads only `discovery_port_name`; nodes learn each other's remoting and peers ports from the metadata they exchange once they join the cluster. Existing configuration files still load, and the matching `server.KubernetesConfig` fields remain so Go code that sets them still compiles. The Helm chart no longer renders the two keys.
 
 ### Dependencies
 
-- **Go**: GoAkt v4.5.6 to v4.6.1; OpenTelemetry v1.46.0 to v1.47.0 with the Prometheus exporter at v0.69.0; the `koanf` environment provider v2.0.2.
-- **TypeScript SDK**: `@bufbuild/protobuf` and `protoc-gen-es` ^2.16.0 (stubs regenerated) and Vitest 5.0.3.
-- **Python SDK**: runtime floors raised to `grpcio>=1.84` and `protobuf>=7.36.2,<8`; stubs regenerated with the protobuf 36.2 and grpc 1.84.0 plugins, so the generated code refuses to load on an older `protobuf`.
-- **Dashboard**: Vite 8.3.2, Vitest 5.0.3, `@vitejs/plugin-react` 6.1.2, and jsdom 30.1.2.
-- **Documentation site**: mermaid 12.1.0.
-- **Toolchain**: golangci-lint v2.14.0 in the tools image, matching CI, and pnpm 12.9.1 as the `packageManager` pin for every pnpm project.
+- **Go**: GoAkt v4.5.6 to v4.6.7; pgx v5.11.0 to v5.13.0; Connect v1.21.0 to v1.21.1; OpenTelemetry v1.46.0 to v1.47.0 with the Prometheus exporter v0.68.0 to v0.69.0; the `koanf` environment provider v2.0.1 to v2.0.2; the Kubernetes client modules at v0.37.2, with `kube-openapi` pinned to the revision that version builds against.
+- **TypeScript SDK**: `@bufbuild/protobuf` and `protoc-gen-es` ^2.15.0 to ^2.17.0 (stubs regenerated), Connect ^2.2.0 to ^2.3.0, and Vitest ^5.0.0 to ^5.1.0.
+- **Python SDK**: runtime floors raised to `grpcio>=1.85` and `protobuf>=7.36.2,<8`; stubs regenerated with the protobuf 36.2 and `grpcio-tools` 1.85 plugins, so the generated code refuses to load on an older `protobuf`.
+- **Dashboard**: Vite ^8.3.0 to ^8.3.8, Vitest ^5.0.0 to ^5.1.0, `@vitejs/plugin-react` ^6.1.1 to ^6.3.0, and jsdom ^30.0.1 to ^31.0.1.
+- **Documentation site**: mermaid ^11.17.2 to ^12.3.0.
+- **Toolchain**: golangci-lint v2.13.2 to v2.15.0 in the tools image and CI, and pnpm 12.18.0 as the `packageManager` pin for every pnpm project.
 
 ## [v0.5.0] - 2026-09-21
 
@@ -90,7 +121,7 @@ A maintenance release: a worker-session teardown fix, a replicated cluster place
 
 ### Features
 
-- **Webhook workers (SDK-free task processing)**: register an HTTP endpoint and Conveyor pushes each task to it as a signed [JSON-RPC 2.0](https://www.jsonrpc.org/specification) call, so any language that serves an HTTP handler can be a worker — no SDK, no polling. It stays push-based, with full queue-capability parity to an SDK worker.
+- **Webhook workers (SDK-free task processing)**: register an HTTP endpoint and Conveyor pushes each task to it as a signed [JSON-RPC 2.0](https://www.jsonrpc.org/specification) call, so any language that serves an HTTP handler can be a worker, with no SDK and no polling. It stays push-based, with full queue-capability parity to an SDK worker.
   - **Delivery**: one `conveyor.task.execute` POST per attempt, carrying the task envelope and a per-delivery lease token. The endpoint replies on HTTP 200 with `completed`/`accepted`, or a JSON-RPC error (`-32000` retry, `-32001` skip-retry); any non-200 or malformed reply is a transport failure that retries.
   - **Same guarantees as SDK workers**: served queues and weights, priorities, per-registration concurrency, rate/concurrency limits, scheduling, and retries all apply; work waits in `pending` when the endpoint is full or unreachable.
   - **Long-running tasks**: return `accepted` and finish out of band via `WebhookService` `Heartbeat`/`ReportResult`, authenticated by the lease token alone (no API bearer token). A silent endpoint loses its lease and the task is reclaimed, like a crashed worker.
@@ -100,11 +131,11 @@ A maintenance release: a worker-session teardown fix, a replicated cluster place
   - **Management**: an operator action persisted server-side (like cron), via the `conveyor webhooks add|list|pause|resume|delete` CLI, the dashboard's Webhooks panel, the `AdminService` RPCs, or static config (upserted by name at boot).
   - See `docs/webhook-workers.md`.
 
-- **Atomic multi-task enqueue**: commit many tasks in one call that either all land or none do — unlike the best-effort `EnqueueBatch`, where a failure on one item leaves the others committed.
+- **Atomic multi-task enqueue**: commit many tasks in one call that either all land or none do, unlike the best-effort `EnqueueBatch`, where a failure on one item leaves the others committed.
   - **All-or-nothing**: any failure (a duplicate unique key, a unique-key collision between two tasks in the same call, or an invalid task) rolls the whole set back and reports the offending task; re-committing an existing task id is a no-op that does not abort the call.
   - **Broker-agnostic**: Postgres commits every insert in one transaction; the in-memory broker stages the batch under one lock and applies it only once every task validates. Both are held to it by the shared conformance suite.
   - **Flexible**: tasks in one call may span queues, priorities, and schedules, each with its own options.
-  - **Everywhere**: `EnqueueTx` over the API and all three SDKs — `client.EnqueueTx(ctx, []conveyor.TxTask{conveyor.Tx(task, opts...)})` (Go), `client.enqueueTx([{ task, options }])` (TypeScript), `client.enqueue_tx([TxTask(task, {...})])` (Python, plus sync `SyncClient.enqueue_tx`) — and `conveyor enqueue-tx --file tasks.json` in the CLI.
+  - **Everywhere**: `EnqueueTx` over the API and all three SDKs: `client.EnqueueTx(ctx, []conveyor.TxTask{conveyor.Tx(task, opts...)})` (Go), `client.enqueueTx([{ task, options }])` (TypeScript), `client.enqueue_tx([TxTask(task, {...})])` (Python, plus sync `SyncClient.enqueue_tx`), and `conveyor enqueue-tx --file tasks.json` in the CLI.
   - The analogue of River's `InsertMany`, distinct from River's `InsertTx` (a job inside the caller's own DB transaction), which remains a non-goal.
 
 ## [v0.3.0] - 2026-06-25

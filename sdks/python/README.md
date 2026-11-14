@@ -1,4 +1,4 @@
-# Conveyor — Python SDK
+# Conveyor Python SDK
 
 `conveyorq` is the Python SDK for [Conveyor](https://github.com/conveyorq/conveyor),
 a durable, distributed task queue. It speaks the same wire protocol as the Go and
@@ -15,7 +15,7 @@ to start one.
 [uv](https://docs.astral.sh/uv/). Pick whichever fits your setup:
 
 ```bash
-# Straight from the repository — no clone needed (recommended):
+# Straight from the repository, no clone needed (recommended):
 uv add "conveyorq @ git+https://github.com/conveyorq/conveyor.git#subdirectory=sdks/python"
 
 # Or from a local checkout, so you can edit the SDK and have changes apply live:
@@ -120,6 +120,34 @@ received task with `task.json()`, `task.text()`, or `task.payload` for the raw
 bytes. Producer and consumer must agree on the JSON shape of a given task type;
 the bytes are interoperable across the Go, TypeScript, and Python SDKs.
 
+## Large payloads
+
+A payload over 1 MiB is uploaded in 1 MiB chunks automatically, up to the
+server's payload cap (`broker.max_payload_bytes`). To enqueue one without
+holding it in memory, build it with `stream(source)` from a binary file or an
+async iterable of bytes:
+
+```python
+with open("report.pdf", "rb") as file:
+    await client.enqueue(new_task("report:index", stream(file, "application/pdf")))
+```
+
+A streamed payload cannot go through `enqueue_tx`, and `unique` needs an explicit
+`unique_key`. Workers receive large payloads reassembled in `task.payload` by
+default. Register a handler with `mux.handle_stream` to read the payload as it
+arrives instead:
+
+```python
+@mux.stream_handler("report:index")
+async def index(task, ctx):
+    async for chunk in task.payload_stream:
+        ...
+```
+
+A sync streaming handler reads with `for chunk in task.payload_stream`. The
+server sends chunks only as fast as the handler reads them, so a slow reader
+holds back only its own payload.
+
 ## End-to-end encryption
 
 Pass an `Encryptor` to seal payloads before they leave the process; the server
@@ -141,7 +169,7 @@ retired keys still open existing data.
 
 Conveyor is a server-backed queue like Celery or RQ, but the durable state lives
 in the server and its broker (Postgres), not in your worker processes. You
-enqueue with a `Client` (a thin gRPC producer — no broker connection in your
+enqueue with a `Client` (a thin gRPC producer with no broker connection in your
 app) and consume with a `Worker` that holds one streaming session and is pushed
 work up to its `concurrency`. There are no per-worker broker credentials, no
 result backend to configure, and a deploy is free: a worker draining on SIGTERM

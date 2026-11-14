@@ -10,19 +10,19 @@ POSTs each one. There is no queue to poll.
 
 ## Run it
 
-Terminal 1 — the server (in-memory broker, auth off):
+Terminal 1, the server (in-memory broker, auth off):
 
 ```sh
 go run ./cmd/conveyord --dev
 ```
 
-Terminal 2 — this endpoint, keyed with a signing secret:
+Terminal 2, this endpoint, keyed with a signing secret:
 
 ```sh
 WEBHOOK_SECRET=s3cret go run ./examples/webhook
 ```
 
-Terminal 3 — register the endpoint, then enqueue a task:
+Terminal 3, register the endpoint, then enqueue a task:
 
 ```sh
 go run ./cmd/conveyor webhooks add demo-hooks http://localhost:9090/tasks \
