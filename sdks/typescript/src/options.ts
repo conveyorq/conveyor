@@ -61,6 +61,10 @@ export interface TaskInfo {
   progress: number;
   /** Latest status reported alongside progress; empty when none. */
   progressMessage: string;
+  /** The stored payload size in bytes (ciphertext when encrypted). */
+  payloadSize: number;
+  /** Whether the payload is stored in chunks, as a streamed or larger-than-inline payload is. */
+  payloadChunked: boolean;
 }
 
 /**

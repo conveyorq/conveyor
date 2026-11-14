@@ -26,8 +26,10 @@ export const ContentType = {
 export interface Payload {
   /** The content type, e.g. {@link ContentType.JSON}. */
   readonly contentType: string;
-  /** The encoded bytes. */
+  /** The encoded bytes; empty for a payload built with {@link stream}. */
   readonly data: Uint8Array;
+  /** The source of a payload built with {@link stream}; undefined for an in-memory one. */
+  readonly source?: AsyncIterable<Uint8Array>;
 }
 
 const encoder = new TextEncoder();
@@ -47,6 +49,20 @@ export function json(value: unknown): Payload {
  */
 export function bytes(data: Uint8Array): Payload {
   return { contentType: ContentType.OctetStream, data };
+}
+
+/**
+ * stream supplies a payload from an async iterable of byte chunks (a Node
+ * `Readable`, a web `ReadableStream`, or an async generator), for a payload
+ * too large to hold in memory. {@link Client.enqueue} uploads it in chunks
+ * through the server's streaming enqueue, reading the source to its end; a
+ * worker can receive it as a stream too (see {@link Mux.handleStream}). A
+ * streamed payload cannot be enqueued with {@link Client.enqueueTx}, and
+ * `unique` needs an explicit `uniqueKey` since the payload is never held whole
+ * to hash.
+ */
+export function stream(source: AsyncIterable<Uint8Array>, contentType: string = ContentType.OctetStream): Payload {
+  return { contentType, data: new Uint8Array(0), source };
 }
 
 /**

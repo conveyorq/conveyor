@@ -66,6 +66,8 @@ export class BatchError extends Error {
 export class Mux {
   private readonly handlers = new Map<string, Handler>();
   private readonly batchHandlers = new Map<string, BatchHandler>();
+  /** The task types registered with {@link Mux.handleStream}. */
+  private readonly streamTypes = new Set<string>();
   private readonly middleware: Middleware[] = [];
   private readonly batchMiddleware: BatchMiddleware[] = [];
 
@@ -76,6 +78,32 @@ export class Mux {
     }
 
     this.handlers.set(type, handler);
+    this.streamTypes.delete(type);
+
+    return this;
+  }
+
+  /**
+   * Register a handler that receives a chunked payload as it arrives instead of
+   * after it is reassembled: the handler starts at once and reads
+   * {@link Task.payloadStream}, while {@link Task.payload} is empty. Use it for
+   * payloads too large to hold in memory. The server sends a small window of
+   * chunks ahead of the handler and the next ones as the handler reads, so a
+   * handler that reads slowly slows only its own payload. Tasks with an inline
+   * payload reach the handler as usual, readable through
+   * {@link Task.payloadStream} too.
+   *
+   * ```ts
+   * mux.handleStream("video:transcode", async (task) => {
+   *   for await (const chunk of task.payloadStream()) {
+   *     await sink.write(chunk);
+   *   }
+   * });
+   * ```
+   */
+  handleStream(type: string, handler: Handler): this {
+    this.handle(type, handler);
+    this.streamTypes.add(type);
 
     return this;
   }
@@ -108,6 +136,11 @@ export class Mux {
   /** The task types registered as batch handlers, advertised to the server. */
   batchTypes(): string[] {
     return [...this.batchHandlers.keys()];
+  }
+
+  /** @internal streams reports whether a type was registered with {@link Mux.handleStream}. */
+  streams(type: string): boolean {
+    return this.streamTypes.has(type);
   }
 
   /** @internal resolve the middleware-wrapped single-task handler for a type. */

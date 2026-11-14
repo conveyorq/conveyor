@@ -5,8 +5,9 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { Client } from "./client.js";
-import { json } from "./codec.js";
+import { bytes, json, stream } from "./codec.js";
 import { ConveyorError } from "./errors.js";
+import { INLINE_PAYLOAD_BYTES } from "./stream.js";
 import { newTask } from "./task.js";
 
 const info = (id: string) => ({
@@ -54,6 +55,21 @@ describe("enqueueTx", () => {
     await expect(
       client.enqueueTx([{ task: newTask("t", json(1)), options: { processAt: new Date(), processIn: 1000 } }]),
     ).rejects.toBeInstanceOf(ConveyorError);
+
+    expect(enqueueTx).not.toHaveBeenCalled();
+  });
+
+  it("rejects a streamed or larger-than-inline payload and sends nothing", async () => {
+    const client = new Client("http://localhost:9");
+    const enqueueTx = vi.fn();
+    (client as unknown as { rpc: { enqueueTx: typeof enqueueTx } }).rpc = { enqueueTx };
+
+    const empty = (async function* () {})();
+
+    await expect(client.enqueueTx([{ task: newTask("t", stream(empty)) }])).rejects.toThrow(/enqueueTx cannot carry/);
+    await expect(
+      client.enqueueTx([{ task: newTask("t", json(1)) }, { task: newTask("t", bytes(new Uint8Array(INLINE_PAYLOAD_BYTES + 1))) }]),
+    ).rejects.toThrow(/task 1/);
 
     expect(enqueueTx).not.toHaveBeenCalled();
   });
