@@ -214,7 +214,7 @@ jobs:
           sbom: true
           provenance: mode=max
 
-      - uses: sigstore/cosign-installer@v4.1.2
+      - uses: sigstore/cosign-installer@v4.1.3
         name: Install cosign
       - name: Sign the published image
         # Sign the pushed multi-arch index by digest with cosign keyless, using
@@ -350,7 +350,7 @@ jobs:
           digest="$(awk '/Digest: /{print $NF}' push.log)"
           echo "digest=${digest}" >>"${GITHUB_OUTPUT}"
 
-      - uses: sigstore/cosign-installer@v4.1.2
+      - uses: sigstore/cosign-installer@v4.1.3
         name: Install cosign
       - name: Sign the published chart
         run: cosign sign --yes "${CHART_REPO}/conveyor@${{ steps.push.outputs.digest }}"
