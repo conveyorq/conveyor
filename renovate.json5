@@ -35,6 +35,21 @@
   // Keep go.mod/go.sum tidy after a Go module update.
   postUpdateOptions: ["gomodTidy"],
 
+  packageRules: [
+    {
+      // k8s.io/kube-openapi has no tagged releases, and its master moved to
+      // sigs.k8s.io/structured-merge-diff/v7 while the stable k8s.io/apimachinery
+      // (pulled in through GoAkt's Kubernetes discovery) still builds against v6.
+      // Floating it to master breaks the build, so it stays on the revision
+      // apimachinery supports until a stable k8s.io release moves to v7.
+      // Indirect Go updates are off by default; this keeps it pinned even if
+      // they are turned on.
+      matchManagers: ["gomod"],
+      matchPackageNames: ["k8s.io/kube-openapi"],
+      enabled: false,
+    },
+  ],
+
   // Refresh lock files (package-lock.json, go.sum, ...) on the same weekly cadence.
   lockFileMaintenance: {
     enabled: true,

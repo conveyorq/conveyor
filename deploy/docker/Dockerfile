@@ -31,7 +31,7 @@ RUN pnpm run build
 
 # The build stage runs on the native build platform and cross-compiles to the
 # target, so multi-arch images build without emulating the Go toolchain.
-FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.27.4-alpine AS build
 
 WORKDIR /src
 
